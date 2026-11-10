@@ -102,6 +102,8 @@ struct ControlSurface {
     var servoPosition: SIMD3<Double>
     var area: Double
     var chord: Double = 20
+    /// Controls sharing one servo (e.g. both ailerons on torque rods) carry the same id.
+    var servoID: String = ""
 }
 
 /// Complete derived design: parts plus the components that go into it.

@@ -30,37 +30,77 @@ struct PlanLayout {
     var rows: Int
     var sheet: Vec2 { Vec2(Double(columns) * Self.tile.x, Double(rows) * Self.tile.y) }
 
+    /// Skyline bottom-left packing. Tries 1–4 page columns, several sort orders and both
+    /// orientations per part; keeps the layout with the fewest printed pages, then the
+    /// fewest parts split across page borders.
     static func make(_ parts: [Part]) -> PlanLayout {
-        var best: PlanLayout?
-        for cols in 1...4 {
-            let width = Double(cols) * tile.x - 4
-            var items: [Placed] = []
-            for p in parts {
-                let b = Poly.bounds(p.outline)
-                let sz = b.max - b.min
-                // Prefer the wide orientation unless it does not fit.
-                var rotate = sz.y > sz.x
-                if rotate && sz.y > width { rotate = false }
-                if !rotate && sz.x > width && sz.y <= width { rotate = true }
-                if rotate && sz.y > width && sz.x <= width { rotate = false }
-                let size = rotate ? Vec2(sz.y, sz.x) : sz
-                items.append(Placed(part: p, origin: .zero, rotated: rotate, size: size, bmin: b.min, bmax: b.max))
-            }
-            if items.contains(where: { $0.size.x > width }) && cols < 4 { continue }
-            items.sort { $0.size.y > $1.size.y }
-            var x = 4.0, y = 4.0, shelf = 0.0
-            for i in items.indices {
-                if x + items[i].size.x > width && x > 4 { x = 4; y += shelf + gap + labelSpace; shelf = 0 }
-                items[i].origin = Vec2(x, y + labelSpace)
-                x += items[i].size.x + gap
-                shelf = max(shelf, items[i].size.y)
-            }
-            let height = y + shelf + labelSpace + 4
-            let rows = max(1, Int(ceil(height / tile.y)))
-            let layout = PlanLayout(placed: items, columns: cols, rows: rows)
-            if best == nil || cols * rows < best!.columns * best!.rows { best = layout }
+        struct Item { var part: Part; var bmin: Vec2; var bmax: Vec2; var size: Vec2 }
+        let items = parts.map { p -> Item in
+            let b = Poly.bounds(p.outline)
+            return Item(part: p, bmin: b.min, bmax: b.max, size: b.max - b.min)
         }
-        return best!
+        let orders: [(Item, Item) -> Bool] = [
+            { $0.size.y > $1.size.y }, { max($0.size.x, $0.size.y) > max($1.size.x, $1.size.y) },
+            { $0.size.x * $0.size.y > $1.size.x * $1.size.y }, { $0.size.x > $1.size.x }
+        ]
+        var best: (layout: PlanLayout, score: Double)?
+        for cols in 1...4 {
+            let width = Double(cols) * tile.x
+            for order in orders {
+                guard let placed = pack(items.sorted(by: order).map { ($0.part, $0.bmin, $0.bmax, $0.size) }, width: width) else { continue }
+                let height = placed.map { $0.origin.y + $0.size.y }.max() ?? 0
+                let layout = PlanLayout(placed: placed, columns: cols, rows: max(1, Int(ceil((height + 2) / tile.y))))
+                let splits = placed.reduce(0) { $0 + layout.tilesTouched(by: $1) - 1 }
+                let score = Double(layout.usedTiles.count) * 1000 + Double(splits) * 25 + height / 100
+                if best == nil || score < best!.score { best = (layout, score) }
+            }
+        }
+        return best!.layout
+    }
+
+    private static func pack(_ items: [(Part, Vec2, Vec2, Vec2)], width: Double) -> [Placed]? {
+        // Skyline segments: (x, y, w)
+        var sky: [(x: Double, y: Double, w: Double)] = [(0, 0, width)]
+        var out: [Placed] = []
+        let margin = 4.0
+        for (part, bmin, bmax, sz) in items {
+            var bestPos: (x: Double, y: Double, top: Double, rot: Bool)?
+            for rot in [false, true] {
+                let w = (rot ? sz.y : sz.x) + gap, h = (rot ? sz.x : sz.y) + gap + labelSpace
+                guard w + margin <= width + gap else { continue }
+                for seg in sky {
+                    let x = max(seg.x, margin)
+                    guard x + w <= width + gap - 0.01 else { continue }
+                    let y = sky.filter { $0.x < x + w && $0.x + $0.w > x }.map(\.y).max() ?? 0
+                    let top = y + h
+                    if bestPos == nil || top < bestPos!.top - 0.01 || (abs(top - bestPos!.top) < 0.01 && x < bestPos!.x) {
+                        bestPos = (x, y, top, rot)
+                    }
+                }
+            }
+            guard let pos = bestPos else { return nil }
+            let size = pos.rot ? Vec2(sz.y, sz.x) : sz
+            out.append(Placed(part: part, origin: Vec2(pos.x, pos.y + margin + labelSpace), rotated: pos.rot, size: size, bmin: bmin, bmax: bmax))
+            // Update skyline with the new block.
+            let w = size.x + gap, nx = pos.x, ny = pos.top
+            var next: [(x: Double, y: Double, w: Double)] = []
+            for seg in sky {
+                let a = seg.x, b = seg.x + seg.w
+                if b <= nx || a >= nx + w { next.append(seg); continue }
+                if a < nx { next.append((a, seg.y, nx - a)) }
+                if b > nx + w { next.append((nx + w, seg.y, b - nx - w)) }
+            }
+            next.append((nx, ny, w))
+            sky = next.sorted { $0.x < $1.x }
+        }
+        return out
+    }
+
+    func tilesTouched(by p: Placed) -> Int {
+        let a = p.origin - Vec2(0, Self.labelSpace), b = p.origin + p.size
+        let c0 = Int(floor(a.x / Self.tile.x)), c1 = Int(floor((b.x - 0.01) / Self.tile.x))
+        let r0 = Int(floor(a.y / Self.tile.y)), r1 = Int(floor((b.y - 0.01) / Self.tile.y))
+        return (c1 - c0 + 1) * (r1 - r0 + 1)
     }
 
     /// Tiles that actually contain geometry.

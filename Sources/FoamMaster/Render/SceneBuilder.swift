@@ -48,7 +48,8 @@ enum Palette {
     static let motor = SIMD4<Float>(0.75, 0.2, 0.25, 1)
     static let battery = SIMD4<Float>(0.98, 0.82, 0.2, 1)
     static let servo = SIMD4<Float>(0.2, 0.45, 0.95, 1)
-    static let printed = SIMD4<Float>(0.35, 0.95, 0.75, 1)
+    static let printed = SIMD4<Float>(0.07, 0.07, 0.08, 1)
+    static let vtx = SIMD4<Float>(0.2, 0.75, 0.45, 1)
     static let cg = SIMD4<Float>(1.0, 0.2, 0.6, 1)
     static let edge = SIMD4<Float>(0.1, 0.12, 0.18, 0.55)
     static let grid = SIMD4<Float>(0.4, 0.7, 1.0, 0.12)
@@ -93,30 +94,51 @@ enum SceneBuilder {
         }
 
         // Components
+        let c = d.config
         for item in d.components {
             let p = item.position
             switch item.category {
             case "Battery":
-                let s = d.config.battery.size
-                let size: SIMD3<Double> = [s.h, s.w, s.l]
-                let offset: SIMD3<Double> = [d.config.material.thickness / 2 + s.h / 2, 0, 0]
-                scene.addMesh(.box(min: p + offset - size / 2, max: p + offset + size / 2), color: Palette.battery)
+                let s = c.battery.size
+                let size: SIMD3<Double> = c.kind.isTailless ? [s.w, s.h, s.l] : [s.h, s.w, s.l]
+                scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.battery)
             case "Power" where item.name.contains("brushless"):
-                let r = d.config.motor.bellDiameter / 2
+                let r = c.motor.bellDiameter / 2
                 scene.addMesh(cylinder(center: p, radius: r, length: r * 1.1), color: Palette.motor)
-                // Prop disc hint
-                let pr = d.config.motor.propInches * 25.4 / 2
-                let z = p.z + (d.config.kind.isPusher ? r * 0.9 : -r * 0.9)
+                let pr = c.motor.propInches * 25.4 / 2
+                let z = c.propPlaneZ
                 for k in 0..<48 {
                     let a0 = Double(k) / 48 * 2 * .pi, a1 = Double(k + 1) / 48 * 2 * .pi
                     scene.addLine([cos(a0) * pr, sin(a0) * pr, z], [cos(a1) * pr, sin(a1) * pr, z], color: SIMD4(1, 1, 1, 0.25))
                 }
                 scene.addMesh(Mesh3D.box(min: [-pr, -3, z - 0.6], max: [pr, 3, z + 0.6]).rotated(0.5, axis: [0, 0, 1]), color: SIMD4(0.15, 0.15, 0.18, 1))
+            case "FPV":
+                if item.name.hasPrefix("FPV camera") {
+                    let w = c.fpv.cameraWidth
+                    scene.addMesh(.box(min: p - [w / 2, w / 2, w / 2], max: p + [w / 2, w / 2, w / 2]), color: Palette.carbon)
+                    scene.addMesh(cylinder(center: p - [0, 0, w / 2 + 2], radius: w * 0.3, length: 4), color: SIMD4(0.3, 0.35, 0.45, 1))
+                } else {
+                    let v = c.fpv.vtxSize
+                    let size: SIMD3<Double> = c.kind.isTailless ? [v.w, v.h, v.l] : [v.h, v.w, v.l]
+                    scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.vtx)
+                    scene.addLine(p, p + [0, 30, 6], color: SIMD4(0.9, 0.9, 0.95, 0.9))
+                }
+            case "Printed":
+                let size: SIMD3<Double>
+                if item.name.hasPrefix("Motor mount") { let m = c.motor.bellDiameter * 0.8; size = [m, m, 6] }
+                else if item.name.hasPrefix("Horn") { size = [1.4, 9, 9] }
+                else if item.name.hasPrefix("Camera mount") { size = [c.fpv.cameraWidth + 3, 2, 16] }
+                else { size = [40, 2, 20] }
+                scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.printed)
+            case "Hardware" where item.name.hasPrefix("Tail booms"):
+                let len = c.tailArm + c.hStabChord * 0.55 - c.rootChord * 0.15
+                for x in [-c.boomX, c.boomX] {
+                    scene.addMesh(cylinder(center: [x, p.y, p.z], radius: 2, length: len, segments: 10), color: Palette.carbon)
+                }
             default:
                 if item.name.hasPrefix("Servo") {
-                    let s = d.config.servo.size
-                    let vertical = !(d.config.kind.isTailless || item.name.contains("aileron") || item.name.contains("Aileron"))
-                    let size: SIMD3<Double> = vertical ? [s.w, s.h, s.l] : [s.w, s.h, s.l]
+                    let s = c.servo.size
+                    let size: SIMD3<Double> = [s.w, s.h, s.l]
                     scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.servo)
                 }
             }

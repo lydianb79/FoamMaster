@@ -112,3 +112,56 @@ struct CarbonSpar {
     static let rod1 = CarbonSpar(name: "Carbon rod Ø1 mm", widthMM: 1, heightMM: 1, gramsPerMeter: 1.3)
     static let rod2 = CarbonSpar(name: "Carbon rod Ø2 mm", widthMM: 2, heightMM: 2, gramsPerMeter: 5.0)
 }
+
+// MARK: - FPV
+
+enum FPVSystem: String, CaseIterable, Identifiable, Codable {
+    case none, analog, o4Lite, walksnail
+    var id: String { rawValue }
+
+    var name: String {
+        switch self {
+        case .none: return "No FPV"
+        case .analog: return "Analog"
+        case .o4Lite: return "DJI O4 Lite"
+        case .walksnail: return "Walksnail"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .none: return "Line of sight"
+        case .analog: return "Nano camera + 25–200 mW VTX"
+        case .o4Lite: return "O4 Air Unit Lite, digital HD"
+        case .walksnail: return "Avatar HD Mini 1S Lite kit"
+        }
+    }
+    /// Approximate flying weights (g): camera, transmitter incl. antenna.
+    var cameraMass: Double { [.none: 0, .analog: 2.5, .o4Lite: 3.5, .walksnail: 3.2][self]! }
+    var vtxMass: Double { [.none: 0, .analog: 3.5, .o4Lite: 5.5, .walksnail: 5.0][self]! }
+    var mass: Double { cameraMass + vtxMass }
+    /// Average power draw (W) while flying.
+    var power: Double { [.none: 0, .analog: 2.5, .o4Lite: 5.5, .walksnail: 4.5][self]! }
+    /// Camera body width (mm) – all three use 14 mm class micro cameras here.
+    var cameraWidth: Double { [.none: 0, .analog: 14, .o4Lite: 14, .walksnail: 14][self]! }
+    var vtxSize: (l: Double, w: Double, h: Double) { [.none: (0, 0, 0), .analog: (20, 14, 5), .o4Lite: (28, 20, 7), .walksnail: (25, 20, 7)][self]! }
+}
+
+// MARK: - Fuselage structure
+
+enum FuselageType: String, CaseIterable, Identifiable, Codable {
+    case profile, cross, xBrace
+    var id: String { rawValue }
+    var name: String { [.profile: "Flat profile", .cross: "Cross +", .xBrace: "X-brace"][self]! }
+    var detail: String {
+        switch self {
+        case .profile: return "Single sheet – lightest, flexes on long tails"
+        case .cross: return "Horizontal side plates form a + section"
+        case .xBrace: return "Four 45° strips form an X section – stiffest"
+        }
+    }
+    var symbol: String { [.profile: "minus", .cross: "plus", .xBrace: "xmark"][self]! }
+}
+
+extension CarbonSpar {
+    static let tube4 = CarbonSpar(name: "Carbon tube Ø4 × 3 mm", widthMM: 4, heightMM: 4, gramsPerMeter: 7.5)
+}

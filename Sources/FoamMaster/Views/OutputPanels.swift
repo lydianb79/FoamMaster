@@ -179,7 +179,8 @@ struct PrintPanel: View {
                 SectionHeader(title: "Printed hardware", symbol: "cube.transparent")
                 MetalView(scene: SceneBuilder.printed(parts), sceneID: project.revision, resetKey: "printed-\(project.config?.kind.rawValue ?? "")", autoRotate: true)
                     .frame(height: 220)
-                    .background(.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+                    .background(LinearGradient(colors: [Color(white: 0.82), Color(white: 0.62)], startPoint: .top, endPoint: .bottom),
+                                in: RoundedRectangle(cornerRadius: 12))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                 ForEach(parts) { p in
                     HStack {

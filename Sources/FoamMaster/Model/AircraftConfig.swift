@@ -21,7 +21,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .flyingWing: return "Swept wing · elevons · pusher"
         case .delta: return "High sweep · centre fin · pusher"
-        case .skykart: return "Big chord · slow & forgiving"
+        case .skykart: return "Twin-boom pusher · FPV cruiser"
         case .trainer: return "Dihedral · rudder & elevator"
         case .aerobat: return "Huge surfaces · 4 channels"
         case .glider: return "High aspect ratio · thermal"
@@ -32,7 +32,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .flyingWing: return "chevron.up"
         case .delta: return "triangle"
-        case .skykart: return "airplane"
+        case .skykart: return "camera.fill"
         case .trainer: return "graduationcap"
         case .aerobat: return "arrow.triangle.2.circlepath"
         case .glider: return "wind"
@@ -41,7 +41,10 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
 
     var isTailless: Bool { self == .flyingWing || self == .delta }
     var hasAilerons: Bool { self == .aerobat }
-    var isPusher: Bool { isTailless }
+    var isPusher: Bool { isTailless || self == .skykart }
+    var isTwinBoom: Bool { self == .skykart }
+    /// Tailed aircraft with a full-length fuselage (fuselage structure option applies).
+    var hasFuselage: Bool { !isTailless && !isTwinBoom }
 
     /// Minimum sensible thrust/weight ratio for the category.
     var minThrustToWeight: Double {
@@ -59,18 +62,18 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         var c = AircraftConfig(kind: self)
         switch self {
         case .flyingWing:
-            c.wingspan = 560; c.rootChord = 200; c.tipChord = 110; c.sweep = 130; c.dihedral = 0
-            c.controlChordPct = 0.22; c.wingletHeight = 60; c.noseLength = 90
-            c.material = .depron6; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
+            c.wingspan = 560; c.rootChord = 200; c.tipChord = 110; c.sweep = 120; c.dihedral = 0
+            c.controlChordPct = 0.22; c.wingletHeight = 60
+            c.material = .depron6; c.motor = .m1104; c.battery = .s2_450; c.servo = .g37
         case .delta:
             c.wingspan = 460; c.rootChord = 330; c.tipChord = 70; c.sweep = 250; c.dihedral = 0
-            c.controlChordPct = 0.2; c.wingletHeight = 90; c.noseLength = 110
+            c.controlChordPct = 0.2; c.wingletHeight = 90; c.sweep = 230
             c.material = .depron6; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
         case .skykart:
-            c.wingspan = 520; c.rootChord = 160; c.tipChord = 140; c.sweep = 10; c.dihedral = 0
-            c.fuselageLength = 470; c.fuselageHeight = 70; c.noseLength = 90; c.tailArm = 250
-            c.hStabSpan = 220; c.hStabChord = 85; c.vStabHeight = 85; c.vStabChord = 90
-            c.material = .depron6; c.motor = .m1104; c.battery = .s2_300; c.servo = .g25
+            c.wingspan = 580; c.rootChord = 150; c.tipChord = 120; c.sweep = 8; c.dihedral = 0
+            c.fuselageLength = 300; c.fuselageHeight = 58; c.noseLength = 120; c.tailArm = 300
+            c.hStabSpan = 230; c.hStabChord = 70; c.vStabHeight = 70; c.vStabChord = 70
+            c.material = .depron5; c.motor = .m1306; c.battery = .s2_450; c.servo = .g25; c.fpv = .o4Lite
         case .trainer:
             c.wingspan = 600; c.rootChord = 130; c.tipChord = 105; c.sweep = 12; c.dihedral = 6
             c.fuselageLength = 480; c.fuselageHeight = 62; c.noseLength = 95; c.tailArm = 270
@@ -125,6 +128,10 @@ struct AircraftConfig: Codable, Equatable {
     var servo: ServoClass = .g25
     /// Battery centre position measured aft of the root leading edge (mm, negative = forward).
     var batteryPosition: Double = 0
+    var fpv: FPVSystem = .none
+    var fuselageType: FuselageType = .cross
+    /// 1 = one central servo driving both ailerons via torque rods, 2 = one servo per aileron.
+    var aileronServos: Int = 2
 
     init(kind: AircraftKind) { self.kind = kind }
 
@@ -132,7 +139,7 @@ struct AircraftConfig: Codable, Equatable {
     var taper: Double { tipChord / max(rootChord, 1) }
 
     var defaultBatteryPosition: Double {
-        -noseLength * 0.45
+        kind.isTailless ? battery.size.l / 2 : -noseLength * 0.45
     }
 
     /// Ranges used both by the UI sliders and the randomiser.

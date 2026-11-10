@@ -61,6 +61,7 @@ struct InspectorView: View {
 // MARK: - Analysis
 
 struct AnalysisPanel: View {
+    @EnvironmentObject var project: Project
     var design: Design
     var analysis: Analysis
 
@@ -91,6 +92,19 @@ struct AnalysisPanel: View {
                 }
                 Text(String(format: "Measured from the root leading edge. Neutral point %.1f mm, MAC %.0f mm.", a.neutralPoint, a.mac))
                     .font(.system(size: 10)).foregroundStyle(.tertiary)
+                if !a.cgReachable {
+                    HStack {
+                        Label("The battery alone cannot balance this design.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.warn)
+                        Spacer()
+                        PillButton(title: "Fix with bigger battery", symbol: "battery.100.bolt", prominent: true) { withAnimation { project.fixBalanceWithBattery() } }
+                    }
+                }
+                if let note = project.balanceNote {
+                    Label(note, systemImage: "info.circle.fill")
+                        .font(.system(size: 11)).foregroundStyle(Theme.accent)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .glass()
 

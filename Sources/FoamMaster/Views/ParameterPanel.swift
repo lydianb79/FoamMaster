@@ -33,7 +33,7 @@ struct ParameterContent: View {
                         ParamSlider(label: "Root chord", unit: "mm", value: bind(\.rootChord), range: range(\.rootChord, c), step: 1)
                         ParamSlider(label: "Tip chord", unit: "mm", value: bind(\.tipChord), range: range(\.tipChord, c), step: 1)
                         ParamSlider(label: "Sweep (tip LE)", unit: "mm", value: bind(\.sweep), range: range(\.sweep, c), step: 1)
-                        if !c.kind.isTailless {
+                        if c.kind.hasFuselage {
                             ParamSlider(label: "Dihedral", unit: "°", value: bind(\.dihedral), range: range(\.dihedral, c), step: 0.5)
                         }
                         if c.kind.isTailless || c.kind.hasAilerons {
@@ -43,18 +43,37 @@ struct ParameterContent: View {
                         }
                         if c.kind.isTailless {
                             ParamSlider(label: c.kind == .delta ? "Fin height" : "Winglet height", unit: "mm", value: bind(\.wingletHeight), range: range(\.wingletHeight, c), step: 1)
-                            ParamSlider(label: "Nose pod length", unit: "mm", value: bind(\.noseLength), range: range(\.noseLength, c), step: 1)
+                        }
+                    }
+                    .glass()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionHeader(title: "Build options", symbol: "slider.horizontal.3")
+                        PickerRow(label: "FPV", selection: bind(\.fpv), options: FPVSystem.allCases) { $0 == .none ? $0.name : "\($0.name) · \(Int($0.mass.rounded())) g" }
+                        if c.kind.hasFuselage {
+                            Picker("", selection: bind(\.fuselageType)) {
+                                ForEach(FuselageType.allCases) { Label($0.name, systemImage: $0.symbol).tag($0) }
+                            }
+                            .pickerStyle(.segmented).labelsHidden()
+                            Text(c.fuselageType.detail).font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        if c.kind.hasAilerons {
+                            Picker("", selection: bind(\.aileronServos)) {
+                                Text("1 aileron servo").tag(1)
+                                Text("2 aileron servos").tag(2)
+                            }
+                            .pickerStyle(.segmented).labelsHidden()
                         }
                     }
                     .glass()
 
                     if !c.kind.isTailless {
                         VStack(alignment: .leading, spacing: 10) {
-                            SectionHeader(title: "Fuselage & Tail", symbol: "arrow.left.and.right")
-                            ParamSlider(label: "Nose length", unit: "mm", value: bind(\.noseLength), range: range(\.noseLength, c), step: 1)
-                            ParamSlider(label: "Fuselage height", unit: "mm", value: bind(\.fuselageHeight), range: range(\.fuselageHeight, c), step: 1)
+                            SectionHeader(title: c.kind.isTwinBoom ? "Pod, booms & tail" : "Fuselage & Tail", symbol: "arrow.left.and.right")
+                            ParamSlider(label: c.kind.isTwinBoom ? "Pod nose length" : "Nose length", unit: "mm", value: bind(\.noseLength), range: range(\.noseLength, c), step: 1)
+                            ParamSlider(label: c.kind.isTwinBoom ? "Pod height" : "Fuselage height", unit: "mm", value: bind(\.fuselageHeight), range: range(\.fuselageHeight, c), step: 1)
                             ParamSlider(label: "Tail arm", unit: "mm", value: bind(\.tailArm), range: range(\.tailArm, c), step: 1)
-                            ParamSlider(label: "Stab span", unit: "mm", value: bind(\.hStabSpan), range: range(\.hStabSpan, c), step: 1)
+                            ParamSlider(label: c.kind.isTwinBoom ? "Stab span (boom spacing)" : "Stab span", unit: "mm", value: bind(\.hStabSpan), range: range(\.hStabSpan, c), step: 1)
                             ParamSlider(label: "Stab chord", unit: "mm", value: bind(\.hStabChord), range: range(\.hStabChord, c), step: 1)
                             ParamSlider(label: "Fin height", unit: "mm", value: bind(\.vStabHeight), range: range(\.vStabHeight, c), step: 1)
                             ParamSlider(label: "Fin chord", unit: "mm", value: bind(\.vStabChord), range: range(\.vStabChord, c), step: 1)
@@ -90,7 +109,12 @@ struct ParameterContent: View {
                             Text(String(format: "Target CG %.0f mm · battery for target %.0f mm", a.recommendedCG, a.requiredBatteryPosition))
                                 .font(.system(size: 10)).foregroundStyle(.secondary)
                         }
-                        PillButton(title: "Auto-balance", symbol: "target") { withAnimation { project.autoBalance() } }
+                        HStack {
+                            PillButton(title: "Auto-balance", symbol: "target") { withAnimation { project.autoBalance() } }
+                            if !(project.analysis?.cgReachable ?? true) {
+                                PillButton(title: "Bigger battery", symbol: "battery.100.bolt", prominent: true) { withAnimation { project.fixBalanceWithBattery() } }
+                            }
+                        }
                     }
                     .glass()
                 }

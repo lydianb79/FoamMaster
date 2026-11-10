@@ -23,14 +23,67 @@ final class Project: ObservableObject {
     @Published var deflection: Double = 0   // control surface preview, -1…1
 
     @Published var statusMessage: String?
+    /// Result of the last balance fix, shown in the CG panel until the design changes.
+    @Published var balanceNote: String?
 
-    func start(_ kind: AircraftKind) {
+    func start(_ kind: AircraftKind, fpv: FPVSystem? = nil, fuselage: FuselageType = .cross, aileronServos: Int = 2) {
         var c = kind.defaults
+        if let fpv { c.fpv = fpv }
+        c.fuselageType = fuselage
+        c.aileronServos = aileronServos
+        config = Project.balanced(c)
+    }
+
+    /// Puts the battery where the CG lands on target; if that is impossible, tries heavier
+    /// (or lighter) compatible packs until the CG can be reached.
+    static func balanced(_ input: AircraftConfig) -> AircraftConfig {
+        var c = input
+        func place(_ c: inout AircraftConfig) -> Bool {
+            let a = Analysis(design: DesignBuilder.build(c))
+            c.batteryPosition = a.bestBatteryPosition.rounded()
+            return a.cgReachable
+        }
+        if place(&c) { return c }
+        let tooFarForward = Analysis(design: DesignBuilder.build(c)).requiredBatteryPosition < Analysis.batteryLimits(c).lowerBound
+        let packs = BatteryPack.allCases
+            .filter { c.motor.allowedCells.contains($0.cells) }
+            .sorted { tooFarForward ? $0.mass < $1.mass : $0.mass > $1.mass }
+            .filter { tooFarForward ? $0.mass > input.battery.mass : $0.mass < input.battery.mass }
+        for pack in packs {
+            var t = c
+            t.battery = pack
+            if place(&t) { return t }
+        }
+        return c
+    }
+
+    /// Keeps the battery but moves it to the balance point (clamped to where it physically fits).
+    func autoBalance() {
+        guard var c = config else { return }
         c.batteryPosition = balancedBatteryPosition(for: c)
         config = c
     }
 
+    /// Swaps to the lightest battery that lets the CG be reached and balances it.
+    func fixBalanceWithBattery() {
+        guard let c = config else { return }
+        let fixed = Project.balanced(c)
+        config = fixed
+        let reachable = analysis?.cgReachable ?? true
+        let note: String
+        if fixed.battery != c.battery {
+            note = reachable ? "Battery changed to \(fixed.battery.name) and moved to the balance point."
+                             : "Changed to \(fixed.battery.name) – still not enough. Adjust the geometry."
+        } else if !reachable {
+            note = "\(c.battery.name) is already the biggest pack this motor supports (\(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S). Reduce sweep, add FPV gear at the nose or choose a motor that takes bigger packs."
+        } else {
+            note = "Battery moved to the balance point."
+        }
+        balanceNote = note
+    }
+
     func rebuild() {
+        balanceNote = nil
         guard let c = config else { design = nil; analysis = nil; return }
         let d = DesignBuilder.build(c)
         design = d
@@ -44,20 +97,18 @@ final class Project: ObservableObject {
         return min(max(a.requiredBatteryPosition.rounded(), r.lowerBound), r.upperBound)
     }
 
-    func autoBalance() {
-        guard var c = config else { return }
-        c.batteryPosition = balancedBatteryPosition(for: c)
-        config = c
-    }
-
     /// Random variation of the current type that passes all feasibility checks.
     func randomize() {
-        guard let kind = config?.kind else { return }
+        guard let current = config else { return }
+        let kind = current.kind
         var best: AircraftConfig?
         var bestScore = -1
         for _ in 0..<120 {
             var c = AircraftConfig.random(kind: kind)
-            c.batteryPosition = balancedBatteryPosition(for: c)
+            c.fpv = current.fpv
+            c.fuselageType = current.fuselageType
+            c.aileronServos = current.aileronServos
+            c = Project.balanced(c)
             let a = Analysis(design: DesignBuilder.build(c))
             if a.feasible && a.score > bestScore { best = c; bestScore = a.score }
             if bestScore >= 92 { break }

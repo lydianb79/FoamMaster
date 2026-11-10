@@ -22,7 +22,11 @@ enum PrintedParts {
 
         out.append(PrintedPart(name: "Motor mount", fileName: "motor_mount_\(c.motor.rawValue)", quantity: 1,
                                mesh: motorMount(c.motor, foam: t),
-                               note: c.kind.isPusher ? "clamps on the wing trailing edge" : "clamps on the fuselage nose"))
+                               note: c.kind.isTailless ? "clamps on the wing trailing edge" : (c.kind.isTwinBoom ? "clamps on the pod tail" : "clamps on the fuselage nose")))
+        if c.fpv != .none {
+            out.append(PrintedPart(name: "FPV camera mount", fileName: "camera_mount_\(Int(c.fpv.cameraWidth))mm", quantity: 1,
+                                   mesh: cameraMount(width: c.fpv.cameraWidth), note: "\(Int(c.fpv.cameraWidth)) mm camera, M2 side screws, 15° up-tilt"))
+        }
 
         if !d.controls.isEmpty {
             out.append(PrintedPart(name: "Control horn", fileName: "control_horn_\(Int(t))mm", quantity: d.controls.count,
@@ -42,7 +46,7 @@ enum PrintedParts {
                                    quantity: g.count, mesh: servoFrame(cutout: g.size, foam: t), note: "press-fit into servo cutout"))
         }
 
-        if !c.kind.isTailless && c.dihedral >= 0.5 {
+        if c.kind.hasFuselage && c.dihedral >= 0.5 {
             out.append(PrintedPart(name: "Dihedral joiner \(Int(c.dihedral))°", fileName: "dihedral_joiner_\(Int(c.dihedral))deg", quantity: 1,
                                    mesh: dihedralJoiner(angle: c.dihedral, chord: c.rootChord, foam: t), note: "sets the wing dihedral in the fuselage slot"))
         }
@@ -94,6 +98,22 @@ enum PrintedParts {
         mesh.append(Mesh3D.box(min: [-len, -w / 2, 0], max: [0, w / 2, th]).rotated(a, axis: [0, 1, 0]))
         // Centre web fills the fuselage slot.
         mesh.append(.box(min: [-t / 2, -w / 2, 0], max: [t / 2, w / 2, th + 1]))
+        return mesh
+    }
+
+    static func cameraMount(width w: Double) -> Mesh3D {
+        let inner = w + 0.4, wall = 1.4, base = 1.2, h = w * 0.8
+        var mesh = Mesh3D.box(min: [-inner / 2 - wall, -8, 0], max: [inner / 2 + wall, 8, base])
+        // Side cheeks (YZ profile, tilted 15° back) with an M2 screw hole.
+        let a = 15.0 * .pi / 180
+        let profile = [Vec2(-8, 0), Vec2(8, 0), Vec2(8 + h * tan(a), h), Vec2(-8 + h * tan(a), h)]
+        let hole = [Poly.circle(Vec2(h * 0.6 * tan(a), h * 0.6), 1.1, segments: 14)]
+        for x in [-inner / 2 - wall, inner / 2] {
+            let cheek = Mesh3D.extrude(profile, holes: hole, z0: 0, z1: wall)
+                .transformed { p in SIMD3<Double>(x + p.z, p.x, p.y) }
+            // (u, v, w) → (w, u, v) is a cyclic axis swap, i.e. a proper rotation: normals stay outward.
+            mesh.append(cheek)
+        }
         return mesh
     }
 

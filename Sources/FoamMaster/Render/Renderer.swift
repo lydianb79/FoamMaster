@@ -116,7 +116,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     /// Renders the current scene into an image (used by the self-test and for snapshots).
-    func snapshot(width: Int, height: Int) -> CGImage? {
+    func snapshot(width: Int, height: Int, clear: MTLClearColor = MTLClearColor(red: 0.05, green: 0.06, blue: 0.12, alpha: 1)) -> CGImage? {
         let cd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
         cd.usage = [.renderTarget]; cd.textureType = .type2DMultisample; cd.sampleCount = 4; cd.storageMode = .private
         let rd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
@@ -130,7 +130,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         pass.colorAttachments[0].resolveTexture = resolve
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .multisampleResolve
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.05, green: 0.06, blue: 0.12, alpha: 1)
+        pass.colorAttachments[0].clearColor = clear
         pass.depthAttachment.texture = depth
         pass.depthAttachment.clearDepth = 1
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return nil }

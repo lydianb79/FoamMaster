@@ -11,11 +11,14 @@ enum SelfTest {
         for kind in AircraftKind.allCases {
             var c = kind.defaults
             let p = Project()
-            c.batteryPosition = p.balancedBatteryPosition(for: c)
+            c = Project.balanced(c); _ = p
             let d = DesignBuilder.build(c)
             let a = Analysis(design: d)
             print("== \(kind.title): AUW \(Int(a.totalMass)) g, foam \(Int(a.foamMass)) g, WL \(String(format: "%.1f", a.wingLoading)), CG \(String(format: "%.1f", a.cg.z)) target \(String(format: "%.1f", a.recommendedCG)), bat \(Int(c.batteryPosition)), TW \(String(format: "%.2f", a.thrustToWeight)), score \(a.score) feasible \(a.feasible)")
             for ch in a.checks where ch.severity >= .warning { print("   [\(ch.severity)] \(ch.title): \(ch.detail)") }
+            if let img = Thumbnailer.image(for: d, key: kind.rawValue + "-test"), let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                savePNG(cg, dir.appendingPathComponent("thumb_\(kind.rawValue).png"))
+            }
             let pdf = PlanPDF.render(d, a)
             try? pdf.write(to: dir.appendingPathComponent("\(kind.rawValue).pdf"))
             let layout = PlanLayout.make(d.parts)

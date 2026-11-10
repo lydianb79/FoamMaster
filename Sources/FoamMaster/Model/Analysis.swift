@@ -44,6 +44,12 @@ struct Analysis {
     var tailVolumeH = 0.0
     var tailVolumeV = 0.0
     var requiredBatteryPosition = 0.0
+    var batteryLimits: ClosedRange<Double> = 0...0
+    /// CG range the battery can produce when moved between its physical limits.
+    var achievableCG: ClosedRange<Double> = 0...0
+    var cgReachable: Bool { achievableCG.overlaps(cgRange) }
+    /// Battery position closest to the target that is physically possible.
+    var bestBatteryPosition: Double { min(max(requiredBatteryPosition, batteryLimits.lowerBound), batteryLimits.upperBound) }
     var checks: [Check] = []
 
     var feasible: Bool { !checks.contains { $0.severity == .error } }
@@ -90,7 +96,7 @@ struct Analysis {
             let sh = c.hStabSpan * c.hStabChord * 0.9
             let lh = (c.tailArm + 0.25 * c.hStabChord) - xacW
             tailVolumeH = sh * lh / (wingArea * mac)
-            let sv = c.vStabHeight * c.vStabChord * 1.1
+            let sv = c.vStabHeight * c.vStabChord * 1.1 * (c.kind.isTwinBoom ? 2 : 1)
             tailVolumeV = sv * (c.tailArm + c.hStabChord - 0.8 * c.vStabChord - xacW) / (wingArea * c.wingspan)
             let arH = c.hStabSpan * c.hStabSpan / sh
             let at = 2 * .pi * arH / (2 + sqrt(arH * arH + 4))
@@ -115,10 +121,22 @@ struct Analysis {
         thrust = c.motor.thrust(cells: c.battery.cells)
         thrustToWeight = thrust / max(totalMass, 1)
         let wPerKg: Double = [.glider: 70, .trainer: 100, .skykart: 110, .flyingWing: 120, .delta: 140, .aerobat: 170][c.kind]!
-        let current = wPerKg * totalMass / 1000 / c.battery.voltage
+        let current = (wPerKg * totalMass / 1000 + c.fpv.power) / c.battery.voltage
         flightTime = c.battery.capacity * 0.8 / 1000 / max(current, 0.01) * 60
 
+        batteryLimits = Analysis.batteryLimits(c)
+        if let bat {
+            let rest = cg.z * totalMass - bat.position.z * bat.mass
+            let a = (rest + bat.mass * batteryLimits.lowerBound) / totalMass, b = (rest + bat.mass * batteryLimits.upperBound) / totalMass
+            achievableCG = min(a, b)...max(a, b)
+        }
         runChecks(d, t: t)
+    }
+
+    static func batteryLimits(_ c: AircraftConfig) -> ClosedRange<Double> {
+        if c.kind.isTailless { return (c.battery.size.l / 2 - 8)...(c.rootChord * 0.55) }
+        if c.kind.isTwinBoom { return (-c.noseLength + c.battery.size.l / 2 + 5)...(c.rootChord * 0.6) }
+        return (-c.noseLength + c.battery.size.l / 2 + 5)...(c.rootChord)
     }
 
     private mutating func add(_ sev: Severity, _ cat: String, _ title: String, _ detail: String) {
@@ -166,13 +184,13 @@ struct Analysis {
         } else {
             add(.warning, "Balance", "CG out of range (\(f1(cgNow)) mm)", "Recommended \(f1(cgRange.lowerBound))–\(f1(cgRange.upperBound)) mm. Move battery to \(f0(requiredBatteryPosition)) mm.")
         }
-        let batLimits: ClosedRange<Double> = c.kind.isTailless
-            ? (-c.noseLength + c.battery.size.l / 2 + 3)...(c.rootChord * 0.5)
-            : (-c.noseLength + c.battery.size.l / 2 + 5)...(c.rootChord)
-        if !batLimits.contains(requiredBatteryPosition) {
+        let batLimits = Analysis.batteryLimits(c)
+        if !cgReachable {
             add(.error, "Balance", "CG cannot be reached with the battery",
                 "Battery would have to sit at \(f0(requiredBatteryPosition)) mm (allowed \(f0(batLimits.lowerBound))…\(f0(batLimits.upperBound))). " +
-                (requiredBatteryPosition < batLimits.lowerBound ? (c.kind.isTailless ? "Lengthen the nose pod or reduce sweep." : "Lengthen the nose or shorten the tail.") : "Shorten the nose or move mass aft."))
+                (requiredBatteryPosition < batLimits.lowerBound
+                    ? (c.kind.isTailless ? "Use “Fix with bigger battery”, reduce sweep or add FPV gear at the nose." : "Use “Fix with bigger battery”, lengthen the nose or shorten the tail.")
+                    : "Use a lighter battery, shorten the nose or move mass aft."))
         }
         if staticMargin < 0 { add(.warning, "Balance", "Currently tail-heavy (unstable)", "Negative static margin with the current battery position.") }
 
@@ -196,27 +214,48 @@ struct Analysis {
         let vMax = max(stallSpeed * 2.5, 30) / 3.6
         let q = 0.5 * 1.225 * vMax * vMax
         var servoOK = true
+        var loads: [String: Double] = [:]
         for ctrl in d.controls {
-            let hinge = 0.4 * q * (ctrl.area * 1e-6) * (ctrl.chord * 1e-3) * 10.2   // kg·cm
-            if hinge > c.servo.torque * 0.6 {
-                servoOK = false
-                add(.warning, "Servos", "\(ctrl.name): servo marginal", "Hinge moment ≈\(String(format: "%.2f", hinge)) kg·cm at \(f0(vMax * 3.6)) km/h vs \(c.servo.torque) kg·cm servo (want 40 % reserve).")
+            loads[ctrl.servoID, default: 0] += 0.4 * q * (ctrl.area * 1e-6) * (ctrl.chord * 1e-3) * 10.2   // kg·cm
+        }
+        for (servo, hinge) in loads.sorted(by: { $0.key < $1.key }) where hinge > c.servo.torque * 0.6 {
+            servoOK = false
+            add(.warning, "Servos", "\(servo): servo marginal", "Hinge moment ≈\(String(format: "%.2f", hinge)) kg·cm at \(f0(vMax * 3.6)) km/h vs \(c.servo.torque) kg·cm servo (want 40 % reserve).")
+        }
+        if servoOK { add(.ok, "Servos", "Servo torque sufficient", "\(loads.count) × \(c.servo.name) with ≥40 % reserve.") }
+
+        // Fuselage structure
+        if c.kind.hasFuselage {
+            let bh = max(20, c.fuselageHeight * 0.32)
+            let slender = (c.tailArm + c.hStabChord) / bh
+            let soft = c.material.family == .epp || c.material.thickness < 5
+            switch c.fuselageType {
+            case .profile where slender > 14 || (soft && slender > 10):
+                add(.error, "Structure", "Flat profile fuselage will not hold", "Tail boom is \(f0(slender))× longer than high\(soft ? " on soft/thin foam" : "") – it will twist and flex. Choose Cross + or X-brace.")
+            case .profile where slender > 9 || soft:
+                add(.warning, "Structure", "Flat profile fuselage may flex", "Consider a Cross + or X-brace fuselage for torsional stiffness.")
+            case .cross where slender > 22:
+                add(.warning, "Structure", "Long tail boom", "Even with cross plates the boom is slender – consider X-brace or a shorter tail arm.")
+            default:
+                add(.ok, "Structure", "\(c.fuselageType.name) fuselage", c.fuselageType == .profile ? "Short and stiff enough as a single sheet." : "Braced section resists bending and twisting.")
             }
         }
-        if servoOK { add(.ok, "Servos", "Servo torque sufficient", "\(d.controls.count) × \(c.servo.name) with ≥40 % reserve.") }
 
         // Propeller clearance
         let r = c.motor.propInches * 25.4 / 2
         if c.kind.isPusher {
             let w = TaperedPanel(rootChord: c.rootChord, tipChord: c.tipChord, sweep: c.sweep, semiSpan: c.semiSpan)
-            let propPlane = c.rootChord + 22
+            let propPlane = c.propPlaneZ
             let maxTE = stride(from: 0.0, through: min(r + 3, c.semiSpan), by: 2).map { w.te($0) }.max() ?? 0
             if maxTE > propPlane - 3 {
                 add(.error, "Geometry", "Propeller hits the trailing edge", "Swept TE reaches \(f0(maxTE)) mm within the \(f1(c.motor.propInches))\" prop disc (plane at \(f0(propPlane)) mm). Reduce sweep or increase root chord.")
             } else { add(.ok, "Geometry", "Propeller clearance OK", "\(f1(propPlane - maxTE)) mm to the trailing edge.") }
-            if c.battery.size.l > c.rootChord * 0.7 { add(.warning, "Geometry", "Battery long for the centre section", "Battery \(f0(c.battery.size.l)) mm vs root chord \(f0(c.rootChord)) mm.") }
+            if c.kind.isTailless && c.battery.size.l > c.rootChord * 0.7 { add(.warning, "Geometry", "Battery long for the centre section", "Battery \(f0(c.battery.size.l)) mm vs root chord \(f0(c.rootChord)) mm.") }
         } else if r > c.noseLength * 1.6 {
             add(.info, "Geometry", "Large prop on a short nose", "Hand-launch carefully, keep fingers clear.")
+        }
+        if c.fpv != .none {
+            add(.info, "FPV", "\(c.fpv.name) on board", "\(f1(c.fpv.mass)) g and ≈\(f1(c.fpv.power)) W drawn from the flight pack – included in weight, CG and flight time.")
         }
         add(.info, "Performance", "Estimated flight time \(f0(flightTime)) min", "Stall ≈ \(f0(stallSpeed)) km/h, AUW \(f0(totalMass)) g.")
         checks.sort { $0.severity > $1.severity }
