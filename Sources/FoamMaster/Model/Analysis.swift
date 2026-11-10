@@ -118,7 +118,7 @@ struct Analysis {
         wingLoading = totalMass / (wingArea * 1e-4)
         let clMax = c.kind.isTailless ? 0.65 : 0.8
         stallSpeed = sqrt(2 * totalMass / 1000 * 9.81 / (1.225 * sM2 * clMax)) * 3.6
-        thrust = c.motor.thrust(cells: c.battery.cells)
+        thrust = c.motor.thrust(cells: c.battery.cells) * Double(c.motorCount)
         thrustToWeight = thrust / max(totalMass, 1)
         let wPerKg: Double = [.glider: 70, .trainer: 100, .twinBoom: 110, .jet: 150, .flyingWing: 120, .delta: 140, .aerobat: 170][c.kind]!
         let current = (wPerKg * totalMass / 1000 + c.fpv.power) / c.battery.voltage
@@ -248,7 +248,12 @@ struct Analysis {
 
         // Propeller clearance
         let r = c.motor.propInches * 25.4 / 2
-        if c.kind.isTailless {
+        if c.isDual {
+            let body = c.kind.isTailless ? 6 : c.fuselagePlateWidth / 2
+            let clear = c.dualMotorX - r - body
+            if clear < 3 { add(.error, "Geometry", "Props hit the fuselage", "Dual motors at ±\(f0(c.dualMotorX)) mm leave \(f1(clear)) mm prop clearance – use smaller props.") }
+            else { add(.ok, "Geometry", "Dual tractor layout", "Motors at ±\(f0(c.dualMotorX)) mm, \(f1(clear)) mm prop clearance to the \(c.kind.isTailless ? "centre" : "fuselage"), counter-rotating props.") }
+        } else if c.kind.isTailless {
             let clear = c.motorNotchWidth / 2 - r
             add(.ok, "Geometry", "Motor sits in the trailing-edge cutout", "\(f0(c.motorNotchWidth)) × \(f0(c.motorNotchDepth)) mm cutout, \(f1(clear)) mm prop clearance each side.")
             if c.battery.size.l > c.rootChord * 0.7 { add(.warning, "Geometry", "Battery long for the centre section", "Battery \(f0(c.battery.size.l)) mm vs root chord \(f0(c.rootChord)) mm.") }

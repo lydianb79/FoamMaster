@@ -104,20 +104,23 @@ enum SceneBuilder {
                 let size: SIMD3<Double> = c.kind.isTailless ? [s.w, s.h, s.l] : [s.h, s.w, s.l]
                 scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.battery)
             case "Power" where item.name.contains("brushless"):
+                let right = item.position.x > 0.1
                 let r = c.motor.bellDiameter / 2
-                let out: Double = c.kind.isPusher ? 1 : -1          // direction from firewall towards the prop
+                let out: Double = c.isPusher ? 1 : -1          // direction from firewall towards the prop
                 scene.addMesh(cylinder(center: p, radius: r, length: c.motorLength * 0.85), color: Palette.motor)
                 // Shaft from the bell to the prop hub.
                 let shaftEnd = c.propPlaneZ
-                scene.addMesh(cylinder(center: [0, 0, (p.z + out * c.motorLength * 0.42 + shaftEnd) / 2], radius: 1.2,
+                scene.addMesh(cylinder(center: [p.x, 0, (p.z + out * c.motorLength * 0.42 + shaftEnd) / 2], radius: 1.2,
                                        length: abs(shaftEnd - (p.z + out * c.motorLength * 0.42)) + 1), color: SIMD4(0.75, 0.75, 0.78, 1))
                 let pr = c.motor.propInches * 25.4 / 2
                 let z = c.propPlaneZ
                 for k in 0..<48 {
                     let a0 = Double(k) / 48 * 2 * .pi, a1 = Double(k + 1) / 48 * 2 * .pi
-                    scene.addLine([cos(a0) * pr, sin(a0) * pr, z], [cos(a1) * pr, sin(a1) * pr, z], color: SIMD4(1, 1, 1, 0.25))
+                    scene.addLine([p.x + cos(a0) * pr, sin(a0) * pr, z], [p.x + cos(a1) * pr, sin(a1) * pr, z], color: SIMD4(1, 1, 1, 0.25))
                 }
-                scene.addMesh(propeller(radius: pr, blades: c.kind.propBlades, z: z, hub: r * 0.45, outward: out, mirrored: c.kind.isPusher), color: Palette.prop)
+                // Counter-rotating pair: the right-hand prop is the mirror image of the left one.
+                scene.addMesh(propeller(radius: pr, blades: c.kind.propBlades, z: z, hub: r * 0.45, outward: out, mirrored: c.isPusher != right)
+                                .translated([p.x, 0, 0]), color: Palette.prop)
             case "FPV":
                 if item.name.hasPrefix("FPV camera") {
                     let w = c.fpv.cameraWidth

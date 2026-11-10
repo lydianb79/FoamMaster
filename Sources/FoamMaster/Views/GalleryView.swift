@@ -98,9 +98,9 @@ struct GalleryContent: View {
         }
         .padding(48)
         .sheet(item: $selected) { kind in
-            SetupSheet(preview: previews.first { $0.kind == kind }!) { fpv, fins, layout, servos in
+            SetupSheet(preview: previews.first { $0.kind == kind }!) { fpv, fins, layout, servos, motors in
                 selected = nil
-                project.start(kind, fpv: fpv, fins: fins, ailerons: layout.ailerons, rudder: layout.rudder, aileronServos: servos)
+                project.start(kind, fpv: fpv, fins: fins, ailerons: layout.ailerons, rudder: layout.rudder, aileronServos: servos, motors: motors)
             } cancel: { selected = nil }
         }
     }
@@ -186,14 +186,16 @@ enum ControlLayout: String, CaseIterable, Hashable {
 /// Options asked for when a base model is picked.
 struct SetupSheet: View {
     var preview: ModelPreview
-    var start: (FPVSystem, TaillessFins, ControlLayout, Int) -> Void
+    var start: (FPVSystem, TaillessFins, ControlLayout, Int, MotorLayout) -> Void
     var cancel: () -> Void
     @State private var fpv: FPVSystem
     @State private var fins: TaillessFins
     @State private var layout: ControlLayout
     @State private var servos = 2
 
-    init(preview: ModelPreview, start: @escaping (FPVSystem, TaillessFins, ControlLayout, Int) -> Void, cancel: @escaping () -> Void) {
+    @State private var motors: MotorLayout = .single
+
+    init(preview: ModelPreview, start: @escaping (FPVSystem, TaillessFins, ControlLayout, Int, MotorLayout) -> Void, cancel: @escaping () -> Void) {
         self.preview = preview
         self.start = start
         self.cancel = cancel
@@ -203,11 +205,11 @@ struct SetupSheet: View {
         _fins = State(initialValue: d.taillessFins)
     }
 
-    private var optionKey: String { "\(preview.kind.rawValue)-\(fpv.rawValue)-\(fins.rawValue)-\(layout.rawValue)-\(servos)" }
+    private var optionKey: String { "\(preview.kind.rawValue)-\(fpv.rawValue)-\(fins.rawValue)-\(layout.rawValue)-\(servos)-\(motors.rawValue)" }
 
     private var candidate: AircraftConfig {
         var c = preview.kind.defaults
-        c.fpv = fpv; c.taillessFins = fins
+        c.fpv = fpv; c.taillessFins = fins; c.motorLayout = motors
         c.ailerons = layout.ailerons; c.rudder = layout.rudder
         c.aileronServos = preview.kind.isTwinBoom ? 2 : servos
         return c
@@ -262,6 +264,13 @@ struct SetupSheet: View {
                 }
             }
 
+            if kind.allowsDualMotors {
+                OptionGroup(title: "Motors", symbol: "fanblades.fill") {
+                    OptionTiles(selection: $motors, options: MotorLayout.allCases, title: \.name,
+                                detail: { $0 == .single ? (kind.isPusher ? "One pusher motor" : "One motor in the nose") : $0.detail }, tint: kind.tint)
+                }
+            }
+
             OptionGroup(title: "FPV system", symbol: "video.fill") {
                 OptionTiles(selection: $fpv, options: FPVSystem.allCases, title: \.name, detail: { $0 == .none ? $0.detail : "\(String(format: "%.0f", $0.mass)) g · \(String(format: "%.1f", $0.power)) W" }, tint: kind.tint)
             }
@@ -273,7 +282,7 @@ struct SetupSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
-                PillButton(title: "Start building", symbol: "arrow.right.circle.fill", prominent: true) { start(fpv, fins, layout, servos) }
+                PillButton(title: "Start building", symbol: "arrow.right.circle.fill", prominent: true) { start(fpv, fins, layout, servos, motors) }
                     .keyboardShortcut(.defaultAction)
             }
         }

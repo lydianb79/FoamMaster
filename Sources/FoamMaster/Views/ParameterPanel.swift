@@ -54,6 +54,12 @@ struct ParameterContent: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         SectionHeader(title: "Build options", symbol: "slider.horizontal.3")
+                        if c.kind.allowsDualMotors {
+                            Picker("", selection: bind(\.motorLayout)) {
+                                ForEach(MotorLayout.allCases) { Text($0.name).tag($0) }
+                            }
+                            .pickerStyle(.segmented).labelsHidden()
+                        }
                         PickerRow(label: "FPV", selection: bind(\.fpv), options: FPVSystem.allCases) { $0 == .none ? $0.name : "\($0.name) · \(Int($0.mass.rounded())) g" }
                         if !c.kind.isTailless {
                             Picker("", selection: Binding(get: { ControlLayout(ailerons: c.ailerons, rudder: c.rudder) },
@@ -107,7 +113,7 @@ struct ParameterContent: View {
                         PickerRow(label: "Motor", selection: bind(\.motor), options: MotorClass.allCases) { $0.name }
                         HStack(spacing: 6) {
                             Image(systemName: "fanblades.fill").font(.system(size: 10)).foregroundStyle(Theme.accent)
-                            Text("Prop \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.kind.isPusher, blades: c.kind.propBlades))")
+                            Text("Prop \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.isPusher, blades: c.kind.propBlades, pair: c.isDual))")
                                 .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
                         }.padding(.leading, 62)
                         Text(c.kind.propBladeReason).font(.system(size: 9.5)).foregroundStyle(.tertiary).padding(.leading, 78)

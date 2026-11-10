@@ -41,6 +41,9 @@ enum BuildDocs {
             items.append(BOMItem(category: "Carbon", item: CarbonSpar.tube4.name, spec: "Tail booms, \(Int(ceil(len / 10) * 10)) mm each, glued into grooves under wing and stabiliser", quantity: "2×"))
             items.append(BOMItem(category: "Carbon", item: "Carbon rod Ø1 mm", spec: "Elevator joiner (40 mm) + rudder link wire across the stab", quantity: "1×"))
         }
+        if c.isDual {
+            items.append(BOMItem(category: "Carbon", item: "Carbon flat strip 3 × 0.5 mm", spec: "Leading-edge reinforcement between the motors, \(Int(c.dualMotorX * 2 + 40)) mm", quantity: "1×"))
+        }
         if c.kind.isJet {
             items.append(BOMItem(category: "Carbon", item: "Carbon rod Ø0.8 mm", spec: "X-bracing across the wing centre, 2 × \(Int(c.rootChord + c.semiSpan * 0.5)) mm", quantity: "2×"))
         }
@@ -56,11 +59,12 @@ enum BuildDocs {
         items.append(BOMItem(category: "Hardware", item: "Hinge tape (Blenderm / clear tape)", spec: "\(Int(ceil(hingeLen * 1.1 / 10) * 10)) mm", quantity: "1 roll"))
         items.append(BOMItem(category: "Hardware", item: "Glue", spec: c.material.glue, quantity: "1"))
         items.append(BOMItem(category: "Hardware", item: "Velcro strip", spec: "15 × 40 mm for the battery", quantity: "1"))
-        items.append(BOMItem(category: "Hardware", item: "Motor screws \(c.motor.screw)", spec: "Length 4–6 mm", quantity: "4×"))
+        items.append(BOMItem(category: "Hardware", item: "Motor screws \(c.motor.screw)", spec: "Length 4–6 mm", quantity: "\(4 * c.motorCount)×"))
 
-        items.append(BOMItem(category: "Electronics", item: c.motor.name, spec: "\(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S, ~\(Int(a.thrust)) g thrust", quantity: "1×"))
-        items.append(BOMItem(category: "Electronics", item: "ESC", spec: "\(c.motor.escMass > 4 ? 12 : 6) A, \(c.battery.cells)S", quantity: "1×"))
-        items.append(BOMItem(category: "Electronics", item: "Propeller \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.kind.isPusher, blades: c.kind.propBlades))",
+        items.append(BOMItem(category: "Electronics", item: c.motor.name, spec: "\(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S, ~\(Int(a.thrust / Double(c.motorCount))) g thrust each\(c.isDual ? ", one CW + one CCW" : "")", quantity: "\(c.motorCount)×"))
+        items.append(BOMItem(category: "Electronics", item: "ESC", spec: "\(c.motor.escMass > 4 ? 12 : 6) A, \(c.battery.cells)S\(c.isDual ? " – both on the throttle channel via a Y-lead" : "")", quantity: "\(c.motorCount)×"))
+        if c.isDual { items.append(BOMItem(category: "Electronics", item: "Y-lead + parallel battery adapter", spec: "Throttle signal to both ESCs, power from one pack", quantity: "1×")) }
+        items.append(BOMItem(category: "Electronics", item: "Propeller \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.isPusher, blades: c.kind.propBlades, pair: c.isDual))",
                              spec: "\(c.kind.propBladeReason) · for the \(c.motor.name) on \(c.battery.cells)S – balance before use", quantity: "2× (spare)"))
         items.append(BOMItem(category: "Electronics", item: c.battery.name, spec: "\(c.battery.mass) g", quantity: "1×"))
         items.append(BOMItem(category: "Electronics", item: c.servo.name, spec: "\(c.servo.torque) kg·cm", quantity: "\(servoCount)×"))
@@ -113,6 +117,11 @@ enum BuildDocs {
         }
         if c.fpv != .none {
             s.append(BuildStep(title: "Install the FPV system", text: "Mount the \(c.fpv.name) camera in the printed camera mount at the marked nose position (≈15° up-tilt). Fix the transmitter with double-sided tape, keep the antenna clear of carbon and the prop, and power it from the flight pack.", symbol: "video"))
+        }
+        if c.isDual {
+            // Replace the single-motor step(s) with the twin-motor installation.
+            s.removeAll { $0.symbol == "fanblades" }
+            s.append(BuildStep(title: "Mount both motors", text: "\(c.kind.isTailless ? "Glue the centre keel under the wing with its tabs. " : "")Glue a 3 × 0.5 mm carbon strip into the leading edge between the two MOTOR marks, then push the wing-clamp motor mounts onto the leading edge at ±\(Int(c.dualMotorX)) mm and glue. Fit the CW prop on the right and the CCW prop on the left so both blow the same way, and check the props clear the fuselage.", symbol: "fanblades"))
         }
         s.append(BuildStep(title: "Install servos & linkages", text: "Glue the printed servo frames into the cutouts, push the servos in and centre them with the transmitter. Glue the horns into the horn slots (hole row over the hinge line). Make pushrods from Ø1 mm carbon with Z-bent 0.8 mm wire ends.", symbol: "gearshape.2"))
         s.append(BuildStep(title: "Electronics", text: "Connect ESC and servos to the receiver, fix the receiver with double-sided tape, route wires flat and tape them down. Fix velcro for the \(c.battery.name).", symbol: "bolt"))

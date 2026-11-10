@@ -11,16 +11,25 @@ extension AircraftConfig {
     var motorNotchWidth: Double { motor.propInches * 25.4 + 10 }
     /// Firewall (printed mount plate) position. The clamp always grips the structure ahead of / behind it:
     /// pusher = structure in front, motor and prop behind; tractor = structure behind, motor and prop in front.
+    /// Lateral position of the two motors of a dual-tractor layout: props clear the fuselage/pod and each other.
+    var dualMotorX: Double {
+        let r = motor.propInches * 25.4 / 2
+        let body = kind.isTailless ? 6 : fuselagePlateWidth / 2 + 6
+        return max(r + body + 6, semiSpan * 0.28)
+    }
     var firewallZ: Double {
+        if isDual { return sweep * dualMotorX / semiSpan - 2 }   // just ahead of the leading edge at the motor station
         if kind.isTailless { return rootChord - motorNotchDepth + 2 }
         if kind.isTwinBoom { return rootChord }
         if kind.isJet { return jetPropZ - 5 - motorLength }
         return -noseLength
     }
     /// Centre of the motor body.
-    var motorZ: Double { kind.isPusher ? firewallZ + motorLength / 2 : firewallZ - motorLength / 2 }
+    var motorZ: Double { isPusher ? firewallZ + motorLength / 2 : firewallZ - motorLength / 2 }
     /// z of the propeller disc (on the far side of the motor from the firewall).
-    var propPlaneZ: Double { kind.isPusher ? firewallZ + motorLength + 4 : firewallZ - motorLength - 4 }
+    var propPlaneZ: Double { isPusher ? firewallZ + motorLength + 4 : firewallZ - motorLength - 4 }
+    /// x positions of the motors.
+    var motorXs: [Double] { isDual ? [-dualMotorX, dualMotorX] : [0] }
     /// Lateral position of the twin booms / fins.
     var boomX: Double { hStabSpan / 2 - 7 }
     /// Width of the horizontal fuselage plate (cross fuselage) at the wing – about 8.5 % of the
@@ -200,15 +209,16 @@ enum DesignBuilder {
         mutating func buildTailless() {
             let w = wing
             let f = c.controlChordPct
-            let nw = c.motorNotchWidth, nd = c.motorNotchDepth
-            let v0 = max(s * 0.12, nw / 2 + 6)
+            let single = !c.isDual
+            let nw = single ? c.motorNotchWidth : 0, nd = single ? c.motorNotchDepth : 0
+            let v0 = single ? max(s * 0.12, nw / 2 + 6) : s * 0.12
             let v1 = s - 14
             if v1 - v0 < 40 { issues.append("Elevons are too short: the motor cutout needs \(Int(nw)) mm at the centre – use a smaller prop or more span.") }
             let out = w.build(full: true, surfaces: v1 > v0 + 10 ? [v0...v1] : [], fraction: f)
 
             // Motor sits in a cutout in the trailing edge (prop spins inside the cutout).
             func withMotorNotch(_ poly: [Vec2]) -> [Vec2] {
-                guard let i = poly.firstIndex(where: { abs($0.y) < 1e-6 && abs($0.x - w.te(0)) < 1e-6 }) else { return poly }
+                guard single, let i = poly.firstIndex(where: { abs($0.y) < 1e-6 && abs($0.x - w.te(0)) < 1e-6 }) else { return poly }
                 var p = poly
                 p.replaceSubrange(i...i, with: [Vec2(w.te(-nw / 2), -nw / 2), Vec2(w.te(0) - nd, -nw / 2),
                                                 Vec2(w.te(0) - nd, nw / 2), Vec2(w.te(nw / 2), nw / 2)])
@@ -216,7 +226,7 @@ enum DesignBuilder {
             }
             var outline = withMotorNotch(out.outline)
             var mainRegion = withMotorNotch(out.main)
-            if w.te(0) - nd < c.rootChord * 0.45 { issues.append("Root chord is too short for the motor cutout.") }
+            if single && w.te(0) - nd < c.rootChord * 0.45 { issues.append("Root chord is too short for the motor cutout.") }
             for v in [-12.0, 12.0] { outline = Poly.insertNotch(outline, at: Vec2(w.le(v), v)) }
 
             var holes: [Hole] = []
@@ -268,7 +278,7 @@ enum DesignBuilder {
             }
 
             // Centre keel under the wing (reinforcement strip, stays within the chord) – carries the motor mount clamp.
-            let k0 = 10.0, k1 = w.te(0) - nd + 2
+            let k0 = 10.0, k1 = single ? w.te(0) - nd + 2 : w.te(0) - 12
             let hk = max(12, min(20, c.rootChord * 0.08))
             if k1 - k0 > 40 {
                 var keel = [Vec2(k0, 0), Vec2(k0 + hk, -hk), Vec2(k1, -hk), Vec2(k1, 0)]
@@ -763,7 +773,7 @@ enum DesignBuilder {
                               features: (c.hasRudder ? [.hinge(Vec2(rHingeU, 0), Vec2(rHingeU, c.vStabHeight))] : []) + [.label("FIN", Vec2(c.vStabChord * 0.3, c.vStabHeight * 0.4))],
                               regions: c.hasRudder ? finRegions : [], instances: finInst, material: c.material))
 
-            if xb < propRadius + 6 { issues.append("Booms are inside the propeller disc – increase the stabiliser span (boom spacing) or use a smaller prop.") }
+            if !c.isDual && xb < propRadius + 6 { issues.append("Booms are inside the propeller disc – increase the stabiliser span (boom spacing) or use a smaller prop.") }
 
             let boomLen = ta + hsc * 0.55 - c.rootChord * 0.15
             components.append(MassItem(name: "Tail booms (2 × \(rod.name))", mass: 2 * boomLen / 1000 * rod.gramsPerMeter,
@@ -787,16 +797,32 @@ enum DesignBuilder {
         // MARK: Electronics & hardware
 
         mutating func addElectronics() {
-            let pusher = c.kind.isPusher
+            let pusher = c.isPusher
             let motorZ = c.motorZ
-            components.append(MassItem(name: c.motor.name, mass: c.motor.mass, position: [0, 0, motorZ], category: "Power"))
-            components.append(MassItem(name: "Propeller \(String(format: "%.1f", c.motor.propInches))\"", mass: c.motor.propInches * 0.35,
-                                       position: [0, 0, c.propPlaneZ], category: "Power"))
-            components.append(MassItem(name: "ESC", mass: c.motor.escMass, position: [0, 0, pusher ? c.rootChord * 0.15 : -c.noseLength * 0.3], category: "Power"))
+            for (i, x) in c.motorXs.enumerated() {
+                let tag = c.isDual ? (i == 0 ? " (left)" : " (right)") : ""
+                components.append(MassItem(name: c.motor.name + tag, mass: c.motor.mass, position: [x, 0, motorZ], category: "Power"))
+                components.append(MassItem(name: "Propeller\(tag)", mass: c.motor.propInches * 0.35, position: [x, 0, c.propPlaneZ], category: "Power"))
+                components.append(MassItem(name: "Motor mount (printed)\(tag)", mass: 1.5 + c.motor.mass * 0.12, position: [x, 0, c.firewallZ], category: "Printed"))
+                let escZ = c.isDual ? c.rootChord * 0.25 : (pusher ? c.rootChord * 0.15 : -c.noseLength * 0.3)
+                components.append(MassItem(name: "ESC\(tag)", mass: c.motor.escMass, position: [x * 0.5, 0, escZ], category: "Power"))
+            }
+            if c.isDual {
+                // Mark both motor stations on the wing plan (mount plate + clamp, prop clearance).
+                for i in parts.indices where parts[i].role == .wing {
+                    let half = parts[i].mirroredPair
+                    let offset = half ? (parts[i].instances.first?.origin.x ?? 0) : 0
+                    for x in (half ? [c.dualMotorX] : c.motorXs) {
+                        let v = half ? x - offset : x
+                        let u = c.sweep * abs(x) / c.semiSpan
+                        parts[i].features.append(.zone(Poly.rect(minU: u, maxU: u + 20, minV: v - c.motor.bellDiameter / 2 - 3, maxV: v + c.motor.bellDiameter / 2 + 3), "MOTOR"))
+                    }
+                }
+                if c.dualMotorX + propRadius > s - 5 { issues.append("The motors are too far out – props would overhang the wing tips. Use smaller props or more span.") }
+            }
             components.append(MassItem(name: "Receiver", mass: 2.5, position: [0, 0, pusher ? c.rootChord * 0.1 : c.rootChord * 0.3], category: "Radio"))
-            components.append(MassItem(name: "Wiring & connectors", mass: 3, position: [0, 0, c.rootChord * 0.15], category: "Radio"))
+            components.append(MassItem(name: "Wiring & connectors", mass: c.isDual ? 4.5 : 3, position: [0, 0, c.rootChord * 0.15], category: "Radio"))
             components.append(MassItem(name: c.battery.name, mass: c.battery.mass, position: batteryPos, category: "Battery"))
-            components.append(MassItem(name: "Motor mount (printed)", mass: 1.5 + c.motor.mass * 0.12, position: [0, 0, c.firewallZ], category: "Printed"))
 
             if c.fpv != .none {
                 components.append(MassItem(name: "FPV camera (\(c.fpv.name))", mass: c.fpv.cameraMass, position: fpvCamera, category: "FPV"))

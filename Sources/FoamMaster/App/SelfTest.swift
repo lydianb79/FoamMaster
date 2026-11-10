@@ -73,6 +73,23 @@ enum SelfTest {
             let expected = 4 + holes.reduce(0) { $0 + $1.count } + 2 * holes.count - 2
             print("   tri \(m.rawValue): \(tri.triangles.count / 3) of \(expected)")
         }
+        for kind in AircraftKind.allCases where kind.allowsDualMotors {
+            var c = kind.defaults
+            c.motorLayout = .dualTractor
+            c = Project.balanced(c)
+            let d = DesignBuilder.build(c)
+            let a = Analysis(design: d)
+            print("   dual \(kind.title): AUW \(Int(a.totalMass)) g, TW \(String(format: "%.2f", a.thrustToWeight)), motors ±\(Int(c.dualMotorX)) mm, bat \(c.battery.name) @ \(Int(c.batteryPosition)), feasible \(a.feasible)")
+            for ch in a.checks where ch.severity >= .warning { print("      [\(ch.severity)] \(ch.title): \(ch.detail)") }
+            let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+            if let r = Renderer(view: view) {
+                r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: true), resetCamera: true)
+                if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("dual_\(kind.rawValue)_3d.png")) }
+            }
+            for part in PrintedParts.generate(d) where part.fileName.contains("motor_mount") {
+                try? part.mesh.stlData(name: part.name).write(to: dir.appendingPathComponent("dual_\(kind.rawValue)_\(part.fileName).stl"))
+            }
+        }
         var feasible = 0
         for _ in 0..<20 {
             let c = AircraftConfig.random(kind: AircraftKind.allCases.randomElement()!)

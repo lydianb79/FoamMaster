@@ -2,6 +2,14 @@ import Foundation
 
 let maxWingspan: Double = 600
 
+/// Propulsion layout.
+enum MotorLayout: String, CaseIterable, Identifiable, Codable {
+    case single, dualTractor
+    var id: String { rawValue }
+    var name: String { self == .single ? "Single motor" : "Dual tractor" }
+    var detail: String { self == .single ? "Standard position for this type" : "Two counter-rotating motors on the wing leading edge" }
+}
+
 /// Vertical stabilisation of tailless aircraft.
 enum TaillessFins: String, CaseIterable, Identifiable, Codable {
     case winglets, centreFin
@@ -57,6 +65,8 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
     var defaultRudder: Bool { !isTailless }
     var isPusher: Bool { isTailless || self == .twinBoom || self == .jet }
     var isJet: Bool { self == .jet }
+    /// The jet's single prop spins in a slot in the middle – no twin motor option there.
+    var allowsDualMotors: Bool { !isJet }
     /// Recommended number of prop blades: 2 for efficiency where the diameter is free; 3 where the diameter
     /// is limited (prop slot / trailing-edge cutout) or for strong, smooth thrust in 3D flying.
     var propBlades: Int {
@@ -187,6 +197,11 @@ struct AircraftConfig: Codable, Equatable {
     /// Tailless only: winglets or a centre fin, and the centre fin's leading-edge position (mm aft of the root LE).
     var taillessFins: TaillessFins = .winglets
     var finPosition: Double = 40
+    var motorLayout: MotorLayout = .single
+    var isDual: Bool { motorLayout == .dualTractor && kind.allowsDualMotors }
+    var motorCount: Int { isDual ? 2 : 1 }
+    /// Effective pusher configuration (dual layouts are always tractors).
+    var isPusher: Bool { kind.isPusher && !isDual }
     var hasRudder: Bool { !kind.isTailless && rudder }
 
     init(kind: AircraftKind) {

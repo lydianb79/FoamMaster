@@ -20,9 +20,15 @@ enum PrintedParts {
         let t = c.material.thickness
         var out: [PrintedPart] = []
 
-        out.append(PrintedPart(name: "Motor mount", fileName: "motor_mount_\(c.motor.rawValue)", quantity: 1,
-                               mesh: motorMount(c.motor, foam: t, web: c.kind.hasFuselage ? t * Double(c.fuselageType.webLayers) : t),
-                               note: c.kind.isTailless ? "clamps on the wing trailing edge" : (c.kind.isTwinBoom ? "clamps on the pod tail" : "clamps on the fuselage nose")))
+        if c.isDual {
+            // Wing-only clamp: grips the leading edge from above and below (no vertical slot).
+            out.append(PrintedPart(name: "Motor mount (wing LE)", fileName: "motor_mount_\(c.motor.rawValue)_wing", quantity: 2,
+                                   mesh: motorMount(c.motor, foam: t, web: 0), note: "clamps on the wing leading edge at the MOTOR marks"))
+        } else {
+            out.append(PrintedPart(name: "Motor mount", fileName: "motor_mount_\(c.motor.rawValue)", quantity: 1,
+                                   mesh: motorMount(c.motor, foam: t, web: c.kind.hasFuselage ? t * Double(c.fuselageType.webLayers) : t),
+                                   note: c.kind.isTailless ? "clamps on the wing trailing edge" : (c.kind.isTwinBoom ? "clamps on the pod tail" : "clamps on the fuselage nose")))
+        }
         if c.fpv != .none {
             // Tailed aircraft: saddle that slides over the top edge of the vertical fuselage at the nose.
             // Tailless: flat base glued on the wing apex.
@@ -77,6 +83,12 @@ enum PrintedParts {
         // Four corner blocks leave a + shaped channel that grips the vertical fuselage
         // halves and the horizontal plate (or wing + keel) at the same time.
         let gapX = tw / 2 + 0.15, gapY = t / 2 + 0.15, len = 22.0, e = plate / 2
+        if tw <= 0 {
+            // Wing-only clamp (dual tractor on the leading edge): solid jaws above and below the wing.
+            mesh.append(.box(min: [-e, gapY, th], max: [e, e, th + len]))
+            mesh.append(.box(min: [-e, -e, th], max: [e, -gapY, th + len]))
+            return mesh
+        }
         for sx in [-1.0, 1.0] {
             for sy in [-1.0, 1.0] {
                 let x0 = sx > 0 ? gapX : -e, x1 = sx > 0 ? e : -gapX

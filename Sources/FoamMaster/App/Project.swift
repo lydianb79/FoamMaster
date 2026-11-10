@@ -27,13 +27,14 @@ final class Project: ObservableObject {
     @Published var balanceNote: String?
 
     func start(_ kind: AircraftKind, fpv: FPVSystem? = nil, fins: TaillessFins? = nil,
-               ailerons: Bool? = nil, rudder: Bool? = nil, aileronServos: Int = 2) {
+               ailerons: Bool? = nil, rudder: Bool? = nil, aileronServos: Int = 2, motors: MotorLayout = .single) {
         var c = kind.defaults
         if let fpv { c.fpv = fpv }
         if let ailerons { c.ailerons = ailerons }
         if let rudder { c.rudder = rudder }
         c.aileronServos = kind.isTwinBoom ? 2 : aileronServos
         if let fins { c.taillessFins = fins }
+        c.motorLayout = kind.allowsDualMotors ? motors : .single
         config = Project.balanced(c)
         inspectorTab = .analysis
     }
@@ -146,6 +147,7 @@ final class Project: ObservableObject {
             c.ailerons = current.ailerons
             c.rudder = current.rudder
             c.taillessFins = current.taillessFins
+            c.motorLayout = current.motorLayout
             c = Project.balanced(c)
             let a = Analysis(design: DesignBuilder.build(c))
             if a.feasible && a.score > bestScore { best = c; bestScore = a.score }
