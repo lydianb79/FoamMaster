@@ -187,6 +187,11 @@ struct AircraftConfig: Codable, Equatable {
     var hStabChord: Double = 75
     var vStabHeight: Double = 80
     var vStabChord: Double = 80
+    /// Corner rounding radii (mm) on tailed planes: wing tips (LE and TE corners), fin / rudder top corners and the
+    /// elevator's trailing-edge tip corners.
+    var wingTipRounding: Double = 0
+    var finTopRounding: Double = 0
+    var stabTipRounding: Double = 0
     /// Extra width of the horizontal fuselage plate (cross) over the default – only wider is allowed.
     var plateWidthExtra: Double = 0
     static let maxPlateWidthExtra = 40.0

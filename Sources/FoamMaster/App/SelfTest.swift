@@ -201,6 +201,21 @@ enum SelfTest {
             }
             print("   power search: \(String(format: "%.2f", Date().timeIntervalSince(t0) / 9)) s per search")
         }
+        // Rounded wing tips, fin/rudder top and elevator tips on the tailed types.
+        for kind in AircraftKind.allCases where kind.hasTail {
+            var c = kind.defaults; c.wingTipRounding = 30; c.finTopRounding = 25; c.stabTipRounding = 20
+            c = Project.balanced(c)
+            let d = DesignBuilder.build(c); let a = Analysis(design: d)
+            let bad = d.parts.filter { !Poly.isSimple($0.outline) }.map(\.name)
+            print("   rounded \(kind.title): feasible \(a.feasible), score \(a.score), outline points \(d.parts.map { $0.outline.count }.reduce(0, +))\(bad.isEmpty ? "" : ", NOT SIMPLE: \(bad)")" + d.geometryIssues.map { " [\($0)]" }.joined())
+            if kind == .trainer || kind == .twinBoom || kind == .jet {
+                let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+                if let r = Renderer(view: view) {
+                    r.setScene(SceneBuilder.aircraft(d, a, deflection: 0.3, showCG: false), resetCamera: true)
+                    if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("rounded_\(kind.rawValue).png")) }
+                }
+            }
+        }
         // Tail close-ups from the side with the elevator up: the rudder cut-out must clear it.
         for kind in [AircraftKind.trainer, .jet, .nutBall] {
             let c = Project.balanced(kind.defaults)

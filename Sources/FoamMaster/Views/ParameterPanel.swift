@@ -54,6 +54,10 @@ struct ParameterContent: View {
                         } else {
                             ParamSlider(label: "Tip chord", unit: "mm", value: bind(\.tipChord), range: range(\.tipChord, c), step: 1)
                             ParamSlider(label: "Sweep (tip LE)", unit: "mm", value: bind(\.sweep), range: range(\.sweep, c), step: 1)
+                            if c.kind.hasTail {
+                                ParamSlider(label: "Wing tip rounding", unit: "mm", value: bind(\.wingTipRounding),
+                                            range: 0...max(5, (c.tipChord * 0.45).rounded()), step: 1)
+                            }
                         }
                         if c.kind.isTailless || c.hasAilerons {
                             ParamSlider(label: c.kind.isTailless ? "Elevon chord" : "Aileron chord", unit: "%",
@@ -100,6 +104,12 @@ struct ParameterContent: View {
                             ParamSlider(label: "Stab chord", unit: "mm", value: bind(\.hStabChord), range: range(\.hStabChord, c), step: 1)
                             ParamSlider(label: "Fin height", unit: "mm", value: bind(\.vStabHeight), range: range(\.vStabHeight, c), step: 1)
                             ParamSlider(label: "Fin chord", unit: "mm", value: bind(\.vStabChord), range: range(\.vStabChord, c), step: 1)
+                            ParamSlider(label: c.hasRudder ? "Rudder / fin top rounding" : "Fin top rounding", unit: "mm", value: bind(\.finTopRounding),
+                                        range: 0...max(5, (c.vStabChord * 0.5).rounded()), step: 1)
+                            if !c.kind.isTwinBoom {
+                                ParamSlider(label: "Elevator tip rounding", unit: "mm", value: bind(\.stabTipRounding),
+                                            range: 0...max(5, (c.hStabChord * 0.4).rounded()), step: 1)
+                            }
                         }
                         .glass()
                     }

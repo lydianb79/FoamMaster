@@ -170,6 +170,22 @@ enum DesignBuilder {
         var s: Double { c.semiSpan }
         var propRadius: Double { c.propRadius }
 
+        /// Wing-tip rounding radius actually used: tailed planes only; with tip winglets it stays clear of their tabs.
+        var wingTipRadius: Double {
+            guard c.kind.hasTail else { return 0 }
+            var r = max(0, c.wingTipRounding)
+            if c.tailWinglets && c.wingletHeight > 5 { r = min(r, max(0, c.tipChord * 0.25 - 6)) }
+            return min(r, c.tipChord * 0.45)
+        }
+        var finTopRadius: Double { c.kind.hasTail ? max(0, c.finTopRounding) : 0 }
+        var stabTipRadius: Double { c.kind.hasTail && !c.kind.isTwinBoom ? max(0, c.stabTipRounding) : 0 }
+        /// Rounds the given corners of several polygons that share them.
+        func rounded(_ polys: [[Vec2]], corners: [Vec2], radius r: Double) -> [[Vec2]] {
+            var p = polys
+            for corner in corners { Poly.filletShared(&p, at: corner, radius: r) }
+            return p
+        }
+
         // Single central aileron servo (RC Factory cartoon style): it hangs upside down in the LOWER fuselage half
         // under the wing (shaft down), a double-ended arm below it drives both ailerons with one short pushrod each
         // to a horn under each aileron. The upper half keeps the elevator and rudder servos.
@@ -423,11 +439,16 @@ enum DesignBuilder {
                                     sweep: c.sweep - w.le(hw), semiSpan: span)
             let central = centralAileron
             let a0 = central ? 3 : max(8, s * 0.3 - hw)
-            let surfaces: [ClosedRange<Double>] = c.hasAilerons ? [a0...(span - 10)] : []
+            let surfaces: [ClosedRange<Double>] = c.hasAilerons ? [a0...(span - 10 - wingTipRadius)] : []
             let out = half.build(full: false, surfaces: surfaces, fraction: f)
             let ua = half.le(0), ub = half.te(0)
             let tabUs = [ua + (ub - ua) * 0.3, ua + (ub - ua) * 0.72]
             var outline = out.outline, main = out.main
+            // Rounded wing tip (LE and TE corners) – the aileron ends far enough inboard to keep it in the fixed tip.
+            if wingTipRadius > 0 {
+                let r = rounded([outline, main], corners: [Vec2(half.le(span), span), Vec2(half.te(span), span)], radius: wingTipRadius)
+                outline = r[0]; main = r[1]
+            }
             for tu in tabUs {
                 outline = Poly.insertTab(outline, at: Vec2(tu, 0), width: 10, height: 6)
                 main = Poly.insertTab(main, at: Vec2(tu, 0), width: 10, height: 6)
@@ -511,9 +532,13 @@ enum DesignBuilder {
             func mirrored(_ r: [Vec2]) -> [Vec2] { r.reversed().map { Vec2($0.x, -$0.y) } }
             let rOutline = noseSide + wingSide + boomSide + [Vec2(stab.te(sh), sh)]
             let rMain = noseSide + wingSide + boomSide + [Vec2(uH, sh)]
-            let plateOutline = Poly.ccw(rOutline + [Vec2(stab.te(0), 0)] + mirrored(rOutline))
+            var plateOutline = Poly.ccw(rOutline + [Vec2(stab.te(0), 0)] + mirrored(rOutline))
             let plateMain = Poly.ccw(rMain + mirrored(rMain))
-            let elevator = Poly.ccw([Vec2(uH, -sh), Vec2(uH, sh), Vec2(stab.te(sh), sh), Vec2(stab.te(0), 0), Vec2(stab.te(sh), -sh)])
+            var elevator = Poly.ccw([Vec2(uH, -sh), Vec2(uH, sh), Vec2(stab.te(sh), sh), Vec2(stab.te(0), 0), Vec2(stab.te(sh), -sh)])
+            if stabTipRadius > 0 {       // rounded elevator trailing-edge tips
+                let r = rounded([plateOutline, elevator], corners: [Vec2(stab.te(sh), sh), Vec2(stab.te(sh), -sh)], radius: stabTipRadius)
+                plateOutline = r[0]; elevator = r[1]
+            }
             if !Poly.isSimple(plateOutline) { issues.append("Fuselage plate outline intersects itself – check tail arm, stabiliser and wing chord.") }
 
             // --- Upper fuselage half (with fin & rudder) and lower half.
@@ -536,11 +561,15 @@ enum DesignBuilder {
             let rg = c.hasRudder ? TaperedPanel.endGap : 0     // rudder clears the plate / elevator by this gap
             // Cut-out at the bottom of the rudder (or fixed fin) so the one-piece elevator can move up under it.
             let rCut = rg + rudderChord * DesignBuilder.rudderCutSlope
-            let upper: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0)] + (rg > 0 ? [Vec2(uH, rg)] : []) + [Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
+            var upper: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0)] + (rg > 0 ? [Vec2(uH, rg)] : []) + [Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
                                  Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, noseFront)]
             var upperMain: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
                                      Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, noseFront)]
-            let rudder = [Vec2(uH, rg), Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH, finTop)]
+            var rudder = [Vec2(uH, rg), Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH, finTop)]
+            if finTopRadius > 0 {        // rounded fin / rudder top corners
+                let r = rounded([upper, upperMain, rudder], corners: [Vec2(uR, finTop), Vec2(uH - 0.3 * vsc, finTop)], radius: finTopRadius)
+                upper = r[0]; upperMain = r[1]; rudder = r[2]
+            }
             let hasRudder = c.hasRudder
             if !hasRudder { upperMain = upper }
             let layers = Double(c.fuselageType.webLayers)
@@ -641,8 +670,12 @@ enum DesignBuilder {
             // --- Wing (one piece) with prop slot, ailerons and joints for nose and tail plates.
             let fA = c.controlChordPct
             let a0 = max(slotHalf + 12, s * 0.35)
-            let out = w.build(full: true, surfaces: c.hasAilerons ? [a0...(s - 8)] : [], fraction: fA)
+            let out = w.build(full: true, surfaces: c.hasAilerons ? [a0...(s - 8 - wingTipRadius)] : [], fraction: fA)
             var wingOutline = out.outline, wingMain = out.main
+            if wingTipRadius > 0 {
+                let r = rounded([wingOutline, wingMain], corners: [Vec2(w.le(s), s), Vec2(w.te(s), s), Vec2(w.le(s), -s), Vec2(w.te(s), -s)], radius: wingTipRadius)
+                wingOutline = r[0]; wingMain = r[1]
+            }
             for v in [-hw * 0.5, hw * 0.5] {
                 for u in [w.le(v), w.te(v)] {
                     wingOutline = Poly.insertTab(wingOutline, at: Vec2(u, v), width: 10, height: -6)
@@ -696,7 +729,11 @@ enum DesignBuilder {
                 tail = Poly.insertTab(tail, at: Vec2(w.te(v), v), width: 10, height: 6)
                 tailMain = Poly.insertTab(tailMain, at: Vec2(w.te(v), v), width: 10, height: 6)
             }
-            let elevator = Poly.ccw([Vec2(uH, -sh), Vec2(uH, sh), Vec2(stab.te(sh), sh), Vec2(stab.te(sh), -sh)])
+            var elevator = Poly.ccw([Vec2(uH, -sh), Vec2(uH, sh), Vec2(stab.te(sh), sh), Vec2(stab.te(sh), -sh)])
+            if stabTipRadius > 0 {
+                let r = rounded([tail, elevator], corners: [Vec2(stab.te(sh), sh), Vec2(stab.te(sh), -sh)], radius: stabTipRadius)
+                tail = r[0]; elevator = r[1]
+            }
 
             // --- Vertical fuselage: one upper and one lower piece from nose to tail. The prop spins in a window cut
             // into both (and the prop slot in the wing); a frame of foam closes the fuselage above and below it.
@@ -716,7 +753,11 @@ enum DesignBuilder {
             var upper = [Vec2(uN + 12, 0)] + window + [Vec2(uH, 0)] + (rgJ > 0 ? [Vec2(uH, rgJ)] : []) +
                 [Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH - 0.35 * vsc, finTop)] + topLine
             var upperMain = [Vec2(uN + 12, 0)] + window + [Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.35 * vsc, finTop)] + topLine
-            let rudder = [Vec2(uH, rgJ), Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH, finTop)]
+            var rudder = [Vec2(uH, rgJ), Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH, finTop)]
+            if finTopRadius > 0 {
+                let r = rounded([upper, upperMain, rudder], corners: [Vec2(uR, finTop), Vec2(uH - 0.35 * vsc, finTop)], radius: finTopRadius)
+                upper = r[0]; upperMain = r[1]; rudder = r[2]
+            }
             if !c.hasRudder { upperMain = upper }
             if finLE < wR + 25 { issues.append("Fin is too long for the tail arm – it reaches the prop window.") }
             if c.rootChord * 0.2 > wF - 25 { issues.append("The prop window starts too far forward – increase the root chord or use a smaller prop.") }
@@ -802,8 +843,12 @@ enum DesignBuilder {
             // One-piece wing; the pod nose plate keys into its leading edge.
             let fA = c.controlChordPct
             let a0 = max(s * 0.3, xb + 14)
-            let out = w.build(full: true, surfaces: c.hasAilerons ? [a0...(s - 10)] : [], fraction: fA)
+            let out = w.build(full: true, surfaces: c.hasAilerons ? [a0...(s - 10 - wingTipRadius)] : [], fraction: fA)
             var wingOutline = out.outline, twinMain = out.main
+            if wingTipRadius > 0 {
+                let r = rounded([wingOutline, twinMain], corners: [Vec2(w.le(s), s), Vec2(w.te(s), s), Vec2(w.le(s), -s), Vec2(w.te(s), -s)], radius: wingTipRadius)
+                wingOutline = r[0]; twinMain = r[1]
+            }
             for v in [-hw * 0.5, hw * 0.5] {
                 wingOutline = Poly.insertTab(wingOutline, at: Vec2(w.le(v), v), width: 10, height: -6)
                 twinMain = Poly.insertTab(twinMain, at: Vec2(w.le(v), v), width: 10, height: -6)
@@ -874,7 +919,17 @@ enum DesignBuilder {
             let soElevator = Poly.ccw([Vec2(uHs, -(eb - g)), Vec2(uHs, eb - g), Vec2(ue, eb - g), Vec2(ue, -(eb - g))])
             var stabHoles: [Hole] = []
             // Twin fins are end plates glued to the SIDE of the stabiliser tips (tip tabs into fin slots).
-            let fin = sideFin(chord: c.vStabChord, height: c.vStabHeight, below: max(10, c.vStabHeight * 0.2), rudderFrac: c.hasRudder ? 0.4 : 0)
+            let fin0 = sideFin(chord: c.vStabChord, height: c.vStabHeight, below: max(10, c.vStabHeight * 0.2), rudderFrac: c.hasRudder ? 0.4 : 0)
+            var fin = fin0
+            if finTopRadius > 0 {
+                // Same top corners as sideFin: rudder (or fin) trailing edge top and the fin's leading edge top.
+                let fc = c.vStabChord, h = c.vStabHeight
+                let topLE = min(h * 0.55 + fc * 0.25, fc * 0.75 + h * 0.2)
+                let topTE = c.hasRudder ? fc : fc + h * 0.2
+                let r = rounded([fin.outline, fin.main] + (fin.rudder.map { [$0] } ?? []), corners: [Vec2(topTE, h), Vec2(topLE, h)], radius: finTopRadius)
+                fin.outline = r[0]; fin.main = r[1]
+                if fin.rudder != nil { fin.rudder = r[2] }
+            }
             let finU0 = ta + hsc - c.vStabChord
             var stabOutline = soOutline
             var stabRegions = [Region(polygon: soMain, isControl: false), Region(polygon: soElevator, isControl: true)]

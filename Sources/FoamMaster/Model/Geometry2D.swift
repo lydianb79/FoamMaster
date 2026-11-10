@@ -152,6 +152,57 @@ enum Poly {
     }
 
     /// Cuts a small V alignment notch into the edge of `outline` closest to `point`.
+    /// Rounds the corner of `poly` at `corner` (an existing vertex) with radius `r`: the vertex is replaced by an
+    /// arc tangent to both edges. The radius is capped at 45 % of the shorter adjacent edge. Polygons sharing the
+    /// corner with the same edge directions get identical arcs.
+    static func fillet(_ poly: [Vec2], at corner: Vec2, radius r: Double, segments: Int = 10) -> [Vec2] {
+        guard r > 0.2, let i = poly.firstIndex(where: { simd_distance($0, corner) < 1e-6 }) else { return poly }
+        let n = poly.count
+        let p1 = poly[i], p0 = poly[(i - 1 + n) % n], p2 = poly[(i + 1) % n]
+        let l0 = simd_distance(p0, p1), l2 = simd_distance(p2, p1)
+        guard l0 > 1e-6, l2 > 1e-6 else { return poly }
+        let d0 = (p0 - p1) / l0, d2 = (p2 - p1) / l2
+        let cosA = max(-0.999, min(0.999, simd_dot(d0, d2)))
+        let half = acos(cosA) / 2
+        guard half > 0.02, half < .pi / 2 - 0.02 else { return poly }
+        var tdist = r / tan(half)
+        tdist = min(tdist, 0.45 * min(l0, l2))
+        let rEff = tdist * tan(half)
+        let a = p1 + d0 * tdist, b = p1 + d2 * tdist
+        let bis = simd_normalize(d0 + d2)
+        let c = p1 + bis * (rEff / sin(half))
+        let a0 = atan2(a.y - c.y, a.x - c.x)
+        var a1 = atan2(b.y - c.y, b.x - c.x)
+        var da = a1 - a0
+        while da > .pi { da -= 2 * .pi }
+        while da < -.pi { da += 2 * .pi }
+        a1 = a0 + da
+        let arc = (0...segments).map { k -> Vec2 in
+            let t = a0 + (a1 - a0) * Double(k) / Double(segments)
+            return c + Vec2(cos(t), sin(t)) * rEff
+        }
+        var out = poly
+        out.replaceSubrange(i...i, with: arc)
+        return out
+    }
+    /// Same radius cap `fillet` would apply at that corner (so several polygons can share one effective radius).
+    static func filletLimit(_ poly: [Vec2], at corner: Vec2) -> Double {
+        guard let i = poly.firstIndex(where: { simd_distance($0, corner) < 1e-6 }) else { return .greatestFiniteMagnitude }
+        let n = poly.count
+        let p1 = poly[i], p0 = poly[(i - 1 + n) % n], p2 = poly[(i + 1) % n]
+        let l0 = simd_distance(p0, p1), l2 = simd_distance(p2, p1)
+        let d0 = (p0 - p1) / max(l0, 1e-9), d2 = (p2 - p1) / max(l2, 1e-9)
+        let half = acos(max(-0.999, min(0.999, simd_dot(d0, d2)))) / 2
+        return 0.45 * min(l0, l2) * tan(half)
+    }
+    /// Rounds a corner shared by several polygons with one radius (capped so it fits every one of them).
+    static func filletShared(_ polys: inout [[Vec2]], at corner: Vec2, radius r: Double) {
+        guard r > 0.2 else { return }
+        let limit = polys.map { filletLimit($0, at: corner) }.min() ?? 0
+        let rr = min(r, limit)
+        for k in polys.indices { polys[k] = fillet(polys[k], at: corner, radius: rr) }
+    }
+
     static func insertNotch(_ outline: [Vec2], at point: Vec2, width: Double = 4, depth: Double = 2.5) -> [Vec2] {
         var poly = ccw(outline)
         var best = (i: 0, t: 0.0, d: Double.greatestFiniteMagnitude)
