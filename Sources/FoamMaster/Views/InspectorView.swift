@@ -339,14 +339,14 @@ struct ControlsCard: View {
     func linkNote(_ servo: String, _ n: Int) -> String {
         if servo.contains("torque") { return " · one servo, torque rods" }
         if servo == "Rudders" { return " · twin rudders linked by a wire" }
-        if servo == "Elevator" && design.config.kind.isTwinBoom { return " · elevator halves joined" }
+        if servo == "Elevator" { return " · one-piece elevator" }
         return ""
     }
 }
 
 extension Array where Element == ControlSurface {
-    /// Physical surfaces (split elevator halves and twin rudders count separately).
+    /// Physical surfaces (twin rudders count separately; the elevator is one piece).
     var surfaceCount: Int {
-        reduce(0) { n, c in n + ((c.name == "Rudders" || (c.name == "Elevator")) ? 2 : 1) }
+        reduce(0) { n, c in n + (c.name == "Rudders" ? 2 : 1) }
     }
 }

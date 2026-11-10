@@ -39,7 +39,7 @@ enum BuildDocs {
         if c.kind.isTwinBoom {
             let len = c.tailArm + c.hStabChord * 0.55 - c.rootChord * 0.15
             items.append(BOMItem(category: "Carbon", item: CarbonSpar.tube4.name, spec: "Tail booms, \(Int(ceil(len / 10) * 10)) mm each, glued into grooves under wing and stabiliser", quantity: "2×"))
-            items.append(BOMItem(category: "Carbon", item: "Carbon rod Ø1 mm", spec: "Elevator joiner (40 mm) + rudder link wire across the stab", quantity: "1×"))
+            items.append(BOMItem(category: "Carbon", item: "Carbon rod Ø1 mm", spec: "Rudder link wire across the stab", quantity: "1×"))
         }
         if c.isDual {
             items.append(BOMItem(category: "Carbon", item: "Carbon flat strip 3 × 0.5 mm", spec: "Leading-edge reinforcement between the motors, \(Int(c.dualMotorX * 2 + 40)) mm", quantity: "1×"))
@@ -81,7 +81,7 @@ enum BuildDocs {
         var s: [BuildStep] = [
             BuildStep(title: "Print & assemble the plans", text: "Print the plan at 100 % (no scaling). Verify the 100 mm scale bar on the cover. Trim the tiles along the frame lines, align them with the registration crosses and tape them together.", symbol: "printer"),
             BuildStep(title: "Transfer & cut the foam", text: "Pin the plans onto the \(c.material.displayName) sheet and cut with a fresh snap-off blade along a metal ruler. Cut all slots, servo cutouts and horn slots (filled shapes) completely through. V-notches mark alignment points – cut them too.", symbol: "scissors"),
-            BuildStep(title: "Prepare control surfaces", text: "Cut free each surface along the solid side cuts. On the dashed hinge line bevel the lower edge 45°, then hinge with tape on the top side. Check for at least ±30° deflection.", symbol: "rectangle.split.2x1")
+            BuildStep(title: "Prepare control surfaces", text: "Cut free each surface along the solid side cuts. On the dashed hinge line bevel the lower edge 45°, then hinge with tape on the top side. Check for at least ±30° deflection.\(c.kind.isTailless ? "" : c.kind.isTwinBoom ? " The elevator is one piece between the two fins." : " The elevator is one piece across the whole tail; the rudder's lower edge is cut back so the elevator can move up underneath it – check it clears at full up.")", symbol: "rectangle.split.2x1")
         ]
         if c.sparEnabled {
             s.append(BuildStep(title: "Install the carbon spar", text: "Cut a slit along the green spar line about \(String(format: "%.1f", c.material.thickness * 0.6)) mm deep, fill with glue and press in the \(c.sparSpec.name). Wipe off excess glue and let cure flat.", symbol: "line.diagonal"))
@@ -96,7 +96,7 @@ enum BuildDocs {
             s.append(BuildStep(title: "Mid-mounted motor", text: "Push the + shaped motor mount onto the rear end of the front fuselage halves so the prop sits in the middle of the slot. Check the prop clears the slot edges all round.", symbol: "fanblades"))
         }
         if c.kind.isTwinBoom {
-            s.append(BuildStep(title: "Pod, booms & twin fins", text: "Key the pod nose plate into the wing leading edge, then glue the pod top and bottom halves on with their tabs. Groove the wing and stabiliser undersides along the boom lines, glue in both Ø4 mm carbon booms parallel to the pod. Push the fin tabs through the stabiliser slots. Join the elevator halves with a 1 mm carbon rod and link both rudders with a wire across the stab.", symbol: "rectangle.split.3x1"))
+            s.append(BuildStep(title: "Pod, booms & twin fins", text: "Key the pod nose plate into the wing leading edge, then glue the pod top and bottom halves on with their tabs. Groove the wing and stabiliser undersides along the boom lines, glue in both Ø4 mm carbon booms parallel to the pod. Push the fin tabs through the stabiliser slots. Link both rudders with a wire across the stab.", symbol: "rectangle.split.3x1"))
             s.append(BuildStep(title: "Mount the pusher motor", text: "Slide the printed mount over the pod tail and glue. Prop clearance to the booms is checked by FoamMaster – verify it turns freely.", symbol: "fanblades"))
         } else if c.kind.isNutBall {
             s.append(BuildStep(title: "Spine, fin & keel", text: "Press the tabs of the spine (with the fin) into the centre-line slots on top of the disc and the keel from below. Check both are exactly 90° to the disc – the + section keeps the disc flat and carries the motor mount.", symbol: "plus"))

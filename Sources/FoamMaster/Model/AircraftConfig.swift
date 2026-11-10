@@ -200,7 +200,8 @@ struct AircraftConfig: Codable, Equatable {
     /// Control layout (tailed aircraft). Tailless aircraft always use two elevons.
     var ailerons: Bool = false
     var rudder: Bool = true
-    var hasAilerons: Bool { !kind.isTailless && ailerons }
+    /// Flat (no dihedral) tailed planes always need ailerons – rudder + elevator only is not offered.
+    var hasAilerons: Bool { kind.hasTail }
     /// Tailless only: winglets or a centre fin, and the centre fin's leading-edge position (mm aft of the root LE).
     var taillessFins: TaillessFins = .winglets
     var finPosition: Double = 40
@@ -212,7 +213,8 @@ struct AircraftConfig: Codable, Equatable {
     var motorCount: Int { isDual ? 2 : 1 }
     /// Effective pusher configuration (dual layouts are always tractors).
     var isPusher: Bool { kind.isPusher && !isDual }
-    var hasRudder: Bool { !kind.isTailless && rudder }
+    /// The NutBall always has its rudder (it turns with it); tailed planes may leave it out.
+    var hasRudder: Bool { kind.isNutBall || (kind.hasTail && rudder) }
 
     init(kind: AircraftKind) {
         self.kind = kind

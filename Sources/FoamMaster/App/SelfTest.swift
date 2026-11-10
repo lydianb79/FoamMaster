@@ -133,6 +133,18 @@ enum SelfTest {
                 if let img = r.snapshot(width: 1000, height: 700) { savePNG(img, dir.appendingPathComponent("close_\(name).png")) }
             }
         }
+        // Tail close-ups from the side with the elevator up: the rudder cut-out must clear it.
+        for kind in [AircraftKind.trainer, .jet, .nutBall] {
+            let c = Project.balanced(kind.defaults)
+            let d = DesignBuilder.build(c); let a = Analysis(design: d)
+            let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+            if let r = Renderer(view: view), let el = d.controls.first(where: { $0.name == "Elevator" }) {
+                r.setScene(SceneBuilder.aircraft(d, a, deflection: -0.75, showCG: false), resetCamera: true)
+                r.target = SIMD3<Float>(0, 15, Float(el.hingeMid.z) + 15)
+                r.zoom = 0.2; r.yaw = 1.75; r.pitch = 0.12
+                if let img = r.snapshot(width: 1000, height: 700) { savePNG(img, dir.appendingPathComponent("tail_\(kind.rawValue).png")) }
+            }
+        }
         // Hover picking: probe a grid of points over the trainer and list what is under them.
         do {
             let d = DesignBuilder.build(Project.balanced(AircraftKind.trainer.defaults)); let a = Analysis(design: d)

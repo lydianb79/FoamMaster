@@ -264,14 +264,12 @@ struct SetupSheet: View {
             VStack(alignment: .leading, spacing: 16) {
             OptionGroup(title: "Control surfaces", symbol: "slider.horizontal.below.square.filled.and.square") {
                 if kind.isNutBall {
-                    Text("NutBall: elevator across the trailing edge, rudder on the centre fin – the round wing turns with the rudder.").font(.system(size: 11)).foregroundStyle(.secondary)
-                    OptionTiles(selection: $layout, options: [.rudderElevator, .aileronElevator], title: { $0 == .rudderElevator ? "Rudder + elevator" : "Elevator only" },
-                                detail: { $0 == .rudderElevator ? "2 channels – the classic NutBall" : "No rudder – not recommended" }, tint: kind.tint)
+                    Text("NutBall: rudder + elevator (2 channels). One-piece elevator across the trailing edge, rudder on the centre fin with a cut-out at its bottom so the elevator moves freely – the round wing turns with the rudder.").font(.system(size: 11)).foregroundStyle(.secondary)
                 } else if kind.isTailless {
                     Text("Tailless: two elevons (combined aileron + elevator), one servo each.").font(.system(size: 11)).foregroundStyle(.secondary)
                     OptionTiles(selection: $fins, options: TaillessFins.allCases, title: \.name, detail: \.detail, tint: kind.tint)
                 } else {
-                    OptionTiles(selection: $layout, options: ControlLayout.allCases, title: \.title, detail: \.detail, tint: kind.tint)
+                    OptionTiles(selection: $layout, options: [.aileronElevator, .full], title: \.title, detail: \.detail, tint: kind.tint)
                     OptionTiles(selection: $winglets, options: [false, true], title: { $0 ? "Winglets" : "Plain tips" },
                                 detail: { $0 ? "Side-mounted winglets at both wing tips" : "Straight wing tips" }, tint: kind.tint)
                     if layout.ailerons && !kind.isTwinBoom {
@@ -284,7 +282,7 @@ struct SetupSheet: View {
                     Text("\(design.controls.surfaceCount) control surfaces · \(servoGroups.count) servos: " +
                          servoGroups.keys.sorted().map { key -> String in
                              let n = servoGroups[key]!.surfaceCount
-                             return n > 1 ? "\(key) → \(n) surfaces\(key.contains("torque") ? "" : (key == "Rudders" ? ", linked" : " (joined halves)"))" : key
+                             return n > 1 ? "\(key) → \(n) surfaces\(key.contains("torque") ? "" : ", linked")" : (key == "Elevator" ? "Elevator (one piece)" : key)
                          }.joined(separator: " · "))
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }

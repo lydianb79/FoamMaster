@@ -82,13 +82,9 @@ struct ParameterContent: View {
                                 ParamSlider(label: "Winglet height", unit: "mm", value: bind(\.wingletHeight), range: range(\.wingletHeight, c), step: 1)
                             }
                         }
-                        if c.kind.isNutBall {
-                            Toggle(isOn: bind(\.rudder)) { Text("Rudder").font(.system(size: 12, weight: .semibold)) }
-                                .toggleStyle(.switch).tint(Theme.accent)
-                        } else if !c.kind.isTailless {
-                            Picker("", selection: Binding(get: { ControlLayout(ailerons: c.ailerons, rudder: c.rudder) },
+                        if c.kind.hasTail {
+                            Picker("", selection: Binding(get: { ControlLayout(ailerons: true, rudder: c.rudder) },
                                                           set: { project.config?.ailerons = $0.ailerons; project.config?.rudder = $0.rudder })) {
-                                Text("R + E").tag(ControlLayout.rudderElevator)
                                 Text("A + E").tag(ControlLayout.aileronElevator)
                                 Text("A + E + R").tag(ControlLayout.full)
                             }
