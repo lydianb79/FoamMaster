@@ -108,7 +108,7 @@ enum BuildDocs {
             s.append(BuildStep(title: "Mount the motor", text: "Screw the motor onto the printed firewall (\(pat.label), heads sit flush in the counterbores) and push its + shaped clamp over the nose so it grips the plate and both fuselage halves. 1–2° right thrust can be shimmed with a washer.", symbol: "fanblades"))
         }
         if c.hasAilerons && c.aileronServos == 1 && c.kind.allowsSingleAileronServo {
-            s.append(BuildStep(title: "Single aileron servo", text: "Stand the aileron servo upright in its cut-out in the fuselage plate (shaft up) – the cut-out in the bottom of the upper fuselage half leaves room for the servo and its arm. Fit a double-ended arm across the fuselage, centre it, and run one pushrod from each arm end aft to the horn at the inner end of each aileron. Check the arm swings freely at full throw without touching the fuselage.", symbol: "arrow.triangle.branch"))
+            s.append(BuildStep(title: "Single aileron servo", text: "Glue the aileron servo upside down (shaft pointing down) into the notch in the lower fuselage half under the wing – the notch leaves room for the servo and its arm. Fit a double-ended arm across the fuselage, centre it, and run one short pushrod from each arm end aft to the horn under the inner end of each aileron. Check the arm swings freely at full throw without touching the fuselage.", symbol: "arrow.triangle.branch"))
         }
         if c.isDual {
             // Replace the single-motor step(s) with the twin-motor installation.

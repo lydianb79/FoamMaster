@@ -145,6 +145,20 @@ struct ParameterContent: View {
                         Text(c.kind.propBladeReason).font(.system(size: 9.5)).foregroundStyle(.tertiary).padding(.leading, 78)
                         PickerRow(label: "Battery", selection: bind(\.battery), options: BatteryPack.allCases) { "\($0.name) · \(Int($0.mass)) g" }
                         PickerRow(label: "Servos", selection: bind(\.servo), options: ServoClass.allCases) { $0.name }
+                        if let d = project.design, let a = project.analysis {
+                            // Full electronics list – the same items as under Materials ▸ Electronics.
+                            Divider().opacity(0.3).padding(.vertical, 2)
+                            ForEach(BuildDocs.billOfMaterials(d, a).filter { $0.category == "Electronics" }) { it in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text(it.quantity).font(.system(size: 10.5, weight: .bold, design: .rounded))
+                                        .foregroundStyle(Theme.accent).frame(width: 52, alignment: .leading)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(it.item).font(.system(size: 11, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+                                        Text(it.spec).font(.system(size: 9.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
+                        }
                     }
                     .glass()
 

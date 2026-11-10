@@ -189,20 +189,68 @@ struct CGBar: View {
 struct WeightBars: View {
     var design: Design
     var analysis: Analysis
+
+    /// Groups the mass items by the real part they are ("Servos 4×", "Motor mount (printed)", …).
+    static func groups(_ d: Design, _ a: Analysis) -> [(label: String, mass: Double, detail: String)] {
+        let c = d.config
+        func label(_ item: MassItem) -> String {
+            let n = item.name
+            if item.category == "Battery" { return "Battery" }
+            if n.contains("brushless") { return "Motor" }
+            if n.hasPrefix("Propeller") { return "Propeller" }
+            if n.hasPrefix("ESC") { return "ESC" }
+            if n.hasPrefix("Servo") { return "Servo" }
+            if n.hasPrefix("Receiver") { return "Receiver" }
+            if n.hasPrefix("Wiring") { return "Wiring & connectors" }
+            if n.hasPrefix("Motor mount") { return "Motor mount (printed)" }
+            if n.hasPrefix("Nose protector") { return "Nose protector (printed)" }
+            if n.hasPrefix("Horn") { return "Control horns (printed)" }
+            if n.hasPrefix("Pushrod") { return "Pushrods" }
+            if n.hasPrefix("Tail booms") { return "Tail booms (carbon)" }
+            if n.contains("spar") || n.contains("Carbon flat") || n.contains("Carbon truss") { return "Carbon spar" }
+            if n.hasPrefix("Glue") { return "Glue, tape, velcro" }
+            return n
+        }
+        var order: [String] = [], mass: [String: Double] = [:], count: [String: Int] = [:], names: [String: [String]] = [:]
+        for item in d.components {
+            let l = label(item)
+            if mass[l] == nil { order.append(l) }
+            mass[l, default: 0] += item.mass; count[l, default: 0] += 1; names[l, default: []].append(item.name)
+        }
+        let foamParts = d.parts.reduce(0) { $0 + $1.instances.count }
+        var rows: [(String, Double, String)] = [("Foam – \(c.material.displayName) (\(foamParts) parts)", a.foamMass,
+                                                  d.parts.map { $0.instances.count > 1 ? "\($0.name) ×\($0.instances.count)" : $0.name }.joined(separator: ", "))]
+        for l in order {
+            let n = count[l] ?? 1
+            var title = l
+            switch l {
+            case "Battery": title = "Battery – \(c.battery.name)"
+            case "Motor": title = "Motor – \(c.motor.name.replacingOccurrences(of: " brushless", with: ""))\(n > 1 ? " ×\(n)" : "")"
+            case "Servo": title = "Servos – \(c.servo.name.replacingOccurrences(of: " micro servo", with: "")) ×\(n)"
+            case "Propeller", "ESC", "Motor mount (printed)": title = n > 1 ? "\(l) ×\(n)" : l
+            case "Control horns (printed)", "Pushrods": title = "\(l) ×\(n)"
+            default: break
+            }
+            rows.append((title, mass[l] ?? 0, names[l]?.joined(separator: ", ") ?? ""))
+        }
+        return rows.sorted { $0.1 > $1.1 }.map { (label: $0.0, mass: $0.1, detail: $0.2) }
+    }
+
     var body: some View {
-        let groups = Dictionary(grouping: design.components, by: \.category).mapValues { $0.reduce(0) { $0 + $1.mass } }
-        let rows = [("Foam", analysis.foamMass)] + groups.sorted { $0.value > $1.value }.map { ($0.key, $0.value) }
-        let maxV = rows.map(\.1).max() ?? 1
+        let rows = Self.groups(design, analysis)
+        let maxV = rows.map(\.mass).max() ?? 1
         VStack(spacing: 6) {
-            ForEach(rows, id: \.0) { r in
+            ForEach(rows, id: \.label) { r in
                 HStack(spacing: 8) {
-                    Text(r.0).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).frame(width: 70, alignment: .leading)
+                    Text(r.label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
+                        .lineLimit(1).minimumScaleFactor(0.8).frame(width: 150, alignment: .leading)
                     GeometryReader { g in
-                        Capsule().fill(Theme.accentGradient).frame(width: max(4, g.size.width * r.1 / maxV))
+                        Capsule().fill(Theme.accentGradient).frame(width: max(4, g.size.width * r.mass / maxV))
                     }
                     .frame(height: 8)
-                    Text(String(format: "%.1f g", r.1)).font(.system(size: 11, weight: .semibold)).monospacedDigit().frame(width: 52, alignment: .trailing)
+                    Text(String(format: "%.1f g", r.mass)).font(.system(size: 11, weight: .semibold)).monospacedDigit().frame(width: 46, alignment: .trailing)
                 }
+                .help(r.detail)
             }
             Divider().opacity(0.3)
             HStack {

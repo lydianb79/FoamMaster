@@ -178,10 +178,14 @@ enum SelfTest {
                 let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
                 if let r = Renderer(view: view) {
                     r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
-                    r.target = SIMD3<Float>(0, 10, 30); r.zoom = 0.16; r.yaw = 0.5; r.pitch = 0.75
+                    r.target = SIMD3<Float>(0, -15, 50); r.zoom = 0.22; r.yaw = 2.5; r.pitch = -0.6
                     if let img = r.snapshot(width: 1000, height: 700) { savePNG(img, dir.appendingPathComponent("aileron_single.png")) }
                 }
             }
+        }
+        do {
+            let d = DesignBuilder.build(Project.balanced(AircraftKind.trainer.defaults)); let a = Analysis(design: d)
+            print("   weight rows: " + WeightBars.groups(d, a).map { "\($0.label) \(String(format: "%.1f", $0.mass))" }.joined(separator: " | "))
         }
         // Tail close-ups from the side with the elevator up: the rudder cut-out must clear it.
         for kind in [AircraftKind.trainer, .jet, .nutBall] {

@@ -207,13 +207,14 @@ enum SceneBuilder {
                     scene.label = "\(item.name) – \(c.servo.name)"
                     scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.servo)
                     // Printed servo frame flange around the cutout.
-                    let inWing = abs(p.y) < 0.5 || standing
-                    let cut = standing ? Vec2(s.l + 0.4, s.w + 0.4) : (inWing ? Vec2(s.l + 0.4, s.h + 0.4) : Vec2(s.l + 0.4, s.w + 0.4))
+                    let inWing = abs(p.y) < 0.5
+                    let cut = inWing ? Vec2(s.l + 0.4, s.h + 0.4) : Vec2(s.l + 0.4, s.w + 0.4)
                     let ring = Mesh3D.extrude(Poly.rect(center: .zero, size: cut + Vec2(5, 5)), holes: [Poly.rect(center: .zero, size: cut)], z0: 0, z1: 1.2)
                     let placed = inWing ? ring.transformed { q in SIMD3<Double>(p.x + q.y, t / 2 + q.z, p.z + q.x) }
                                         : ring.transformed { q in SIMD3<Double>(tw / 2 + q.z, p.y + q.y, p.z + q.x) }
                     scene.label = "Servo frame (printed)"
-                    scene.addMesh(placed, color: Palette.printed)
+                    // The upside-down aileron servo is glued into its notch in the lower fuselage – no frame.
+                    if !standing { scene.addMesh(placed, color: Palette.printed) }
                 }
             }
         }
@@ -225,8 +226,9 @@ enum SceneBuilder {
                 let hub = SIMD3<Double>(0, arm.y, arm.z)
                 scene.label = "Double servo arm – both ailerons"
                 scene.addMesh(.box(min: simd_min(hub, arm) - [0, 0.8, 2], max: simd_max(hub, arm) + [0, 0.8, 2]), color: Palette.linkage)
-                scene.addMesh(cylinder(center: hub - [0, 1.5, 0], radius: 2.6, length: 3).transformed { q in
-                    SIMD3<Double>(q.x, hub.y - 1.5 + (q.z - (hub.z)), hub.z + (q.y - (hub.y - 1.5))) }, color: Palette.linkage)
+                let hc = hub + [0, 1.5, 0]           // hub between the servo (above) and the arm
+                scene.addMesh(cylinder(center: hc, radius: 2.6, length: 3).transformed { q in
+                    SIMD3<Double>(q.x, hc.y + (q.z - hc.z), hc.z + (q.y - hc.y)) }, color: Palette.linkage)
             } else {
                 let shaft = arm - [0, 10, 0]
                 scene.label = "Servo arm – \(ctrl.name)"
