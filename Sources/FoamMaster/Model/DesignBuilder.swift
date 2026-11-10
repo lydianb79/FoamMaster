@@ -38,7 +38,9 @@ extension AircraftConfig {
     var boomX: Double { hStabSpan / 2 - 7 }
     /// Width of the horizontal fuselage plate (cross fuselage) at the wing – about 8.5 % of the
     /// span, the proportion of the Crack Yak cross.
-    var fuselagePlateWidth: Double {
+    var fuselagePlateWidth: Double { basePlateWidth + (kind.hasFuselage ? min(max(plateWidthExtra, 0), AircraftConfig.maxPlateWidthExtra) : 0) }
+    /// Default plate width – the narrowest allowed (narrower would cost torsional stiffness).
+    var basePlateWidth: Double {
         // The jet's horizontal fuselage is much wider (Ares: nose and tail plates are broad lifting bodies).
         kind.isJet ? min(max(wingspan * 0.14, 44), 84) : min(max(wingspan * 0.085, 30), 60)
     }
@@ -92,7 +94,8 @@ enum DesignBuilder {
             // Tailless: forward on top of the wing, left of the battery – keeps the CG reachable.
             if c.kind.isTailless { return [-(c.battery.size.w / 2 + e.y / 2 + 6), t / 2 + e.z / 2, c.rootChord * 0.25] }
             if c.kind.isTwinBoom { return [side, t / 2 + e.y / 2 + 2, c.rootChord * 0.55] }              // pod top, right side
-            if c.kind.isJet { return [side, t / 2 + e.y / 2 + 2, c.firewallZ - e.x / 2 - 6] }            // canopy, right side
+            // Jet: on the canopy side ahead of the motor-mount clamp (the jaws reach forward from the firewall).
+            if c.kind.isJet { return [side, t / 2 + e.y / 2 + 2, c.firewallZ - PrintedParts.mountJaw - PrintedParts.mountPlate - e.x / 2 - 4] }
             return [side, t / 2 + e.y / 2 + 2, -c.noseLength * 0.55 + e.x / 2]                          // upper nose, right side
         }
         /// Receiver on the left side of the upper fuselage behind the servos (on top of the wing on tailless).

@@ -23,6 +23,7 @@ final class Project: ObservableObject {
     @Published var deflection: Double = 0   // control surface preview, -1…1
 
     @Published var statusMessage: String?
+    @Published var showAbout = false
     /// Result of the last balance fix, shown in the CG panel until the design changes.
     @Published var balanceNote: String?
 

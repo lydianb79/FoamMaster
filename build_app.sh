@@ -17,6 +17,8 @@ for s in 16 32 128 256 512; do
   sips -z $((s*2)) $((s*2)) build/icon_1024.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+# Channel logo for the About sheet (optional).
+if [[ -f Assets/RockFPV_logo.png ]]; then cp Assets/RockFPV_logo.png "$APP/Contents/Resources/"; fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -1,6 +1,6 @@
 import Foundation
 
-let maxWingspan: Double = 600
+let maxWingspan: Double = 800
 
 /// Propulsion layout.
 enum MotorLayout: String, CaseIterable, Identifiable, Codable {
@@ -185,6 +185,9 @@ struct AircraftConfig: Codable, Equatable {
     var hStabChord: Double = 75
     var vStabHeight: Double = 80
     var vStabChord: Double = 80
+    /// Extra width of the horizontal fuselage plate (cross) over the default – only wider is allowed.
+    var plateWidthExtra: Double = 0
+    static let maxPlateWidthExtra = 40.0
 
     // Build
     var material: FoamMaterial = .depron6

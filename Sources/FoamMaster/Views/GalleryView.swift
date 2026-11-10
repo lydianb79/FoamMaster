@@ -23,6 +23,8 @@ struct RootView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .ignoresSafeArea(.container, edges: .top)
+        .sheet(isPresented: $project.showAbout) { AboutView() }
         .animation(.easeInOut(duration: 0.3), value: project.config == nil)
         .animation(.spring(duration: 0.35), value: project.statusMessage)
     }
@@ -92,12 +94,13 @@ struct GalleryContent: View {
                         .font(.system(size: 32, weight: .heavy, design: .rounded))
                         .foregroundStyle(Theme.accentGradient)
                 }
-                Text("Design, check and build micro foam RC aircraft up to 600 mm span.")
+                Text("Design, check and build Micro Flat Foam Planes and Wings up to 800 mm Wingspan")
                     .font(.system(size: 14, weight: .medium)).foregroundStyle(.secondary)
                     .lineLimit(1).minimumScaleFactor(0.8)
                 Spacer(minLength: 12)
                 Text("Choose a base model to start customising")
                     .font(.system(size: 12, weight: .semibold)).foregroundStyle(.tertiary).lineLimit(1)
+                InfoButton().alignmentGuide(.firstTextBaseline) { d in d[VerticalAlignment.center] + 4 }
             }
             .frame(height: Self.headerHeight)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: Self.gridSpacing)], spacing: Self.gridSpacing) {

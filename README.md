@@ -1,6 +1,8 @@
 # FoamMaster
 
-Native macOS app (SwiftUI + Metal) to design, check and build micro foam RC aircraft up to **600 mm span**.
+Native macOS app (SwiftUI + Metal) to design, check and build micro flat foam planes and wings up to **800 mm wingspan**.
+
+Design by TriX aka Rock FPV – [YouTube](https://www.youtube.com/@RockFPV) · [GitHub](https://github.com/lydianb79/FoamMaster)
 
 ## Build & run
 
@@ -11,6 +13,8 @@ open build/FoamMaster.app
 
 Requires Xcode / Swift 5.9+, macOS 14+. `swift run` also works for quick iteration.
 
+The About sheet (ⓘ in the gallery, or FoamMaster ▸ About) shows the channel logo from `Assets/RockFPV_logo.png` when that file exists (copied into the app by `build_app.sh`).
+
 ## Features
 
 - **Model gallery** – live 3D renders of Flying Wing, Delta Jet, Twin Boom, Sport Jet (swept wing, prop spinning in a slot through the wing centre), Park Trainer, 3D Plane, Micro Glider and NutBall. Picking one opens a setup sheet for control layout, fins/winglets, motors and aileron servos; then customise every dimension.
@@ -19,6 +23,7 @@ Requires Xcode / Swift 5.9+, macOS 14+. `swift run` also works for quick iterati
 - **Dual tractor** – optional on every type except the Sport Jet and the NutBall: two counter-rotating motors on the wing leading edge with wing-clamp mounts, as far inboard as the prop clearance allows; thrust, weight, CG, BOM (Y-lead, 2 ESCs, CW/CCW props, LE carbon strip) and build steps follow.
 - **Winglets** – on every type: side-mounted at the wing tips (tip tabs into winglet slots); tailless types alternatively a centre fin with adjustable position, or no fins at all.
 - **Control-surface clearance** – 1.5 mm slots at both ends of every aileron/elevon; the elevator is one piece on a straight hinge across the whole tail (one servo moves all of it) and runs under the rudder, whose lower edge is cut back for 35° of up-elevator; hinge and side gaps visible in 3D.
+- **Fuselage cross width** – the horizontal fuselage plate can be made wider than the default (never narrower, which would cost torsional stiffness).
 - **Control layouts** – tailed planes: ailerons + elevator, or ailerons + elevator + rudder (flat wings need ailerons); NutBall: always rudder + elevator.
 - **Component layout** – ESC (green) and receiver (cyan) sit on the visible side where the leads reach. The colour legend in the 3D view lists every colour with an explanation on hover, and hovering the model names the part under the mouse (foam part, control surface, motor, prop, mount with its bolt pattern, servo, ESC, receiver, battery, horn, carbon, CG). All models are for line-of-sight flying (no FPV gear).
 - **Linkages** – servos lie flat in the wing (only their width crosses the foam) and pass through the vertical fuselage halves, always with the shaft sideways; arm, straight pushrod and horn (holes above the hinge line) are placed so elevator and rudder pushrods never cross, and are drawn in 3D.

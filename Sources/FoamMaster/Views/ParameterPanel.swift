@@ -67,6 +67,35 @@ struct ParameterContent: View {
                     }
                     .glass()
 
+                    if c.kind.isNutBall {
+                        VStack(alignment: .leading, spacing: 10) {
+                            SectionHeader(title: "Spine & fin", symbol: "arrow.left.and.right")
+                            ParamSlider(label: "Motor ahead of the disc", unit: "mm", value: bind(\.noseLength), range: range(\.noseLength, c), step: 1)
+                            ParamSlider(label: "Spine + keel height", unit: "mm", value: bind(\.fuselageHeight), range: range(\.fuselageHeight, c), step: 1)
+                            ParamSlider(label: "Fin height", unit: "mm", value: bind(\.vStabHeight), range: range(\.vStabHeight, c), step: 1)
+                            ParamSlider(label: "Fin chord", unit: "mm", value: bind(\.vStabChord), range: range(\.vStabChord, c), step: 1)
+                        }
+                        .glass()
+                    } else if !c.kind.isTailless {
+                        VStack(alignment: .leading, spacing: 10) {
+                            SectionHeader(title: c.kind.isTwinBoom ? "Pod, booms & tail" : "Fuselage & Tail", symbol: "arrow.left.and.right")
+                            ParamSlider(label: c.kind.isTwinBoom ? "Pod nose length" : "Nose length", unit: "mm", value: bind(\.noseLength), range: range(\.noseLength, c), step: 1)
+                            ParamSlider(label: c.kind.isTwinBoom ? "Pod height" : "Fuselage height", unit: "mm", value: bind(\.fuselageHeight), range: range(\.fuselageHeight, c), step: 1)
+                            if c.kind.hasFuselage {
+                                // The cross can only be made wider than the default – narrower would cost torsional stiffness.
+                                ParamSlider(label: "Fuselage cross width", unit: "mm",
+                                            value: Binding(get: { c.fuselagePlateWidth }, set: { project.config?.plateWidthExtra = max(0, $0 - c.basePlateWidth) }),
+                                            range: c.basePlateWidth...(c.basePlateWidth + AircraftConfig.maxPlateWidthExtra), step: 1)
+                            }
+                            ParamSlider(label: "Tail arm", unit: "mm", value: bind(\.tailArm), range: range(\.tailArm, c), step: 1)
+                            ParamSlider(label: c.kind.isTwinBoom ? "Stab span (boom spacing)" : "Stab span", unit: "mm", value: bind(\.hStabSpan), range: range(\.hStabSpan, c), step: 1)
+                            ParamSlider(label: "Stab chord", unit: "mm", value: bind(\.hStabChord), range: range(\.hStabChord, c), step: 1)
+                            ParamSlider(label: "Fin height", unit: "mm", value: bind(\.vStabHeight), range: range(\.vStabHeight, c), step: 1)
+                            ParamSlider(label: "Fin chord", unit: "mm", value: bind(\.vStabChord), range: range(\.vStabChord, c), step: 1)
+                        }
+                        .glass()
+                    }
+
                     VStack(alignment: .leading, spacing: 10) {
                         SectionHeader(title: "Build options", symbol: "slider.horizontal.3")
                         if c.kind.allowsDualMotors {
@@ -118,29 +147,6 @@ struct ParameterContent: View {
                         PickerRow(label: "Servos", selection: bind(\.servo), options: ServoClass.allCases) { $0.name }
                     }
                     .glass()
-
-                    if c.kind.isNutBall {
-                        VStack(alignment: .leading, spacing: 10) {
-                            SectionHeader(title: "Spine & fin", symbol: "arrow.left.and.right")
-                            ParamSlider(label: "Motor ahead of the disc", unit: "mm", value: bind(\.noseLength), range: range(\.noseLength, c), step: 1)
-                            ParamSlider(label: "Spine + keel height", unit: "mm", value: bind(\.fuselageHeight), range: range(\.fuselageHeight, c), step: 1)
-                            ParamSlider(label: "Fin height", unit: "mm", value: bind(\.vStabHeight), range: range(\.vStabHeight, c), step: 1)
-                            ParamSlider(label: "Fin chord", unit: "mm", value: bind(\.vStabChord), range: range(\.vStabChord, c), step: 1)
-                        }
-                        .glass()
-                    } else if !c.kind.isTailless {
-                        VStack(alignment: .leading, spacing: 10) {
-                            SectionHeader(title: c.kind.isTwinBoom ? "Pod, booms & tail" : "Fuselage & Tail", symbol: "arrow.left.and.right")
-                            ParamSlider(label: c.kind.isTwinBoom ? "Pod nose length" : "Nose length", unit: "mm", value: bind(\.noseLength), range: range(\.noseLength, c), step: 1)
-                            ParamSlider(label: c.kind.isTwinBoom ? "Pod height" : "Fuselage height", unit: "mm", value: bind(\.fuselageHeight), range: range(\.fuselageHeight, c), step: 1)
-                            ParamSlider(label: "Tail arm", unit: "mm", value: bind(\.tailArm), range: range(\.tailArm, c), step: 1)
-                            ParamSlider(label: c.kind.isTwinBoom ? "Stab span (boom spacing)" : "Stab span", unit: "mm", value: bind(\.hStabSpan), range: range(\.hStabSpan, c), step: 1)
-                            ParamSlider(label: "Stab chord", unit: "mm", value: bind(\.hStabChord), range: range(\.hStabChord, c), step: 1)
-                            ParamSlider(label: "Fin height", unit: "mm", value: bind(\.vStabHeight), range: range(\.vStabHeight, c), step: 1)
-                            ParamSlider(label: "Fin chord", unit: "mm", value: bind(\.vStabChord), range: range(\.vStabChord, c), step: 1)
-                        }
-                        .glass()
-                    }
 
                     VStack(alignment: .leading, spacing: 10) {
                         SectionHeader(title: "Material", symbol: "square.stack.3d.up.fill")

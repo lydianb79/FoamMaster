@@ -163,7 +163,7 @@ struct Analysis {
         let f0 = { (v: Double) in String(format: "%.0f", v) }
 
         // Geometry
-        if c.wingspan > maxWingspan + 0.5 { add(.error, "Geometry", "Wingspan exceeds 600 mm", "FoamMaster designs micro models up to \(Int(maxWingspan)) mm span.") }
+        if c.wingspan > maxWingspan + 0.5 { add(.error, "Geometry", "Wingspan exceeds \(Int(maxWingspan)) mm", "FoamMaster designs micro models up to \(Int(maxWingspan)) mm span.") }
         for issue in d.geometryIssues { add(.error, "Geometry", "Geometry conflict", issue) }
         for p in d.parts where !Poly.isSimple(p.outline) { add(.error, "Geometry", "\(p.name) outline is self-intersecting", "Reduce sweep or adjust chord lengths.") }
         if c.tipChord < 25 && !c.kind.isNutBall { add(.error, "Geometry", "Tip chord too small", "\(f0(c.tipChord)) mm – minimum 25 mm to keep the tip buildable.") }
@@ -189,7 +189,9 @@ struct Analysis {
         } else {
             add(.ok, "Power", "Thrust/weight \(f1(thrustToWeight))", "\(f0(thrust)) g static thrust for \(f0(totalMass)) g.")
         }
-        if totalMass > 260 { add(.warning, "Performance", "Heavy for a micro model", "\(f0(totalMass)) g – most 600 mm foamies are below 250 g.") }
+        // Typical flat-foam weights grow with the span squared: ~250 g at 600 mm, ~450 g at 800 mm.
+        let heavy = max(260, 260 * pow(c.wingspan / 600, 2))
+        if totalMass > heavy { add(.warning, "Performance", "Heavy for a micro model", "\(f0(totalMass)) g – most \(f0(c.wingspan)) mm flat foamies are below \(f0(heavy - 10)) g.") }
 
         // Balance
         let cgNow = cg.z

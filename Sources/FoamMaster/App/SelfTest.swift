@@ -133,6 +133,21 @@ enum SelfTest {
                 if let img = r.snapshot(width: 1000, height: 700) { savePNG(img, dir.appendingPathComponent("close_\(name).png")) }
             }
         }
+        // Wider fuselage cross and 800 mm span.
+        for kind in [AircraftKind.trainer, .jet, .aerobat] {
+            for extra in [0.0, 20, 40] {
+                var c = kind.defaults; c.plateWidthExtra = extra
+                c = Project.balanced(c)
+                let a = Analysis(design: DesignBuilder.build(c))
+                print("   cross \(kind.title) +\(Int(extra)) mm: plate \(Int(c.fuselagePlateWidth)) mm, twist \(String(format: "%.1f", a.structure?.tailTwistDeg ?? 0))°, AUW \(Int(a.totalMass)) g, feasible \(a.feasible)")
+            }
+        }
+        for kind in AircraftKind.allCases {
+            var c = kind.defaults; c.wingspan = 800
+            c = Project.balanced(c)
+            let a = Analysis(design: DesignBuilder.build(c))
+            print("   span800 \(kind.title): AUW \(Int(a.totalMass)) g, score \(a.score), feasible \(a.feasible)" + a.checks.filter { $0.severity >= .warning }.map { " [\($0.title)]" }.joined())
+        }
         // Tail close-ups from the side with the elevator up: the rudder cut-out must clear it.
         for kind in [AircraftKind.trainer, .jet, .nutBall] {
             let c = Project.balanced(kind.defaults)
