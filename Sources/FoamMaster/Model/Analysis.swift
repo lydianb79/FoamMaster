@@ -1,0 +1,224 @@
+import Foundation
+import simd
+
+enum Severity: Int, Comparable {
+    case ok, info, warning, error
+    static func < (a: Severity, b: Severity) -> Bool { a.rawValue < b.rawValue }
+}
+
+struct Check: Identifiable {
+    let id = UUID()
+    var severity: Severity
+    var category: String
+    var title: String
+    var detail: String
+}
+
+extension AircraftConfig {
+    var sparSpec: CarbonSpar {
+        if wingspan > 500 || material.family == .epp { return material.thickness >= 6 ? .flat5x05 : .flat3x05 }
+        return .flat3x05
+    }
+    var sparLength: Double { (wingspan * 0.9) / cos(atan2(sweep, semiSpan)) }
+}
+
+/// Mass, balance, aerodynamic and feasibility analysis of a design.
+struct Analysis {
+    var foamMass = 0.0
+    var totalMass = 0.0
+    var cg = SIMD3<Double>.zero
+    var wingArea = 0.0          // mm²
+    var aspectRatio = 0.0
+    var mac = 0.0
+    var macLE = 0.0             // z of MAC leading edge
+    var macY = 0.0
+    var neutralPoint = 0.0      // z
+    var recommendedCG = 0.0     // z
+    var cgRange: ClosedRange<Double> = 0...0
+    var staticMargin = 0.0      // fraction of MAC
+    var wingLoading = 0.0       // g/dm²
+    var stallSpeed = 0.0        // km/h
+    var thrust = 0.0            // g
+    var thrustToWeight = 0.0
+    var flightTime = 0.0        // minutes
+    var tailVolumeH = 0.0
+    var tailVolumeV = 0.0
+    var requiredBatteryPosition = 0.0
+    var checks: [Check] = []
+
+    var feasible: Bool { !checks.contains { $0.severity == .error } }
+    var worst: Severity { checks.map(\.severity).max() ?? .ok }
+    var score: Int {
+        let e = checks.filter { $0.severity == .error }.count, w = checks.filter { $0.severity == .warning }.count
+        return max(0, 100 - e * 30 - w * 8)
+    }
+
+    init(design d: Design) {
+        let c = d.config
+        let s = c.semiSpan
+        let t = c.material.thickness
+
+        // --- Mass & balance
+        var moment = SIMD3<Double>.zero
+        for p in d.parts {
+            for inst in p.instances {
+                foamMass += p.massEach
+                moment += inst.point(p.centroid2D) * p.massEach
+            }
+        }
+        totalMass = foamMass
+        for item in d.components { totalMass += item.mass; moment += item.position * item.mass }
+        cg = totalMass > 0 ? moment / totalMass : .zero
+
+        // --- Wing geometry
+        let lambda = c.taper
+        let dih = c.dihedral * .pi / 180
+        wingArea = (c.rootChord + c.tipChord) * s * (c.kind.isTailless || c.dihedral < 0.5 ? 1 : cos(dih))
+        aspectRatio = c.wingspan * c.wingspan / max(wingArea, 1)
+        mac = 2.0 / 3.0 * c.rootChord * (1 + lambda + lambda * lambda) / (1 + lambda)
+        macY = s / 3 * (1 + 2 * lambda) / (1 + lambda)
+        macLE = c.sweep * macY / s
+        let xacW = macLE + 0.25 * mac
+        let aw = 2 * .pi * aspectRatio / (2 + sqrt(aspectRatio * aspectRatio + 4))
+
+        // --- Neutral point & recommended CG
+        var targetSM = 0.08, smRange = 0.04...0.14
+        if c.kind.isTailless {
+            neutralPoint = xacW
+        } else {
+            targetSM = 0.12; smRange = 0.05...0.2
+            let sh = c.hStabSpan * c.hStabChord * 0.9
+            let lh = (c.tailArm + 0.25 * c.hStabChord) - xacW
+            tailVolumeH = sh * lh / (wingArea * mac)
+            let sv = c.vStabHeight * c.vStabChord * 1.1
+            tailVolumeV = sv * (c.tailArm + c.hStabChord - 0.8 * c.vStabChord - xacW) / (wingArea * c.wingspan)
+            let arH = c.hStabSpan * c.hStabSpan / sh
+            let at = 2 * .pi * arH / (2 + sqrt(arH * arH + 4))
+            let deda = min(0.6, 2 * aw / (.pi * aspectRatio))
+            neutralPoint = xacW + mac * tailVolumeH * 0.9 * (at / aw) * (1 - deda)
+        }
+        recommendedCG = neutralPoint - targetSM * mac
+        cgRange = (neutralPoint - smRange.upperBound * mac)...(neutralPoint - smRange.lowerBound * mac)
+        staticMargin = (neutralPoint - cg.z) / mac
+
+        let bat = d.components.first { $0.category == "Battery" }
+        if let bat {
+            let restMoment = cg.z * totalMass - bat.position.z * bat.mass
+            requiredBatteryPosition = (recommendedCG * totalMass - restMoment) / bat.mass
+        }
+
+        // --- Performance
+        let sM2 = wingArea * 1e-6
+        wingLoading = totalMass / (wingArea * 1e-4)
+        let clMax = c.kind.isTailless ? 0.65 : 0.8
+        stallSpeed = sqrt(2 * totalMass / 1000 * 9.81 / (1.225 * sM2 * clMax)) * 3.6
+        thrust = c.motor.thrust(cells: c.battery.cells)
+        thrustToWeight = thrust / max(totalMass, 1)
+        let wPerKg: Double = [.glider: 70, .trainer: 100, .skykart: 110, .flyingWing: 120, .delta: 140, .aerobat: 170][c.kind]!
+        let current = wPerKg * totalMass / 1000 / c.battery.voltage
+        flightTime = c.battery.capacity * 0.8 / 1000 / max(current, 0.01) * 60
+
+        runChecks(d, t: t)
+    }
+
+    private mutating func add(_ sev: Severity, _ cat: String, _ title: String, _ detail: String) {
+        checks.append(Check(severity: sev, category: cat, title: title, detail: detail))
+    }
+
+    private mutating func runChecks(_ d: Design, t: Double) {
+        let c = d.config
+        let f1 = { (v: Double) in String(format: "%.1f", v) }
+        let f0 = { (v: Double) in String(format: "%.0f", v) }
+
+        // Geometry
+        if c.wingspan > maxWingspan + 0.5 { add(.error, "Geometry", "Wingspan exceeds 600 mm", "FoamMaster designs micro models up to \(Int(maxWingspan)) mm span.") }
+        for issue in d.geometryIssues { add(.error, "Geometry", "Geometry conflict", issue) }
+        for p in d.parts where !Poly.isSimple(p.outline) { add(.error, "Geometry", "\(p.name) outline is self-intersecting", "Reduce sweep or adjust chord lengths.") }
+        if c.tipChord < 25 { add(.error, "Geometry", "Tip chord too small", "\(f0(c.tipChord)) mm – minimum 25 mm to keep the tip buildable.") }
+        if c.taper < 0.2 && c.kind != .delta { add(.warning, "Aero", "Strong taper (λ = \(String(format: "%.2f", c.taper)))", "Tapers below 0.2 tend to tip-stall on flat foam wings.") }
+        let arRange: ClosedRange<Double> = c.kind == .delta ? 1.2...4 : (c.kind.isTailless ? 2.5...8 : 3...11)
+        if !arRange.contains(aspectRatio) { add(.warning, "Aero", "Aspect ratio \(f1(aspectRatio)) unusual", "Typical range for a \(c.kind.title): \(f1(arRange.lowerBound))–\(f1(arRange.upperBound)).") }
+        else { add(.ok, "Aero", "Aspect ratio \(f1(aspectRatio))", "Within the typical range for a \(c.kind.title).") }
+        if c.controlChordPct * c.tipChord < 10 && (c.kind.isTailless || c.kind.hasAilerons) { add(.warning, "Geometry", "Control surfaces very narrow at the tip", "Less than 10 mm chord – hard to hinge cleanly.") }
+
+        // Loading & power
+        switch wingLoading {
+        case ..<12: add(.ok, "Performance", "Wing loading \(f1(wingLoading)) g/dm²", "Very light – slow and floaty, ideal for indoor/park.")
+        case ..<20: add(.ok, "Performance", "Wing loading \(f1(wingLoading)) g/dm²", "Good park-flyer loading.")
+        case ..<28: add(.warning, "Performance", "Wing loading \(f1(wingLoading)) g/dm²", "On the heavy side for flat foam – expect a fast stall (\(f0(stallSpeed)) km/h).")
+        default: add(.error, "Performance", "Wing loading \(f1(wingLoading)) g/dm²", "Too heavy for a flat foam wing. Increase area, lighter battery or thinner foam.")
+        }
+        if !c.motor.allowedCells.contains(c.battery.cells) {
+            add(.error, "Power", "Battery not compatible with motor", "\(c.motor.name) runs on \(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S, selected \(c.battery.cells)S.")
+        } else if thrustToWeight < c.kind.minThrustToWeight * 0.7 {
+            add(.error, "Power", "Thrust/weight \(f1(thrustToWeight))", "Far below the \(f1(c.kind.minThrustToWeight)) needed – it will not climb.")
+        } else if thrustToWeight < c.kind.minThrustToWeight {
+            add(.warning, "Power", "Thrust/weight \(f1(thrustToWeight))", "Below the recommended \(f1(c.kind.minThrustToWeight)) for this type.")
+        } else {
+            add(.ok, "Power", "Thrust/weight \(f1(thrustToWeight))", "\(f0(thrust)) g static thrust for \(f0(totalMass)) g.")
+        }
+        if totalMass > 260 { add(.warning, "Performance", "Heavy for a micro model", "\(f0(totalMass)) g – most 600 mm foamies are below 250 g.") }
+
+        // Balance
+        let cgNow = cg.z
+        if cgRange.contains(cgNow) {
+            add(.ok, "Balance", "CG in range", "CG \(f1(cgNow)) mm behind LE, static margin \(f0(staticMargin * 100)) %.")
+        } else {
+            add(.warning, "Balance", "CG out of range (\(f1(cgNow)) mm)", "Recommended \(f1(cgRange.lowerBound))–\(f1(cgRange.upperBound)) mm. Move battery to \(f0(requiredBatteryPosition)) mm.")
+        }
+        let batLimits: ClosedRange<Double> = c.kind.isTailless
+            ? (-c.noseLength + c.battery.size.l / 2 + 3)...(c.rootChord * 0.5)
+            : (-c.noseLength + c.battery.size.l / 2 + 5)...(c.rootChord)
+        if !batLimits.contains(requiredBatteryPosition) {
+            add(.error, "Balance", "CG cannot be reached with the battery",
+                "Battery would have to sit at \(f0(requiredBatteryPosition)) mm (allowed \(f0(batLimits.lowerBound))…\(f0(batLimits.upperBound))). " +
+                (requiredBatteryPosition < batLimits.lowerBound ? (c.kind.isTailless ? "Lengthen the nose pod or reduce sweep." : "Lengthen the nose or shorten the tail.") : "Shorten the nose or move mass aft."))
+        }
+        if staticMargin < 0 { add(.warning, "Balance", "Currently tail-heavy (unstable)", "Negative static margin with the current battery position.") }
+
+        // Tail
+        if !c.kind.isTailless {
+            if tailVolumeH < 0.3 { add(.warning, "Stability", "Horizontal tail volume \(String(format: "%.2f", tailVolumeH))", "Below 0.30 – pitch will be twitchy. Bigger stab or longer tail arm.") }
+            else if tailVolumeH > 0.9 { add(.warning, "Stability", "Horizontal tail volume \(String(format: "%.2f", tailVolumeH))", "Very large – heavy tail, sluggish pitch.") }
+            else { add(.ok, "Stability", "Horizontal tail volume \(String(format: "%.2f", tailVolumeH))", "Good pitch stability.") }
+            if tailVolumeV < 0.02 { add(.warning, "Stability", "Vertical tail volume \(String(format: "%.3f", tailVolumeV))", "Below 0.020 – weak yaw stability, enlarge the fin.") }
+            else { add(.ok, "Stability", "Vertical tail volume \(String(format: "%.3f", tailVolumeV))", "Adequate yaw stability.") }
+        }
+
+        // Structure
+        let slender = c.wingspan / (t * c.material.stiffness)
+        if !c.sparEnabled && slender > 110 { add(.error, "Structure", "Wing far too flexible", "Span/thickness ratio \(f0(slender)) without spar – enable the carbon spar or use thicker foam.") }
+        else if !c.sparEnabled && slender > 70 { add(.warning, "Structure", "Wing may flex", "Consider a carbon spar for this span and foam.") }
+        else { add(.ok, "Structure", "Wing stiffness OK", c.sparEnabled ? "\(c.sparSpec.name) spar specified." : "Foam alone is stiff enough.") }
+        if c.material.thickness >= 10 && c.wingspan < 350 { add(.info, "Structure", "Thick foam on a small model", "10 mm sheet adds weight – 5/6 mm is usually enough.") }
+
+        // Servos: hinge moment H = Ch · q · S · c at ~2.5 × stall speed (min 30 km/h), Ch ≈ 0.4 at full throw.
+        let vMax = max(stallSpeed * 2.5, 30) / 3.6
+        let q = 0.5 * 1.225 * vMax * vMax
+        var servoOK = true
+        for ctrl in d.controls {
+            let hinge = 0.4 * q * (ctrl.area * 1e-6) * (ctrl.chord * 1e-3) * 10.2   // kg·cm
+            if hinge > c.servo.torque * 0.6 {
+                servoOK = false
+                add(.warning, "Servos", "\(ctrl.name): servo marginal", "Hinge moment ≈\(String(format: "%.2f", hinge)) kg·cm at \(f0(vMax * 3.6)) km/h vs \(c.servo.torque) kg·cm servo (want 40 % reserve).")
+            }
+        }
+        if servoOK { add(.ok, "Servos", "Servo torque sufficient", "\(d.controls.count) × \(c.servo.name) with ≥40 % reserve.") }
+
+        // Propeller clearance
+        let r = c.motor.propInches * 25.4 / 2
+        if c.kind.isPusher {
+            let w = TaperedPanel(rootChord: c.rootChord, tipChord: c.tipChord, sweep: c.sweep, semiSpan: c.semiSpan)
+            let propPlane = c.rootChord + 22
+            let maxTE = stride(from: 0.0, through: min(r + 3, c.semiSpan), by: 2).map { w.te($0) }.max() ?? 0
+            if maxTE > propPlane - 3 {
+                add(.error, "Geometry", "Propeller hits the trailing edge", "Swept TE reaches \(f0(maxTE)) mm within the \(f1(c.motor.propInches))\" prop disc (plane at \(f0(propPlane)) mm). Reduce sweep or increase root chord.")
+            } else { add(.ok, "Geometry", "Propeller clearance OK", "\(f1(propPlane - maxTE)) mm to the trailing edge.") }
+            if c.battery.size.l > c.rootChord * 0.7 { add(.warning, "Geometry", "Battery long for the centre section", "Battery \(f0(c.battery.size.l)) mm vs root chord \(f0(c.rootChord)) mm.") }
+        } else if r > c.noseLength * 1.6 {
+            add(.info, "Geometry", "Large prop on a short nose", "Hand-launch carefully, keep fingers clear.")
+        }
+        add(.info, "Performance", "Estimated flight time \(f0(flightTime)) min", "Stall ≈ \(f0(stallSpeed)) km/h, AUW \(f0(totalMass)) g.")
+        checks.sort { $0.severity > $1.severity }
+    }
+}

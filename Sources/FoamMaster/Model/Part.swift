@@ -1,0 +1,115 @@
+import Foundation
+import simd
+
+/// Frame that maps a flat part's (u, v) plan coordinates into the 3D aircraft frame.
+/// Aircraft frame: +X right wing, +Y up, +Z aft. Origin = root leading edge on the wing plane.
+struct Placement {
+    var origin: SIMD3<Double>
+    var u: SIMD3<Double>
+    var v: SIMD3<Double>
+
+    var normal: SIMD3<Double> { simd_normalize(simd_cross(u, v)) }
+
+    func point(_ p: Vec2, offset: Double = 0) -> SIMD3<Double> {
+        origin + u * p.x + v * p.y + normal * offset
+    }
+
+    static func horizontal(at origin: SIMD3<Double>) -> Placement {
+        Placement(origin: origin, u: [0, 0, 1], v: [1, 0, 0])
+    }
+    static func vertical(at origin: SIMD3<Double>) -> Placement {
+        Placement(origin: origin, u: [0, 0, 1], v: [0, 1, 0])
+    }
+}
+
+enum Feature {
+    /// Hinge line: bevel 45° on the bottom, hinge with tape on top.
+    case hinge(Vec2, Vec2)
+    /// Through cut separating a control surface from the fixed part.
+    case cut(Vec2, Vec2)
+    /// Carbon spar channel (centre line, width).
+    case spar(Vec2, Vec2, Double)
+    /// Marker for the recommended centre of gravity.
+    case cg(Vec2)
+    /// Dashed outline for component placement (battery, receiver …).
+    case zone([Vec2], String)
+    case label(String, Vec2)
+}
+
+enum HoleKind { case slot, servo, hornSlot, drill }
+
+struct Hole {
+    var kind: HoleKind
+    var polygon: [Vec2]
+    var note: String = ""
+}
+
+enum PartRole { case wing, fuselage, stabilizer, fin, winglet }
+
+struct Region {
+    var polygon: [Vec2]
+    var isControl: Bool
+}
+
+struct Part: Identifiable {
+    let id = UUID()
+    var name: String
+    var role: PartRole
+    var outline: [Vec2]
+    var holes: [Hole] = []
+    var features: [Feature] = []
+    /// Optional subdivision used to colour control surfaces in the 3D view.
+    var regions: [Region] = []
+    var instances: [Placement]
+    var material: FoamMaterial
+    var mirroredPair: Bool = false
+
+    var quantity: Int { instances.count }
+    var thickness: Double { material.thickness }
+
+    var netArea: Double { Poly.area(outline) - holes.reduce(0) { $0 + Poly.area($1.polygon) } }
+
+    /// grams
+    var massEach: Double { netArea * 1e-6 * thickness * 1e-3 * material.density * 1000 }
+
+    var centroid2D: Vec2 {
+        let a = Poly.area(outline)
+        var c = Poly.centroid(outline) * a
+        var total = a
+        for h in holes {
+            let ha = Poly.area(h.polygon)
+            c -= Poly.centroid(h.polygon) * ha
+            total -= ha
+        }
+        return total > 0 ? c / total : Poly.centroid(outline)
+    }
+
+    var size: Vec2 { let b = Poly.bounds(outline); return b.max - b.min }
+}
+
+struct MassItem: Identifiable {
+    let id = UUID()
+    var name: String
+    var mass: Double          // g
+    var position: SIMD3<Double>
+    var category: String
+}
+
+struct ControlSurface {
+    var name: String
+    var hingeMid: SIMD3<Double>
+    var hornPosition: SIMD3<Double>
+    var servoPosition: SIMD3<Double>
+    var area: Double
+    var chord: Double = 20
+}
+
+/// Complete derived design: parts plus the components that go into it.
+struct Design {
+    var config: AircraftConfig
+    var parts: [Part]
+    var components: [MassItem]
+    var controls: [ControlSurface]
+    var servoCutouts: [(part: String, rect: [Vec2])]
+    var geometryIssues: [String]
+}
