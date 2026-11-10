@@ -105,14 +105,19 @@ enum SceneBuilder {
                 scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.battery)
             case "Power" where item.name.contains("brushless"):
                 let r = c.motor.bellDiameter / 2
-                scene.addMesh(cylinder(center: p, radius: r, length: r * 1.1), color: Palette.motor)
+                let out: Double = c.kind.isPusher ? 1 : -1          // direction from firewall towards the prop
+                scene.addMesh(cylinder(center: p, radius: r, length: c.motorLength * 0.85), color: Palette.motor)
+                // Shaft from the bell to the prop hub.
+                let shaftEnd = c.propPlaneZ
+                scene.addMesh(cylinder(center: [0, 0, (p.z + out * c.motorLength * 0.42 + shaftEnd) / 2], radius: 1.2,
+                                       length: abs(shaftEnd - (p.z + out * c.motorLength * 0.42)) + 1), color: SIMD4(0.75, 0.75, 0.78, 1))
                 let pr = c.motor.propInches * 25.4 / 2
                 let z = c.propPlaneZ
                 for k in 0..<48 {
                     let a0 = Double(k) / 48 * 2 * .pi, a1 = Double(k + 1) / 48 * 2 * .pi
                     scene.addLine([cos(a0) * pr, sin(a0) * pr, z], [cos(a1) * pr, sin(a1) * pr, z], color: SIMD4(1, 1, 1, 0.25))
                 }
-                scene.addMesh(propeller(radius: pr, blades: c.kind.propBlades, z: z, hub: r * 0.45), color: Palette.prop)
+                scene.addMesh(propeller(radius: pr, blades: c.kind.propBlades, z: z, hub: r * 0.45, outward: out, mirrored: c.kind.isPusher), color: Palette.prop)
             case "FPV":
                 if item.name.hasPrefix("FPV camera") {
                     let w = c.fpv.cameraWidth
@@ -233,7 +238,9 @@ enum SceneBuilder {
 
     /// Propeller: spinner + n blades with a realistic planform (narrow root, widest at ~35 % radius,
     /// rounded tip) and pitch – each blade is twisted from ~35° at the root to ~12° at the tip.
-    static func propeller(radius R: Double, blades n: Int, z: Double, hub: Double) -> Mesh3D {
+    /// `outward` = direction (±z) the spinner points (away from the motor). Pusher props are the mirror image
+    /// of tractor props (reverse rotation), so `mirrored` flips the blade handedness.
+    static func propeller(radius R: Double, blades n: Int, z: Double, hub: Double, outward: Double = -1, mirrored: Bool = false) -> Mesh3D {
         var m = Mesh3D()
         let stations: [(r: Double, chord: Double)] = [(0.12, 0.13), (0.25, 0.2), (0.38, 0.22), (0.55, 0.19), (0.72, 0.15), (0.88, 0.1), (0.97, 0.06), (1.0, 0.02)]
         let thick = max(0.6, R * 0.012)
@@ -245,8 +252,9 @@ enum SceneBuilder {
                 let pitch = (35 - 23 * st.r) * .pi / 180
                 // Blade section in the local frame: x = radius, chord line tilted by the pitch angle about x.
                 let half = ch / 2
-                let le = SIMD3<Double>(r, half * cos(pitch), -half * sin(pitch))
-                let te = SIMD3<Double>(r, -half * cos(pitch), half * sin(pitch))
+                let mx: Double = mirrored ? -1 : 1
+                let le = SIMD3<Double>(r * mx, half * cos(pitch), -half * sin(pitch) * outward * -1)
+                let te = SIMD3<Double>(r * mx, -half * cos(pitch), half * sin(pitch) * outward * -1)
                 lead.append(le); trail.append(te)
             }
             let rot = simd_quatd(angle: phi, axis: [0, 0, 1])
@@ -262,8 +270,10 @@ enum SceneBuilder {
             }
         }
         m.append(cylinder(center: [0, 0, z], radius: hub, length: R * 0.12))
-        var spinner = sphere(center: [0, 0, z], radius: hub)
-        spinner = spinner.transformed { p in [p.x, p.y, z + (p.z - z) * 1.6] }
+        // Spinner: nose cone on the outward side of the hub.
+        let tipZ = z + outward * hub * 0.8
+        var spinner = sphere(center: [0, 0, tipZ], radius: hub)
+        spinner = spinner.transformed { p in [p.x, p.y, tipZ + (p.z - tipZ) * (((p.z - tipZ) * outward) > 0 ? 1.8 : 0.4)] }
         m.append(spinner)
         return m
     }

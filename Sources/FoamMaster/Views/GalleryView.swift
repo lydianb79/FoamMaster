@@ -203,6 +203,8 @@ struct SetupSheet: View {
         _fins = State(initialValue: d.taillessFins)
     }
 
+    private var optionKey: String { "\(preview.kind.rawValue)-\(fpv.rawValue)-\(fins.rawValue)-\(layout.rawValue)-\(servos)" }
+
     private var candidate: AircraftConfig {
         var c = preview.kind.defaults
         c.fpv = fpv; c.taillessFins = fins
@@ -217,9 +219,18 @@ struct SetupSheet: View {
         let servoGroups = Dictionary(grouping: design.controls, by: \.servoID)
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 14) {
-                ModelThumbnail(preview: preview).frame(width: 230, height: 135)
-                    .background(RadialGradient(colors: [kind.tint.opacity(0.25), .clear], center: .center, startRadius: 5, endRadius: 140))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                // Live render of exactly what is selected below (FPV gear, fins, control surfaces, servos).
+                Group {
+                    if let img = Thumbnailer.image(for: DesignBuilder.build(Project.balanced(candidate)), key: optionKey) {
+                        Image(nsImage: img).resizable().aspectRatio(contentMode: .fit)
+                    } else {
+                        ModelThumbnail(preview: preview)
+                    }
+                }
+                .frame(width: 300, height: 175)
+                .background(RadialGradient(colors: [kind.tint.opacity(0.25), .clear], center: .center, startRadius: 5, endRadius: 170))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .animation(.easeInOut(duration: 0.2), value: optionKey)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(kind.title).font(.system(size: 24, weight: .heavy, design: .rounded))
                     Text(kind.subtitle).font(.system(size: 13)).foregroundStyle(.secondary)

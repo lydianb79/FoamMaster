@@ -3,17 +3,24 @@ import simd
 
 extension AircraftConfig {
     /// Depth of the trailing-edge cutout the pusher motor of a flying wing sits in.
-    var motorNotchDepth: Double { max(26, motor.bellDiameter * 1.3) }
+    /// Motor body length (bell + base) along the thrust line.
+    var motorLength: Double { motor.bellDiameter + 4 }
+    /// Depth of the trailing-edge cutout the pusher motor of a flying wing sits in: firewall at the front of
+    /// the cutout, motor body behind it, prop spinning inside the cutout.
+    var motorNotchDepth: Double { max(26, motorLength + 14) }
     var motorNotchWidth: Double { motor.propInches * 25.4 + 10 }
-    /// z of the motor (aircraft frame, mm aft of the root leading edge).
-    var motorZ: Double {
-        if kind.isTailless { return rootChord - motorNotchDepth + 12 }
-        if kind.isJet { return jetPropZ - 14 }
-        if kind.isTwinBoom { return rootChord + 16 }
-        return -noseLength - 12
+    /// Firewall (printed mount plate) position. The clamp always grips the structure ahead of / behind it:
+    /// pusher = structure in front, motor and prop behind; tractor = structure behind, motor and prop in front.
+    var firewallZ: Double {
+        if kind.isTailless { return rootChord - motorNotchDepth + 2 }
+        if kind.isTwinBoom { return rootChord }
+        if kind.isJet { return jetPropZ - 5 - motorLength }
+        return -noseLength
     }
-    /// z of the propeller disc.
-    var propPlaneZ: Double { kind.isJet ? jetPropZ : (kind.isPusher ? motorZ + 8 : motorZ - 10) }
+    /// Centre of the motor body.
+    var motorZ: Double { kind.isPusher ? firewallZ + motorLength / 2 : firewallZ - motorLength / 2 }
+    /// z of the propeller disc (on the far side of the motor from the firewall).
+    var propPlaneZ: Double { kind.isPusher ? firewallZ + motorLength + 4 : firewallZ - motorLength - 4 }
     /// Lateral position of the twin booms / fins.
     var boomX: Double { hStabSpan / 2 - 7 }
     /// Width of the horizontal fuselage plate (cross fuselage) at the wing – about 8.5 % of the
@@ -168,6 +175,26 @@ enum DesignBuilder {
             return (fin, main, rudder, tabs)
         }
 
+        /// End-plate fin glued to the side of a tip edge (winglet / twin-boom fin): reaches above and a little
+        /// below the surface, with two slots at the surface plane for the tip tabs. Optional rudder strip aft.
+        func sideFin(chord fc: Double, height h: Double, below: Double? = nil, rudderFrac: Double = 0)
+            -> (outline: [Vec2], main: [Vec2], rudder: [Vec2]?, slots: [Hole], tabs: [Double]) {
+            let lo = below ?? max(h * 0.25, 10)
+            let topLE = min(h * 0.55 + fc * 0.25, fc * 0.75 + h * 0.2)
+            let topTE = rudderFrac > 0 ? fc : fc + h * 0.2
+            let outline = Poly.ccw([Vec2(fc * 0.12, -lo), Vec2(fc, -lo), Vec2(topTE, h), Vec2(topLE, h), Vec2(0, 0)])
+            var main = outline
+            var rudder: [Vec2]?
+            if rudderFrac > 0 {
+                let hu = fc * (1 - rudderFrac)
+                main = Poly.ccw([Vec2(fc * 0.12, -lo), Vec2(hu, -lo), Vec2(hu, h), Vec2(min(topLE, hu - 2), h), Vec2(0, 0)])
+                rudder = [Vec2(hu, -lo), Vec2(fc, -lo), Vec2(fc, h), Vec2(hu, h)]
+            }
+            let tabs = [fc * 0.25, fc * (rudderFrac > 0 ? 0.48 : 0.65)]
+            let slots = tabs.map { slot(minU: $0 - 5, maxU: $0 + 5, minV: -t / 2, maxV: t / 2) }
+            return (outline, main, rudder, slots, tabs)
+        }
+
         // MARK: Tailless (flying wing / delta)
 
         mutating func buildTailless() {
@@ -188,7 +215,7 @@ enum DesignBuilder {
                 return p
             }
             var outline = withMotorNotch(out.outline)
-            let mainRegion = withMotorNotch(out.main)
+            var mainRegion = withMotorNotch(out.main)
             if w.te(0) - nd < c.rootChord * 0.45 { issues.append("Root chord is too short for the motor cutout.") }
             for v in [-12.0, 12.0] { outline = Poly.insertNotch(outline, at: Vec2(w.le(v), v)) }
 
@@ -214,24 +241,30 @@ enum DesignBuilder {
 
             // Winglets / centre fin with tabs into the wing.
             let finHeight = c.wingletHeight
-            if finHeight > 5 {
-                let centre = c.taillessFins == .centreFin
-                let fc = centre ? c.rootChord * 0.42 : c.tipChord * 0.85
+            if finHeight > 5 && c.taillessFins == .centreFin {
+                let fc = c.rootChord * 0.42
                 let fin = finOutline(chord: fc, height: finHeight)
-                var instances: [Placement] = []
-                let stations: [Double] = centre ? [0] : [-(s - 6), s - 6]
                 let maxFinU = w.te(0) - nd - fc - 4
-                if centre && c.finPosition > maxFinU {
+                if c.finPosition > maxFinU {
                     issues.append("Centre fin is too far back – it reaches the motor cutout. Move it forward to ≤ \(Int(maxFinU)) mm.")
                 }
-                for v in stations {
-                    let u0 = centre ? c.finPosition : w.le(v) + 0.08 * w.chord(v)
-                    instances.append(Placement(origin: [v, t / 2, u0], u: [0, 0, 1], v: [0, 1, 0]))
-                    for tu in fin.tabs { holes.append(slot(minU: u0 + tu - 4, maxU: u0 + tu + 4, minV: v - t / 2, maxV: v + t / 2)) }
+                let u0 = c.finPosition
+                for tu in fin.tabs { holes.append(slot(minU: u0 + tu - 4, maxU: u0 + tu + 4, minV: -t / 2, maxV: t / 2)) }
+                parts.append(Part(name: "Centre fin", role: .fin, outline: fin.outline, features: [.label("FIN", Vec2(fc * 0.45, finHeight * 0.4))],
+                                  instances: [Placement(origin: [0, t / 2, u0], u: [0, 0, 1], v: [0, 1, 0])], material: c.material))
+            } else if finHeight > 5 {
+                // Winglets are glued to the SIDE of the wing tip: tip tabs go through slots in the winglet.
+                let wl = sideFin(chord: c.tipChord, height: finHeight)
+                for v in [-s, s] {
+                    for tu in wl.tabs {
+                        outline = Poly.insertTab(outline, at: Vec2(w.le(v) + tu, v), width: 10, height: t)
+                        mainRegion = Poly.insertTab(mainRegion, at: Vec2(w.le(v) + tu, v), width: 10, height: t)
+                    }
                 }
-                parts.append(Part(name: centre ? "Centre fin" : "Winglet", role: centre ? .fin : .winglet,
-                                  outline: fin.outline, features: [.label(centre ? "FIN" : "WINGLET", Vec2(fc * 0.45, finHeight * 0.4))],
-                                  instances: instances, material: c.material))
+                parts.append(Part(name: "Winglet", role: .winglet, outline: wl.outline, holes: wl.slots,
+                                  features: [.label("WINGLET", Vec2(c.tipChord * 0.45, finHeight * 0.45))],
+                                  instances: [-1.0, 1.0].map { Placement(origin: [$0 * (s + t / 2), 0, w.le(s)], u: [0, 0, 1], v: [0, 1, 0]) },
+                                  material: c.material))
             }
 
             // Centre keel under the wing (reinforcement strip, stays within the chord) – carries the motor mount clamp.
@@ -540,7 +573,8 @@ enum DesignBuilder {
             let hCanopy = fh * 0.5 - t / 2, hMid = fh * 0.32, hBoom = c.boomTopHeight
             let finTop = hBoom + c.vStabHeight
             let finLE = uH - 1.3 * vsc
-            var upFront = [Vec2(uN + 12, 0), Vec2(zp - gap, 0), Vec2(zp - gap, hMid), Vec2(c.rootChord * 0.2, hCanopy),
+            let fw = c.firewallZ
+            var upFront = [Vec2(uN + 12, 0), Vec2(fw, 0), Vec2(fw, hMid), Vec2(c.rootChord * 0.2, hCanopy),
                            Vec2(-0.3 * c.noseLength, hCanopy * 0.85), Vec2(uN + 0.45 * c.noseLength, hCanopy * 0.4), Vec2(uN + 12, 3)]
             var upRear = [Vec2(zp + gap, 0), Vec2(uR, 0), Vec2(uR, finTop), Vec2(uH - 0.35 * vsc, finTop), Vec2(finLE, hBoom), Vec2(zp + gap + 15, hMid * 0.9), Vec2(zp + gap, hMid * 0.8)]
             var upRearMain = [Vec2(zp + gap, 0), Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.35 * vsc, finTop), Vec2(finLE, hBoom), Vec2(zp + gap + 15, hMid * 0.9), Vec2(zp + gap, hMid * 0.8)]
@@ -548,7 +582,7 @@ enum DesignBuilder {
             if !c.hasRudder { upRearMain = upRear }
             if finLE < zp + gap + 20 { issues.append("Fin is too long for the tail arm.") }
             let hLow = fh * 0.3
-            var loFront = Poly.ccw([Vec2(uN + 0.3 * c.noseLength, 0), Vec2(zp - gap, 0), Vec2(zp - gap, -hLow * 0.7), Vec2(c.rootChord * 0.2, -hLow), Vec2(uN + 0.5 * c.noseLength, -hLow * 0.5)])
+            var loFront = Poly.ccw([Vec2(uN + 0.3 * c.noseLength, 0), Vec2(fw, 0), Vec2(fw, -hLow * 0.7), Vec2(c.rootChord * 0.2, -hLow), Vec2(uN + 0.5 * c.noseLength, -hLow * 0.5)])
             let uL = ta + hsc * 0.3
             var loRear = Poly.ccw([Vec2(zp + gap, 0), Vec2(uL, 0), Vec2(uL, -c.lowerTailHeight * 0.7), Vec2(zp + gap + 25, -hLow * 0.7), Vec2(zp + gap, -hLow * 0.7)])
 
@@ -560,9 +594,9 @@ enum DesignBuilder {
                     if u < -6 { noseHoles.append(h) } else if u < te0 - 8 { wingHoles.append(h) } else if u > te0 + 8 { tailHoles.append(h) }
                 }
             }
-            let ufTabs = [uN + 0.6 * c.noseLength, c.rootChord * 0.15].filter { $0 + 8 < zp - gap }
+            let ufTabs = [uN + 0.6 * c.noseLength, c.rootChord * 0.15].filter { $0 + 8 < fw }
             let urTabs = [(te0 + ta) / 2, ta + hsc * 0.2].filter { $0 + 8 < uH && $0 > zp + gap + 8 }
-            let lfTabs = [uN + 0.7 * c.noseLength, c.rootChord * 0.3].filter { $0 + 8 < zp - gap }
+            let lfTabs = [uN + 0.7 * c.noseLength, c.rootChord * 0.3].filter { $0 + 8 < fw }
             let lrTabs = [(te0 + uL) / 2].filter { $0 > zp + gap + 8 }
             for u in ufTabs { upFront = Poly.insertTab(upFront, at: Vec2(u, 0), width: 10, height: t) }
             for u in urTabs { upRear = Poly.insertTab(upRear, at: Vec2(u, 0), width: 10, height: t); upRearMain = Poly.insertTab(upRearMain, at: Vec2(u, 0), width: 10, height: t) }
@@ -701,25 +735,31 @@ enum DesignBuilder {
             let stab = TaperedPanel(rootLE: ta, rootChord: hsc, tipChord: hsc, sweep: 0, semiSpan: sh)
             let so = stab.build(full: true, surfaces: [1...(sh - 14)], fraction: 0.4)
             var stabHoles: [Hole] = []
-            let fin = finOutline(chord: c.vStabChord, height: c.vStabHeight, rudderFrac: c.hasRudder ? 0.4 : 0)
+            // Twin fins are end plates glued to the SIDE of the stabiliser tips (tip tabs into fin slots).
+            let fin = sideFin(chord: c.vStabChord, height: c.vStabHeight, below: max(10, c.vStabHeight * 0.2), rudderFrac: c.hasRudder ? 0.4 : 0)
             let finU0 = ta + hsc - c.vStabChord
-            for x in [-xb, xb] {
-                for tu in fin.tabs { stabHoles.append(slot(minU: finU0 + tu - 4, maxU: finU0 + tu + 4, minV: x - t / 2, maxV: x + t / 2)) }
+            var stabOutline = so.outline
+            var stabRegions = regions(so)
+            for v in [-sh, sh] {
+                for tu in fin.tabs {
+                    stabOutline = Poly.insertTab(stabOutline, at: Vec2(finU0 + tu, v), width: 10, height: t)
+                    stabRegions[0].polygon = Poly.insertTab(stabRegions[0].polygon, at: Vec2(finU0 + tu, v), width: 10, height: t)
+                }
             }
             let eHorn = Vec2(ta + hsc * 0.6 + 6, max(armOffset, 8))
             stabHoles.append(hornSlot(at: eHorn))
             let stabY = boomY + 2 + t / 2
-            parts.append(Part(name: "Stabiliser", role: .stabilizer, outline: so.outline, holes: stabHoles,
+            parts.append(Part(name: "Stabiliser", role: .stabilizer, outline: stabOutline, holes: stabHoles,
                               features: so.features + [-xb, xb].map { .spar(Vec2(ta, $0), Vec2(ta + hsc * 0.55, $0), rod.widthMM) },
-                              regions: regions(so), instances: [.horizontal(at: [0, stabY, 0])], material: c.material))
+                              regions: stabRegions, instances: [.horizontal(at: [0, stabY, 0])], material: c.material))
             if finU0 < ta { issues.append("Fin chord is longer than the stabiliser chord.") }
 
-            let finInst = [-xb, xb].map { Placement(origin: [$0, stabY + t / 2, finU0], u: [0, 0, 1], v: [0, 1, 0]) }
+            let finInst = [-1.0, 1.0].map { Placement(origin: [$0 * (sh + t / 2), stabY, finU0], u: [0, 0, 1], v: [0, 1, 0]) }
             var finRegions = [Region(polygon: fin.main, isControl: false)]
             if let r = fin.rudder { finRegions.append(Region(polygon: r, isControl: true)) }
             let rHingeU = c.vStabChord * 0.6
             parts.append(Part(name: "Fin", role: .fin, outline: fin.outline,
-                              holes: c.hasRudder ? [hornSlot(at: Vec2(rHingeU + 6, 10))] : [],
+                              holes: fin.slots + (c.hasRudder ? [hornSlot(at: Vec2(rHingeU + 6, 14))] : []),
                               features: (c.hasRudder ? [.hinge(Vec2(rHingeU, 0), Vec2(rHingeU, c.vStabHeight))] : []) + [.label("FIN", Vec2(c.vStabChord * 0.3, c.vStabHeight * 0.4))],
                               regions: c.hasRudder ? finRegions : [], instances: finInst, material: c.material))
 
@@ -734,8 +774,8 @@ enum DesignBuilder {
                                            servoPosition: eBody, area: Poly.area(so.controls.first ?? []) * 2, chord: 0.4 * hsc, servoID: "Elevator",
                                            armPosition: armTip(eBody, side: 1)))
             let rudderArea = (fin.rudder.map { Poly.area($0) } ?? 0) * 2
-            if c.hasRudder { controls.append(ControlSurface(name: "Rudders", hingeMid: [xb, stabY + c.vStabHeight / 2, finU0 + rHingeU],
-                                           hornPosition: [-xb + t / 2 + 8, stabY + t / 2 + 10, finU0 + rHingeU + 2],
+            if c.hasRudder { controls.append(ControlSurface(name: "Rudders", hingeMid: [sh + t / 2, stabY + c.vStabHeight / 2, finU0 + rHingeU],
+                                           hornPosition: [-sh + 8, stabY + 14, finU0 + rHingeU + 2],
                                            servoPosition: [0, t / 2 + s2.y, s2.x], area: rudderArea, chord: 0.4 * c.vStabChord, servoID: "Rudders",
                                            armPosition: armTip([0, t / 2 + s2.y, s2.x], side: -1), hornAxis: [1, 0, 0])) }
 
@@ -756,7 +796,7 @@ enum DesignBuilder {
             components.append(MassItem(name: "Receiver", mass: 2.5, position: [0, 0, pusher ? c.rootChord * 0.1 : c.rootChord * 0.3], category: "Radio"))
             components.append(MassItem(name: "Wiring & connectors", mass: 3, position: [0, 0, c.rootChord * 0.15], category: "Radio"))
             components.append(MassItem(name: c.battery.name, mass: c.battery.mass, position: batteryPos, category: "Battery"))
-            components.append(MassItem(name: "Motor mount (printed)", mass: 1.5 + c.motor.mass * 0.12, position: [0, 0, motorZ + (pusher ? -10 : 10)], category: "Printed"))
+            components.append(MassItem(name: "Motor mount (printed)", mass: 1.5 + c.motor.mass * 0.12, position: [0, 0, c.firewallZ], category: "Printed"))
 
             if c.fpv != .none {
                 components.append(MassItem(name: "FPV camera (\(c.fpv.name))", mass: c.fpv.cameraMass, position: fpvCamera, category: "FPV"))
