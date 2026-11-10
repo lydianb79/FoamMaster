@@ -126,6 +126,7 @@ struct PlanLayout {
 enum PlanDrawer {
     static let ink = NSColor(calibratedWhite: 0.05, alpha: 1)
     static let hingeColor = NSColor(calibratedRed: 0.1, green: 0.35, blue: 0.9, alpha: 1)
+    static let hornColor = NSColor(calibratedRed: 0.85, green: 0.42, blue: 0.05, alpha: 1)
     static let sparColor = NSColor(calibratedRed: 0.1, green: 0.6, blue: 0.25, alpha: 1)
     static let servoColor = NSColor(calibratedRed: 0.95, green: 0.35, blue: 0.3, alpha: 1)
     static let cgColor = NSColor(calibratedRed: 0.9, green: 0.15, blue: 0.5, alpha: 1)
@@ -187,6 +188,21 @@ enum PlanDrawer {
             if h.kind == .servo {
                 let c = map(Poly.centroid(h.polygon))
                 text("SERVO", at: c - Vec2(0, 1.4), size: 2.4, color: inkC, weight: .bold, centered: true)
+            }
+            if h.kind == .hornSlot {
+                // Horn position: flange footprint (from 0.5 mm behind the hinge), pushrod hole ○ over the hinge line
+                // (6 mm ahead of the slot centre).
+                let c = Poly.centroid(h.polygon)
+                let foot = Poly.rect(minU: c.x - 5.5, maxU: c.x + 9.5, minV: c.y - 3, maxV: c.y + 3)
+                ctx.saveGState()
+                ctx.addPath(path(foot, map)); ctx.setStrokeColor(hornColor.cgColor); ctx.setLineWidth(0.3)
+                ctx.setLineDash(phase: 0, lengths: [1, 0.8]); ctx.strokePath(); ctx.restoreGState()
+                let hole = map(Vec2(c.x - 6, c.y))
+                ctx.saveGState()
+                ctx.setStrokeColor(hornColor.cgColor); ctx.setLineWidth(0.3)
+                ctx.strokeEllipse(in: CGRect(x: hole.x - 1, y: hole.y - 1, width: 2, height: 2))
+                ctx.restoreGState()
+                text("HORN", at: map(Vec2(c.x + 2, c.y)) + Vec2(0, 3.4), size: 2.2, color: hornColor, weight: .bold, centered: true)
             }
         }
 

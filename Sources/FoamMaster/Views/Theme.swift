@@ -7,19 +7,25 @@ struct ThemePalette: Identifiable {
     var bgBottom: Color
     var accent: Color
     var violet: Color
+    /// Strength of the two soft colour glows in the background.
+    var glow: Double = 0.17
     var id: String { name }
 
+    static func rgb(_ r: Double, _ g: Double, _ b: Double) -> Color { Color(red: r, green: g, blue: b) }
     static let all: [ThemePalette] = [
-        ThemePalette(name: "Midnight", bgTop: Color(red: 0.035, green: 0.045, blue: 0.09), bgBottom: Color(red: 0.09, green: 0.06, blue: 0.17),
-                     accent: Color(red: 0.25, green: 0.78, blue: 1.0), violet: Color(red: 0.58, green: 0.42, blue: 1.0)),
-        ThemePalette(name: "Ocean", bgTop: Color(red: 0.02, green: 0.07, blue: 0.09), bgBottom: Color(red: 0.02, green: 0.13, blue: 0.17),
-                     accent: Color(red: 0.2, green: 0.9, blue: 0.82), violet: Color(red: 0.3, green: 0.55, blue: 1.0)),
-        ThemePalette(name: "Sunset", bgTop: Color(red: 0.09, green: 0.03, blue: 0.06), bgBottom: Color(red: 0.19, green: 0.06, blue: 0.09),
-                     accent: Color(red: 1.0, green: 0.66, blue: 0.25), violet: Color(red: 1.0, green: 0.36, blue: 0.56)),
-        ThemePalette(name: "Forest", bgTop: Color(red: 0.03, green: 0.07, blue: 0.05), bgBottom: Color(red: 0.05, green: 0.12, blue: 0.08),
-                     accent: Color(red: 0.56, green: 0.94, blue: 0.4), violet: Color(red: 0.2, green: 0.78, blue: 0.64)),
-        ThemePalette(name: "Graphite", bgTop: Color(red: 0.07, green: 0.07, blue: 0.08), bgBottom: Color(red: 0.13, green: 0.13, blue: 0.15),
-                     accent: Color(red: 0.78, green: 0.84, blue: 0.95), violet: Color(red: 0.55, green: 0.6, blue: 0.72)),
+        ThemePalette(name: "Midnight", bgTop: rgb(0.035, 0.045, 0.09), bgBottom: rgb(0.09, 0.06, 0.17),
+                     accent: rgb(0.25, 0.78, 1.0), violet: rgb(0.58, 0.42, 1.0)),
+        // Calm deep-sea blue: aqua accent, steel-blue second colour.
+        ThemePalette(name: "Ocean", bgTop: rgb(0.02, 0.05, 0.07), bgBottom: rgb(0.03, 0.08, 0.115),
+                     accent: rgb(0.38, 0.80, 0.90), violet: rgb(0.32, 0.54, 0.88), glow: 0.11),
+        // Dusk: deep plum background, peach accent with dusty rose.
+        ThemePalette(name: "Sunset", bgTop: rgb(0.045, 0.035, 0.065), bgBottom: rgb(0.11, 0.055, 0.10),
+                     accent: rgb(0.98, 0.72, 0.48), violet: rgb(0.88, 0.50, 0.60), glow: 0.09),
+        // Night forest: dark green-grey background, mint accent with sea green.
+        ThemePalette(name: "Forest", bgTop: rgb(0.03, 0.05, 0.045), bgBottom: rgb(0.05, 0.08, 0.068),
+                     accent: rgb(0.58, 0.86, 0.66), violet: rgb(0.40, 0.70, 0.64), glow: 0.09),
+        ThemePalette(name: "Graphite", bgTop: rgb(0.07, 0.07, 0.08), bgBottom: rgb(0.13, 0.13, 0.15),
+                     accent: rgb(0.78, 0.84, 0.95), violet: rgb(0.55, 0.60, 0.72), glow: 0.08),
     ]
     static let storageKey = "theme"
     static let defaultName = "Midnight"
@@ -27,8 +33,10 @@ struct ThemePalette: Identifiable {
 
 enum Theme {
     /// Selected theme (View ▸ Theme), stored in the user defaults.
+    /// Set by the self-test to render every theme without touching the user's setting.
+    static var override: String?
     static var palette: ThemePalette {
-        let name = UserDefaults.standard.string(forKey: ThemePalette.storageKey) ?? ThemePalette.defaultName
+        let name = override ?? UserDefaults.standard.string(forKey: ThemePalette.storageKey) ?? ThemePalette.defaultName
         return ThemePalette.all.first { $0.name == name } ?? ThemePalette.all[0]
     }
     static var bgTop: Color { palette.bgTop }
@@ -43,8 +51,8 @@ enum Theme {
     static var background: some View {
         ZStack {
             LinearGradient(colors: [bgTop, bgBottom], startPoint: .top, endPoint: .bottom)
-            RadialGradient(colors: [accent.opacity(0.16), .clear], center: .init(x: 0.25, y: 0.2), startRadius: 10, endRadius: 600)
-            RadialGradient(colors: [violet.opacity(0.18), .clear], center: .init(x: 0.85, y: 0.85), startRadius: 10, endRadius: 700)
+            RadialGradient(colors: [accent.opacity(palette.glow * 0.95), .clear], center: .init(x: 0.25, y: 0.2), startRadius: 10, endRadius: 600)
+            RadialGradient(colors: [violet.opacity(palette.glow * 1.05), .clear], center: .init(x: 0.85, y: 0.85), startRadius: 10, endRadius: 700)
         }
         .ignoresSafeArea()
     }

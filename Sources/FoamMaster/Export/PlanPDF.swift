@@ -87,7 +87,8 @@ enum PlanPDF {
         PlanDrawer.text("LEGEND", at: Vec2(15, ly - 6), size: 3.4, weight: .bold)
         let legend: [(NSColor, String, [CGFloat])] = [
             (.black, "Cut line (through)", []), (PlanDrawer.hingeColor, "Hinge line – bevel 45° underneath, tape on top", [2, 1.2]),
-            (PlanDrawer.sparColor, "Carbon spar channel", [3, 1.5]), (.gray, "Component zone", [1.5, 1.5])
+            (PlanDrawer.sparColor, "Carbon spar channel", [3, 1.5]), (.gray, "Component zone", [1.5, 1.5]),
+            (PlanDrawer.hornColor, "Horn position – flange outline, ○ = pushrod hole over the hinge", [1, 0.8])
         ]
         for (i, l) in legend.enumerated() {
             let y = ly + Double(i) * 6
@@ -96,7 +97,7 @@ enum PlanPDF {
         }
         let swatches: [(NSColor, String)] = [(PlanDrawer.servoColor.withAlphaComponent(0.35), "Servo cutout"), (.gray, "Slot for tab / wing"), (.black, "Horn slot")]
         for (i, s) in swatches.enumerated() {
-            let y = ly + 24 + Double(i) * 6
+            let y = ly + 30 + Double(i) * 6
             ctx.setFillColor(s.0.cgColor); ctx.fill(CGRect(x: 15, y: y, width: 15, height: 4))
             PlanDrawer.text(s.1, at: Vec2(34, y), size: 3.2)
         }
@@ -105,7 +106,7 @@ enum PlanPDF {
         PlanDrawer.text("V-notches = alignment marks · tabs fit matching slots", at: Vec2(110, ly + 14), size: 3)
 
         // Tile map
-        let my = 258.0
+        let my = 262.0
         PlanDrawer.text("PAGE MAP – \(layout.usedTiles.count) plan pages (print at 100 %, no scaling)", at: Vec2(15, my - 6), size: 3.2, weight: .bold)
         let cell = min(10.0, 30.0 / Double(layout.rows))
         let used = Set(layout.usedTiles.map { "\($0.row)-\($0.col)" })

@@ -38,6 +38,11 @@ enum SelfTest {
         let project = Project()
         project.start(.flyingWing)
         snapshotView(GalleryContent().environmentObject(project), size: CGSize(width: 1300, height: 820), to: dir.appendingPathComponent("ui_gallery.png"))
+        for theme in ThemePalette.all {
+            Theme.override = theme.name
+            snapshotView(GalleryContent().environmentObject(project), size: CGSize(width: 1300, height: 820), to: dir.appendingPathComponent("theme_\(theme.name).png"))
+        }
+        Theme.override = nil
         for (i, kind) in [AircraftKind.trainer].enumerated() {
             project.start(kind)
             let ui = HStack(spacing: 0) {
