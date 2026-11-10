@@ -9,26 +9,23 @@ struct ThemePalette: Identifiable {
     var violet: Color
     /// Strength of the two soft colour glows in the background.
     var glow: Double = 0.17
-    /// Accent tint laid over every panel (0 = neutral glass).
-    var panelTint: Double = 0
     var id: String { name }
 
     static func rgb(_ r: Double, _ g: Double, _ b: Double) -> Color { Color(red: r, green: g, blue: b) }
     static let all: [ThemePalette] = [
         ThemePalette(name: "Midnight", bgTop: rgb(0.035, 0.045, 0.09), bgBottom: rgb(0.09, 0.06, 0.17),
                      accent: rgb(0.25, 0.78, 1.0), violet: rgb(0.58, 0.42, 1.0)),
-        // Deep ocean: clearly blue water background, turquoise accent with bright blue.
-        ThemePalette(name: "Ocean", bgTop: rgb(0.0, 0.09, 0.17), bgBottom: rgb(0.0, 0.22, 0.33),
-                     accent: rgb(0.20, 0.95, 0.85), violet: rgb(0.25, 0.55, 1.0), glow: 0.26, panelTint: 0.07),
-        // Sunset sky: magenta to burnt-orange background, amber accent with coral pink.
-        ThemePalette(name: "Sunset", bgTop: rgb(0.17, 0.04, 0.14), bgBottom: rgb(0.40, 0.12, 0.08),
-                     accent: rgb(1.0, 0.72, 0.28), violet: rgb(1.0, 0.36, 0.52), glow: 0.30, panelTint: 0.08),
-        // Forest: deep green background, lime accent with golden sunlight.
-        ThemePalette(name: "Forest", bgTop: rgb(0.01, 0.11, 0.06), bgBottom: rgb(0.05, 0.25, 0.12),
-                     accent: rgb(0.62, 0.95, 0.32), violet: rgb(0.98, 0.84, 0.30), glow: 0.24, panelTint: 0.07),
-        // Graphite: neutral grey studio look, near-white accent.
-        ThemePalette(name: "Graphite", bgTop: rgb(0.14, 0.14, 0.15), bgBottom: rgb(0.24, 0.24, 0.26),
-                     accent: rgb(0.92, 0.94, 0.98), violet: rgb(0.62, 0.68, 0.80), glow: 0.06, panelTint: 0.03),
+        // Calm deep-sea blue: aqua accent, steel-blue second colour.
+        ThemePalette(name: "Ocean", bgTop: rgb(0.02, 0.05, 0.07), bgBottom: rgb(0.03, 0.08, 0.115),
+                     accent: rgb(0.38, 0.80, 0.90), violet: rgb(0.32, 0.54, 0.88), glow: 0.11),
+        // Dusk: deep plum background, peach accent with dusty rose.
+        ThemePalette(name: "Sunset", bgTop: rgb(0.045, 0.035, 0.065), bgBottom: rgb(0.11, 0.055, 0.10),
+                     accent: rgb(0.98, 0.72, 0.48), violet: rgb(0.88, 0.50, 0.60), glow: 0.09),
+        // Night forest: dark green-grey background, mint accent with sea green.
+        ThemePalette(name: "Forest", bgTop: rgb(0.03, 0.05, 0.045), bgBottom: rgb(0.05, 0.08, 0.068),
+                     accent: rgb(0.58, 0.86, 0.66), violet: rgb(0.40, 0.70, 0.64), glow: 0.09),
+        ThemePalette(name: "Graphite", bgTop: rgb(0.07, 0.07, 0.08), bgBottom: rgb(0.13, 0.13, 0.15),
+                     accent: rgb(0.78, 0.84, 0.95), violet: rgb(0.55, 0.60, 0.72), glow: 0.08),
     ]
     static let storageKey = "theme"
     static let defaultName = "Midnight"
@@ -80,8 +77,7 @@ struct Glass: ViewModifier {
         content
             .padding(padding)
             .background(.ultraThinMaterial.opacity(0.55), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .background(Theme.accent.opacity(Theme.palette.panelTint), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Theme.palette.panelTint > 0 ? Theme.accent.opacity(0.18) : .white.opacity(0.08)))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(.white.opacity(0.08)))
     }
 }
 
