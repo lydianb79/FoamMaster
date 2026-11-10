@@ -36,3 +36,12 @@ enum PowerOptimizer {
         return best?.result
     }
 }
+
+extension AircraftKind {
+    private static let recommendedAll: [AircraftKind: AircraftConfig] = Dictionary(uniqueKeysWithValues: AircraftKind.allCases.map { k in
+        (k, PowerOptimizer.best(for: k.defaults)?.config ?? FixFinder.evaluate(k.defaults).config)
+    })
+    /// The variant shown in the gallery and used to start a new model: default airframe with the automatically
+    /// chosen power system (motor, ESC, prop, battery) and the battery at the balance point.
+    var recommended: AircraftConfig { Self.recommendedAll[self]! }
+}

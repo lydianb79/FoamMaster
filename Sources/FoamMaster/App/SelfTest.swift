@@ -35,6 +35,15 @@ enum SelfTest {
                 if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("\(kind.rawValue)_3d.png")) }
             }
         }
+        do {
+            let t0 = Date()
+            for kind in AircraftKind.allCases {
+                let c = kind.recommended
+                let a = Analysis(design: DesignBuilder.build(c))
+                print("   recommended \(kind.title): \(c.motor.rawValue) + \(c.battery.name), AUW \(Int(a.totalMass)) g, \(String(format: "%.1f", a.wingLoading)) g/dm², T/W \(String(format: "%.2f", a.thrustToWeight)), \(Int(a.flightTime)) min, score \(a.score)")
+            }
+            print("   recommended set: \(String(format: "%.2f", Date().timeIntervalSince(t0))) s")
+        }
         let project = Project()
         project.start(.flyingWing)
         snapshotView(GalleryContent().environmentObject(project), size: CGSize(width: 1300, height: 820), to: dir.appendingPathComponent("ui_gallery.png"))

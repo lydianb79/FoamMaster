@@ -78,7 +78,7 @@ struct GalleryContent: View {
     @State private var selected: AircraftKind?
     static let pad: CGFloat = 32, gridSpacing: CGFloat = 16, headerHeight: CGFloat = 58, topPad: CGFloat = 34
     /// Card height without the thumbnail (padding, title row, stat chips, spacing).
-    static let cardChrome: CGFloat = 142
+    static let cardChrome: CGFloat = 164
     private var thumbHeight: CGFloat {
         let cols = max(1, Int((available.width - 2 * Self.pad + Self.gridSpacing) / (320 + Self.gridSpacing)))
         let rows = CGFloat((previews.count + cols - 1) / cols)
@@ -87,7 +87,7 @@ struct GalleryContent: View {
     }
     private var previews: [ModelPreview] { Self.all }
     private static let all: [ModelPreview] = AircraftKind.allCases.map { k in
-        let d = DesignBuilder.build(Project.balanced(k.defaults))
+        let d = DesignBuilder.build(k.recommended)
         return ModelPreview(kind: k, design: d, analysis: Analysis(design: d))
     }
 
@@ -186,6 +186,16 @@ struct ModelCard: View {
                     StatChip(label: "AUW", value: "\(Int(preview.analysis.totalMass)) g", tint: Theme.orange)
                     StatChip(label: "Load", value: String(format: "%.0f g/dm²", preview.analysis.wingLoading), tint: Theme.violet)
                 }
+                // Recommended power system of this variant.
+                let pc = preview.design.config
+                HStack(spacing: 6) {
+                    Image(systemName: "bolt.fill").font(.system(size: 9)).foregroundStyle(kind.tint)
+                    Text("\(pc.motor.name.replacingOccurrences(of: " brushless", with: "")) · \(pc.battery.name.replacingOccurrences(of: " LiPo", with: "")) · \(pc.propRecommendation.components(separatedBy: " ").prefix(4).joined(separator: " "))")
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                    Spacer(minLength: 4)
+                    Text(String(format: "T/W %.1f · ≈%.0f min", preview.analysis.thrustToWeight, preview.analysis.flightTime)).lineLimit(1)
+                }
+                .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
             }
             .padding(16)
             .background(.ultraThinMaterial.opacity(0.5), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -241,7 +251,7 @@ struct SetupSheet: View {
     private var optionKey: String { "\(preview.kind.rawValue)-\(fins.rawValue)-\(layout.rawValue)-\(servos)-\(motors.rawValue)-\(winglets)" }
 
     private var candidate: AircraftConfig {
-        var c = preview.kind.defaults
+        var c = preview.kind.recommended
         c.taillessFins = fins; c.motorLayout = motors
         if preview.kind.hasTail { c.tailWinglets = winglets; c.ailerons = layout.ailerons }
         c.rudder = layout.rudder

@@ -41,7 +41,7 @@ final class Project: ObservableObject {
     func start(_ kind: AircraftKind, fins: TaillessFins? = nil,
                ailerons: Bool? = nil, rudder: Bool? = nil, aileronServos: Int = 2, motors: MotorLayout = .single,
                winglets: Bool = false) {
-        var c = kind.defaults
+        var c = kind.recommended
         if let ailerons { c.ailerons = ailerons && kind.hasTail }
         if let rudder { c.rudder = rudder }
         c.aileronServos = kind.allowsSingleAileronServo ? aileronServos : 2
