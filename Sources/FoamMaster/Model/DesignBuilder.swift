@@ -77,6 +77,10 @@ enum DesignBuilder {
         var trussLength = 0.0
 
         var t: Double { c.material.thickness }
+        /// Tailless: flat on the wing centre; others: flat against the left side of the upper fuselage over the wing.
+        var aioPosition: SIMD3<Double> {
+            c.kind.isTailless ? [0, t / 2 + 4, c.rootChord * 0.45] : [-(t / 2 + 4), t / 2 + AIOController.boardSize / 2 + 2, c.rootChord * 0.3]
+        }
         var s: Double { c.semiSpan }
         var propRadius: Double { c.motor.propInches * 25.4 / 2 }
 
@@ -202,6 +206,22 @@ enum DesignBuilder {
             let tabs = [fc * 0.25, fc * (rudderFrac > 0 ? 0.48 : 0.65)]
             let slots = tabs.map { slot(minU: $0 - 5, maxU: $0 + 5, minV: -t / 2, maxV: t / 2) }
             return (outline, main, rudder, slots, tabs)
+        }
+
+        /// Optional side winglets on tailed aircraft: tip tabs into winglet slots (same joint as the tailless winglets).
+        mutating func tipWinglets(outline: inout [Vec2], main: inout [Vec2], tipV: [Double], tipLE: Double) {
+            guard c.tailWinglets, !c.kind.isTailless, c.wingletHeight > 5 else { return }
+            let wl = sideFin(chord: c.tipChord, height: c.wingletHeight)
+            for v in tipV {
+                for tu in wl.tabs {
+                    outline = Poly.insertTab(outline, at: Vec2(tipLE + tu, v), width: 10, height: t)
+                    main = Poly.insertTab(main, at: Vec2(tipLE + tu, v), width: 10, height: t)
+                }
+            }
+            parts.append(Part(name: "Winglet", role: .winglet, outline: wl.outline, holes: wl.slots,
+                              features: [.label("WINGLET", Vec2(c.tipChord * 0.45, c.wingletHeight * 0.45))],
+                              instances: [-1.0, 1.0].map { Placement(origin: [$0 * (s + t / 2), 0, tipLE], u: [0, 0, 1], v: [0, 1, 0]) },
+                              material: c.material))
         }
 
         // MARK: Tailless (flying wing / delta)
@@ -355,6 +375,7 @@ enum DesignBuilder {
                     }
                 }
             }
+            tipWinglets(outline: &outline, main: &main, tipV: [span], tipLE: w.le(s))
             let d = 0.0   // flat wings only – dihedral joints in foam are not stiff enough
             parts.append(Part(name: "Wing half", role: .wing, outline: outline, holes: holes, features: features,
                               regions: [Region(polygon: main, isControl: false)] + out.controls.map { Region(polygon: $0, isControl: true) },
@@ -630,6 +651,7 @@ enum DesignBuilder {
                 return hMid * 0.8 + (hBoom - hMid * 0.8) * min(max(k, 0), 1) - 2.5
             })
 
+            tipWinglets(outline: &wingOutline, main: &wingMain, tipV: [-s, s], tipLE: w.le(s))
             parts.append(Part(name: "Wing", role: .wing, outline: wingOutline, holes: wingHoles, features: wingFeatures,
                               regions: c.hasAilerons ? [Region(polygon: wingMain, isControl: false)] + out.controls.map { Region(polygon: $0, isControl: true) } : [],
                               instances: [.horizontal(at: .zero)], material: c.material))
@@ -685,8 +707,11 @@ enum DesignBuilder {
             let fA = c.controlChordPct
             let a0 = max(s * 0.3, xb + 14)
             let out = w.build(full: true, surfaces: c.hasAilerons ? [a0...(s - 10)] : [], fraction: fA)
-            var wingOutline = out.outline
-            for v in [-hw * 0.5, hw * 0.5] { wingOutline = Poly.insertTab(wingOutline, at: Vec2(w.le(v), v), width: 10, height: -6) }
+            var wingOutline = out.outline, twinMain = out.main
+            for v in [-hw * 0.5, hw * 0.5] {
+                wingOutline = Poly.insertTab(wingOutline, at: Vec2(w.le(v), v), width: 10, height: -6)
+                twinMain = Poly.insertTab(twinMain, at: Vec2(w.le(v), v), width: 10, height: -6)
+            }
             var wingHoles: [Hole] = []
             if c.hasAilerons {
                 let sv = c.servo.size
@@ -728,8 +753,10 @@ enum DesignBuilder {
             if c.hasRudder { podHoles.append(servoCut("Rudders", center: s2, size: webServoCut, in: podTop)) }
             if fh / 2 - t / 2 < 8 { issues.append("Pod height is too small.") }
 
+            tipWinglets(outline: &wingOutline, main: &twinMain, tipV: [-s, s], tipLE: w.le(s))
             parts.append(Part(name: "Wing", role: .wing, outline: wingOutline, holes: wingHoles, features: wingFeatures,
-                              regions: c.hasAilerons ? regions(out) : [], instances: [.horizontal(at: .zero)], material: c.material))
+                              regions: c.hasAilerons || c.tailWinglets ? [Region(polygon: twinMain, isControl: false)] + out.controls.map { Region(polygon: $0, isControl: true) } : [],
+                              instances: [.horizontal(at: .zero)], material: c.material))
             parts.append(Part(name: "Pod nose plate", role: .fuselage, outline: Poly.ccw(nose), holes: noseHoles,
                               features: [.label("NOSE", Vec2(uN * 0.5, 0))], instances: [.horizontal(at: .zero)], material: c.material))
             parts.append(Part(name: "Pod top", role: .fuselage, outline: podTop, holes: podHoles,
@@ -805,7 +832,7 @@ enum DesignBuilder {
                 components.append(MassItem(name: "Propeller\(tag)", mass: c.motor.propInches * 0.35, position: [x, 0, c.propPlaneZ], category: "Power"))
                 components.append(MassItem(name: "Motor mount (printed)\(tag)", mass: 1.5 + c.motor.mass * 0.12, position: [x, 0, c.firewallZ], category: "Printed"))
                 let escZ = c.isDual ? c.rootChord * 0.25 : (pusher ? c.rootChord * 0.15 : -c.noseLength * 0.3)
-                components.append(MassItem(name: "ESC\(tag)", mass: c.motor.escMass, position: [x * 0.5, 0, escZ], category: "Power"))
+                if !c.aio { components.append(MassItem(name: "ESC\(tag)", mass: c.motor.escMass, position: [x * 0.5, 0, escZ], category: "Power")) }
             }
             if c.isDual {
                 // Mark both motor stations on the wing plan (mount plate + clamp, prop clearance).
@@ -820,7 +847,11 @@ enum DesignBuilder {
                 }
                 if c.dualMotorX + propRadius > s - 5 { issues.append("The motors are too far out – props would overhang the wing tips. Use smaller props or more span.") }
             }
-            components.append(MassItem(name: "Receiver", mass: 2.5, position: [0, 0, pusher ? c.rootChord * 0.1 : c.rootChord * 0.3], category: "Radio"))
+            if c.aio {
+                components.append(MassItem(name: "AIO flight controller", mass: AIOController.mass + 1.2, position: aioPosition, category: "Radio"))
+            } else {
+                components.append(MassItem(name: "Receiver", mass: 2.5, position: [0, 0, pusher ? c.rootChord * 0.1 : c.rootChord * 0.3], category: "Radio"))
+            }
             components.append(MassItem(name: "Wiring & connectors", mass: c.isDual ? 4.5 : 3, position: [0, 0, c.rootChord * 0.15], category: "Radio"))
             components.append(MassItem(name: c.battery.name, mass: c.battery.mass, position: batteryPos, category: "Battery"))
 

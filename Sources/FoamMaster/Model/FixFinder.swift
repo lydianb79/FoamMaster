@@ -25,7 +25,7 @@ enum FixFinder {
         Param(label: "Tip chord", unit: "mm", key: \.tipChord),
         Param(label: "Sweep", unit: "mm", key: \.sweep),
         Param(label: "Control surface chord", unit: "%", key: \.controlChordPct, applies: { $0.kind.isTailless || $0.hasAilerons }),
-        Param(label: "Winglet / fin height", unit: "mm", key: \.wingletHeight, applies: { $0.kind.isTailless }),
+        Param(label: "Winglet / fin height", unit: "mm", key: \.wingletHeight, applies: { $0.kind.isTailless || $0.tailWinglets }),
         Param(label: "Fin position", unit: "mm", key: \.finPosition, applies: { $0.kind.isTailless && $0.taillessFins == .centreFin }),
         Param(label: "Nose length", unit: "mm", key: \.noseLength, applies: { !$0.kind.isTailless }),
         Param(label: "Fuselage height", unit: "mm", key: \.fuselageHeight, applies: { !$0.kind.isTailless }),

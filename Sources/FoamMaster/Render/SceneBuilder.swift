@@ -139,6 +139,10 @@ enum SceneBuilder {
                 else if item.name.hasPrefix("Camera mount") { size = [c.fpv.cameraWidth + 3, 2, 16] }
                 else { size = [40, 2, 20] }
                 scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.printed)
+            case "Radio" where item.name.hasPrefix("AIO"):
+                let b = AIOController.boardSize
+                let size: SIMD3<Double> = c.kind.isTailless ? [b, 1.6, b] : [1.6, b, b]
+                scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: SIMD4(0.1, 0.45, 0.25, 1))
             case "Hardware" where item.name.hasPrefix("Tail booms"):
                 let len = c.tailArm + c.hStabChord * 0.55 - c.rootChord * 0.15
                 for x in [-c.boomX, c.boomX] {

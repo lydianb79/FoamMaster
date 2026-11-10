@@ -33,7 +33,7 @@ extension AircraftKind {
         switch self {
         case .flyingWing: return ["Tailless", "Pusher", "Elevons"]
         case .delta: return ["Tailless", "Pusher", "High speed"]
-        case .twinBoom: return ["Twin boom", "Pusher", "FPV"]
+        case .twinBoom: return ["Twin boom", "Pusher / dual", "FPV"]
         case .jet: return ["Jet", "Prop slot", "4-ch"]
         case .trainer: return ["Tractor", "Flat wing", "Easy"]
         case .aerobat: return ["Tractor", "4-ch", "3D"]
@@ -98,9 +98,9 @@ struct GalleryContent: View {
         }
         .padding(48)
         .sheet(item: $selected) { kind in
-            SetupSheet(preview: previews.first { $0.kind == kind }!) { fpv, fins, layout, servos, motors in
+            SetupSheet(preview: previews.first { $0.kind == kind }!) { ch in
                 selected = nil
-                project.start(kind, fpv: fpv, fins: fins, ailerons: layout.ailerons, rudder: layout.rudder, aileronServos: servos, motors: motors)
+                project.start(kind, choice: ch)
             } cancel: { selected = nil }
         }
     }
@@ -174,6 +174,17 @@ struct ModelCard: View {
     }
 }
 
+/// Everything picked in the setup sheet.
+struct SetupChoice {
+    var fpv: FPVSystem
+    var fins: TaillessFins
+    var layout: ControlLayout
+    var servos: Int
+    var motors: MotorLayout
+    var winglets: Bool
+    var aio: Bool
+}
+
 enum ControlLayout: String, CaseIterable, Hashable {
     case rudderElevator, aileronElevator, full
     var title: String { [.rudderElevator: "Rudder + elevator", .aileronElevator: "Ailerons + elevator", .full: "Ailerons + elevator + rudder"][self]! }
@@ -186,7 +197,7 @@ enum ControlLayout: String, CaseIterable, Hashable {
 /// Options asked for when a base model is picked.
 struct SetupSheet: View {
     var preview: ModelPreview
-    var start: (FPVSystem, TaillessFins, ControlLayout, Int, MotorLayout) -> Void
+    var start: (SetupChoice) -> Void
     var cancel: () -> Void
     @State private var fpv: FPVSystem
     @State private var fins: TaillessFins
@@ -194,8 +205,10 @@ struct SetupSheet: View {
     @State private var servos = 2
 
     @State private var motors: MotorLayout = .single
+    @State private var winglets = false
+    @State private var aio = false
 
-    init(preview: ModelPreview, start: @escaping (FPVSystem, TaillessFins, ControlLayout, Int, MotorLayout) -> Void, cancel: @escaping () -> Void) {
+    init(preview: ModelPreview, start: @escaping (SetupChoice) -> Void, cancel: @escaping () -> Void) {
         self.preview = preview
         self.start = start
         self.cancel = cancel
@@ -205,11 +218,11 @@ struct SetupSheet: View {
         _fins = State(initialValue: d.taillessFins)
     }
 
-    private var optionKey: String { "\(preview.kind.rawValue)-\(fpv.rawValue)-\(fins.rawValue)-\(layout.rawValue)-\(servos)-\(motors.rawValue)" }
+    private var optionKey: String { "\(preview.kind.rawValue)-\(fpv.rawValue)-\(fins.rawValue)-\(layout.rawValue)-\(servos)-\(motors.rawValue)-\(winglets)-\(aio)" }
 
     private var candidate: AircraftConfig {
         var c = preview.kind.defaults
-        c.fpv = fpv; c.taillessFins = fins; c.motorLayout = motors
+        c.fpv = fpv; c.taillessFins = fins; c.motorLayout = motors; c.tailWinglets = winglets; c.aio = aio
         c.ailerons = layout.ailerons; c.rudder = layout.rudder
         c.aileronServos = preview.kind.isTwinBoom ? 2 : servos
         return c
@@ -248,6 +261,8 @@ struct SetupSheet: View {
                     OptionTiles(selection: $fins, options: TaillessFins.allCases, title: \.name, detail: \.detail, tint: kind.tint)
                 } else {
                     OptionTiles(selection: $layout, options: ControlLayout.allCases, title: \.title, detail: \.detail, tint: kind.tint)
+                    OptionTiles(selection: $winglets, options: [false, true], title: { $0 ? "Winglets" : "Plain tips" },
+                                detail: { $0 ? "Side-mounted winglets at both wing tips" : "Straight wing tips" }, tint: kind.tint)
                     if layout.ailerons && !kind.isTwinBoom {
                         OptionTiles(selection: $servos, options: [1, 2], title: { $0 == 1 ? "1 aileron servo" : "2 aileron servos" },
                                     detail: { $0 == 1 ? "Central servo, torque rods to both ailerons" : "One servo in each wing half" }, tint: kind.tint)
@@ -271,6 +286,11 @@ struct SetupSheet: View {
                 }
             }
 
+            OptionGroup(title: "Electronics", symbol: "cpu") {
+                OptionTiles(selection: $aio, options: [false, true], title: { $0 ? "AIO flight controller" : "ESC + receiver" },
+                            detail: { $0 ? "FC, receiver and ESCs on one 26 × 26 mm board – printed mount included" : "Separate ESC\(motors == .dualTractor ? "s" : "") and receiver" }, tint: kind.tint)
+            }
+
             OptionGroup(title: "FPV system", symbol: "video.fill") {
                 OptionTiles(selection: $fpv, options: FPVSystem.allCases, title: \.name, detail: { $0 == .none ? $0.detail : "\(String(format: "%.0f", $0.mass)) g · \(String(format: "%.1f", $0.power)) W" }, tint: kind.tint)
             }
@@ -282,7 +302,7 @@ struct SetupSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
-                PillButton(title: "Start building", symbol: "arrow.right.circle.fill", prominent: true) { start(fpv, fins, layout, servos, motors) }
+                PillButton(title: "Start building", symbol: "arrow.right.circle.fill", prominent: true) { start(SetupChoice(fpv: fpv, fins: fins, layout: layout, servos: servos, motors: motors, winglets: winglets, aio: aio)) }
                     .keyboardShortcut(.defaultAction)
             }
         }

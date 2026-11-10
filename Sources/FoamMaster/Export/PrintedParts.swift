@@ -62,6 +62,10 @@ enum PrintedParts {
                                    quantity: g.count, mesh: servoFrame(cutout: g.size, foam: t), note: "press-fit into servo cutout"))
         }
 
+        if c.aio {
+            out.append(PrintedPart(name: "AIO mount 26 × 26 mm", fileName: "aio_mount_26x26", quantity: 1, mesh: aioMount(),
+                                   note: "4 standoffs for M2 on a \(Int(AIOController.holeSpacing)) mm square, glue \(c.kind.isTailless ? "on the wing centre" : "to the fuselage side")"))
+        }
         out.append(PrintedPart(name: "Battery tray", fileName: "battery_tray_\(c.battery.rawValue)", quantity: 1,
                                mesh: batteryTray(c.battery), note: "velcro base with side rails"))
         return out
@@ -154,6 +158,21 @@ enum PrintedParts {
         var mesh = Mesh3D.extrude(Poly.rect(center: .zero, size: Vec2(L, W)), holes: slots, z0: 0, z1: 1.2)
         let rim = max(2, h * 0.4)
         mesh.append(.extrude(Poly.rect(center: .zero, size: Vec2(L, W)), holes: [Poly.rect(center: .zero, size: Vec2(L - 2.4, W - 2.4))], z0: 1.2, z1: 1.2 + rim))
+        return mesh
+    }
+
+    /// Flat mount for a 26 × 26 mm hole pattern board: base with lightening cut-out and four M2 standoffs.
+    static func aioMount(spacing: Double = AIOController.holeSpacing, board: Double = AIOController.boardSize) -> Mesh3D {
+        let base = board + 2, h = spacing / 2
+        var mesh = Mesh3D.extrude(Poly.rect(center: .zero, size: Vec2(base, base)),
+                                  holes: [Poly.rect(center: .zero, size: Vec2(spacing - 9, spacing - 9))], z0: 0, z1: 1.4)
+        for sx in [-1.0, 1.0] {
+            for sy in [-1.0, 1.0] {
+                // Ø5 standoff, Ø1.7 pilot hole for self-tapping M2, 4 mm high.
+                mesh.append(Mesh3D.extrude(Poly.circle(.zero, 2.5, segments: 20), holes: [Poly.circle(.zero, 0.85, segments: 12)], z0: 1.4, z1: 5.4)
+                                .translated([sx * h, sy * h, 0]))
+            }
+        }
         return mesh
     }
 

@@ -62,13 +62,18 @@ enum BuildDocs {
         items.append(BOMItem(category: "Hardware", item: "Motor screws \(c.motor.screw)", spec: "Length 4–6 mm", quantity: "\(4 * c.motorCount)×"))
 
         items.append(BOMItem(category: "Electronics", item: c.motor.name, spec: "\(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S, ~\(Int(a.thrust / Double(c.motorCount))) g thrust each\(c.isDual ? ", one CW + one CCW" : "")", quantity: "\(c.motorCount)×"))
+        if c.aio {
+            items.append(BOMItem(category: "Electronics", item: AIOController.name, spec: "\(Int(AIOController.holeSpacing)) × \(Int(AIOController.holeSpacing)) mm holes, \(AIOController.cells.lowerBound)–\(AIOController.cells.upperBound)S, \(Int(AIOController.amps)) A per motor, servo outputs + 5 V BEC – replaces ESC\(c.isDual ? "s" : "") and receiver", quantity: "1×"))
+            items.append(BOMItem(category: "Hardware", item: "M2 screws", spec: "6 mm, for the AIO mount standoffs", quantity: "4×"))
+        } else {
         items.append(BOMItem(category: "Electronics", item: "ESC", spec: "\(c.motor.escMass > 4 ? 12 : 6) A, \(c.battery.cells)S\(c.isDual ? " – both on the throttle channel via a Y-lead" : "")", quantity: "\(c.motorCount)×"))
         if c.isDual { items.append(BOMItem(category: "Electronics", item: "Y-lead + parallel battery adapter", spec: "Throttle signal to both ESCs, power from one pack", quantity: "1×")) }
+        }
         items.append(BOMItem(category: "Electronics", item: "Propeller \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.isPusher, blades: c.kind.propBlades, pair: c.isDual))",
                              spec: "\(c.kind.propBladeReason) · for the \(c.motor.name) on \(c.battery.cells)S – balance before use", quantity: "2× (spare)"))
         items.append(BOMItem(category: "Electronics", item: c.battery.name, spec: "\(c.battery.mass) g", quantity: "1×"))
         items.append(BOMItem(category: "Electronics", item: c.servo.name, spec: "\(c.servo.torque) kg·cm", quantity: "\(servoCount)×"))
-        items.append(BOMItem(category: "Electronics", item: "Receiver", spec: "\(max(4, servoCount + 1))+ channels, micro", quantity: "1×"))
+        if !c.aio { items.append(BOMItem(category: "Electronics", item: "Receiver", spec: "\(max(4, servoCount + 1))+ channels, micro", quantity: "1×")) }
         if c.hasAilerons && c.aileronServos == 2 { items.append(BOMItem(category: "Electronics", item: "Servo extension", spec: "100 mm (aileron servos)", quantity: "2×")) }
         if c.fpv != .none {
             items.append(BOMItem(category: "FPV", item: c.fpv.name, spec: "\(c.fpv.detail) · ≈\(String(format: "%.1f", c.fpv.mass)) g · ≈\(String(format: "%.1f", c.fpv.power)) W", quantity: "1×"))
@@ -124,7 +129,10 @@ enum BuildDocs {
             s.append(BuildStep(title: "Mount both motors", text: "\(c.kind.isTailless ? "Glue the centre keel under the wing with its tabs. " : "")Glue a 3 × 0.5 mm carbon strip into the leading edge between the two MOTOR marks, then push the wing-clamp motor mounts onto the leading edge at ±\(Int(c.dualMotorX)) mm and glue. Fit the CW prop on the right and the CCW prop on the left so both blow the same way, and check the props clear the fuselage.", symbol: "fanblades"))
         }
         s.append(BuildStep(title: "Install servos & linkages", text: "Glue the printed servo frames into the cutouts, push the servos in and centre them with the transmitter. Glue the horns into the horn slots (hole row over the hinge line). Make pushrods from Ø1 mm carbon with Z-bent 0.8 mm wire ends.", symbol: "gearshape.2"))
-        s.append(BuildStep(title: "Electronics", text: "Connect ESC and servos to the receiver, fix the receiver with double-sided tape, route wires flat and tape them down. Fix velcro for the \(c.battery.name).", symbol: "bolt"))
+        if c.aio {
+            s.append(BuildStep(title: "AIO flight controller", text: "Glue the printed 26 × 26 mm mount \(c.kind.isTailless ? "flat on the wing centre" : "flat against the left side of the fuselage over the wing") and screw the AIO board onto its standoffs (M2). Solder the motor\(c.isDual ? "s" : "") to the ESC pads, plug the servos into the servo outputs and set up the mixer\(c.kind.isTailless ? " (elevons)" : "") in the configurator before the first flight.", symbol: "cpu"))
+        }
+        s.append(BuildStep(title: "Electronics", text: "\(c.aio ? "Route the servo leads to the AIO board" : "Connect ESC and servos to the receiver, fix the receiver with double-sided tape"), route wires flat and tape them down. Fix velcro for the \(c.battery.name).", symbol: "bolt"))
         s.append(BuildStep(title: "Balance (CG)", text: "Mark the CG \(cg) mm behind the root leading edge (marked ⊕ on the plan). Move the battery until the model balances level on your fingertips at that mark. Recommended range: \(String(format: "%.0f–%.0f", a.cgRange.lowerBound, a.cgRange.upperBound)) mm.", symbol: "scalemass"))
         s.append(BuildStep(title: "Set throws & first flight", text: c.kind.isTailless
             ? "Elevon throws: ±8 mm pitch, ±6 mm roll, 30 % expo. Trim elevons 1–2 mm up. Hand-launch firmly level at ~70 % throttle."

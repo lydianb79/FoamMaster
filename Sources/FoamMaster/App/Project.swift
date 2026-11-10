@@ -26,8 +26,14 @@ final class Project: ObservableObject {
     /// Result of the last balance fix, shown in the CG panel until the design changes.
     @Published var balanceNote: String?
 
+    func start(_ kind: AircraftKind, choice ch: SetupChoice) {
+        start(kind, fpv: ch.fpv, fins: ch.fins, ailerons: ch.layout.ailerons, rudder: ch.layout.rudder,
+              aileronServos: ch.servos, motors: ch.motors, winglets: ch.winglets, aio: ch.aio)
+    }
+
     func start(_ kind: AircraftKind, fpv: FPVSystem? = nil, fins: TaillessFins? = nil,
-               ailerons: Bool? = nil, rudder: Bool? = nil, aileronServos: Int = 2, motors: MotorLayout = .single) {
+               ailerons: Bool? = nil, rudder: Bool? = nil, aileronServos: Int = 2, motors: MotorLayout = .single,
+               winglets: Bool = false, aio: Bool = false) {
         var c = kind.defaults
         if let fpv { c.fpv = fpv }
         if let ailerons { c.ailerons = ailerons }
@@ -35,6 +41,9 @@ final class Project: ObservableObject {
         c.aileronServos = kind.isTwinBoom ? 2 : aileronServos
         if let fins { c.taillessFins = fins }
         c.motorLayout = kind.allowsDualMotors ? motors : .single
+        c.tailWinglets = winglets
+        c.aio = aio
+        if winglets && !kind.isTailless { c.wingletHeight = 45 }
         config = Project.balanced(c)
         inspectorTab = .analysis
     }
@@ -148,6 +157,8 @@ final class Project: ObservableObject {
             c.rudder = current.rudder
             c.taillessFins = current.taillessFins
             c.motorLayout = current.motorLayout
+            c.tailWinglets = current.tailWinglets
+            c.aio = current.aio
             c = Project.balanced(c)
             let a = Analysis(design: DesignBuilder.build(c))
             if a.feasible && a.score > bestScore { best = c; bestScore = a.score }

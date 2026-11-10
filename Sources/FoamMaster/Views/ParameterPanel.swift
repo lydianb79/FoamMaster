@@ -60,6 +60,20 @@ struct ParameterContent: View {
                             }
                             .pickerStyle(.segmented).labelsHidden()
                         }
+                        Toggle(isOn: bind(\.aio)) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("AIO flight controller").font(.system(size: 12, weight: .semibold))
+                                Text(c.aio ? "FC + receiver + ESCs, 26 × 26 mm mount" : "Separate ESC + receiver").font(.system(size: 10)).foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch).tint(Theme.accent)
+                        if !c.kind.isTailless {
+                            Toggle(isOn: bind(\.tailWinglets)) { Text("Winglets").font(.system(size: 12, weight: .semibold)) }
+                                .toggleStyle(.switch).tint(Theme.accent)
+                            if c.tailWinglets {
+                                ParamSlider(label: "Winglet height", unit: "mm", value: bind(\.wingletHeight), range: range(\.wingletHeight, c), step: 1)
+                            }
+                        }
                         PickerRow(label: "FPV", selection: bind(\.fpv), options: FPVSystem.allCases) { $0 == .none ? $0.name : "\($0.name) · \(Int($0.mass.rounded())) g" }
                         if !c.kind.isTailless {
                             Picker("", selection: Binding(get: { ControlLayout(ailerons: c.ailerons, rudder: c.rudder) },

@@ -26,7 +26,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .flyingWing: return "Flying Wing"
         case .delta: return "Delta Jet"
-        case .twinBoom: return "Twin Boom Pusher"
+        case .twinBoom: return "Twin Boom"
         case .jet: return "Sport Jet"
         case .trainer: return "Park Trainer"
         case .aerobat: return "3D Plane"
@@ -38,7 +38,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .flyingWing: return "Swept wing · elevons · pusher"
         case .delta: return "High sweep · centre fin · pusher"
-        case .twinBoom: return "Pod, carbon booms, twin fins · FPV cruiser"
+        case .twinBoom: return "Pod, carbon booms, twin fins"
         case .jet: return "Swept wing · prop-slot pusher"
         case .trainer: return "Big flat wing · forgiving · ailerons"
         case .aerobat: return "Huge surfaces · 4 channels"
@@ -198,6 +198,11 @@ struct AircraftConfig: Codable, Equatable {
     var taillessFins: TaillessFins = .winglets
     var finPosition: Double = 40
     var motorLayout: MotorLayout = .single
+    /// Winglets on tailed aircraft (tailless types choose winglets / centre fin via `taillessFins`).
+    var tailWinglets: Bool = false
+    var hasWinglets: Bool { kind.isTailless ? taillessFins == .winglets : tailWinglets }
+    /// All-in-one flight controller (receiver + ESCs on one 26 × 26 mm board) instead of separate ESC(s) and receiver.
+    var aio: Bool = false
     var isDual: Bool { motorLayout == .dualTractor && kind.allowsDualMotors }
     var motorCount: Int { isDual ? 2 : 1 }
     /// Effective pusher configuration (dual layouts are always tractors).

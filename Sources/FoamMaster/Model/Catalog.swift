@@ -75,6 +75,8 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
         if pair { return "\(fmt(propInches)) × \(fmt(pitch))\" \(blades)-blade, counter-rotating pair (1 × CW, 1 × CCW)" }
         return "\(fmt(propInches)) × \(fmt(pitch))\" \(blades)-blade \(pusher ? "pusher (reverse rotation)" : "tractor")"
     }
+    /// Typical maximum current per motor at full throttle (A).
+    var maxCurrent: Double { [.m0802: 3, .m1103: 5, .m1104: 6, .m1306: 10, .m1806: 14, .m2204: 18][self]! }
     var propInches: Double { [.m0802: 2.5, .m1103: 3, .m1104: 4, .m1306: 5, .m1806: 6, .m2204: 6][self]! }
     /// Motor bolt circle diameter (mm) and screw clearance diameter.
     var boltCircle: Double { [.m0802: 6.6, .m1103: 8.5, .m1104: 9, .m1306: 12, .m1806: 16, .m2204: 16][self]! }
@@ -120,6 +122,18 @@ struct CarbonSpar {
     static let flat6x1 = CarbonSpar(name: "Carbon flat strip 6 × 1 mm", widthMM: 6, heightMM: 1, gramsPerMeter: 9.0)
     static let rod1 = CarbonSpar(name: "Carbon rod Ø1 mm", widthMM: 1, heightMM: 1, gramsPerMeter: 1.3)
     static let rod2 = CarbonSpar(name: "Carbon rod Ø2 mm", widthMM: 2, heightMM: 2, gramsPerMeter: 5.0)
+}
+
+// MARK: - All-in-one flight controller
+
+/// Whoop/micro style AIO board: flight controller + receiver + 4-in-1 ESC on a 26 × 26 mm hole pattern.
+enum AIOController {
+    static let name = "AIO flight controller (FC + ELRS receiver + 4-in-1 ESC)"
+    static let holeSpacing = 26.0
+    static let boardSize = 32.0
+    static let mass = 5.5
+    static let amps = 12.0            // per motor, continuous
+    static let cells: ClosedRange<Int> = 1...4
 }
 
 // MARK: - FPV

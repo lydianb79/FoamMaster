@@ -268,6 +268,18 @@ struct Analysis {
         } else if r > c.noseLength * 1.6 {
             add(.info, "Geometry", "Large prop on a short nose", "Hand-launch carefully, keep fingers clear.")
         }
+        if c.aio {
+            let need = c.motor.maxCurrent
+            if !AIOController.cells.contains(c.battery.cells) {
+                add(.error, "Power", "AIO does not support \(c.battery.cells)S", "The AIO board is rated \(AIOController.cells.lowerBound)–\(AIOController.cells.upperBound)S.")
+            } else if need > AIOController.amps * 1.3 {
+                add(.error, "Power", "AIO ESC overloaded", "\(c.motor.name) draws ≈\(f0(need)) A, the AIO ESC is rated \(f0(AIOController.amps)) A per motor – use separate ESCs or a smaller motor.")
+            } else if need > AIOController.amps {
+                add(.warning, "Power", "AIO ESC at its limit", "≈\(f0(need)) A per motor vs \(f0(AIOController.amps)) A rating – limit throttle or use a smaller prop.")
+            } else {
+                add(.ok, "Power", "AIO flight controller", "Integrated ESC handles ≈\(f0(need)) A per motor (\(f0(AIOController.amps)) A rated); no separate ESC or receiver needed.")
+            }
+        }
         if c.fpv != .none {
             add(.info, "FPV", "\(c.fpv.name) on board", "\(f1(c.fpv.mass)) g and ≈\(f1(c.fpv.power)) W drawn from the flight pack – included in weight, CG and flight time.")
         }
