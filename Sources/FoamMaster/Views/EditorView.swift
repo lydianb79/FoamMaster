@@ -54,7 +54,10 @@ struct ViewportView: View {
                 Text(project.config?.name ?? "").font(.system(size: 17, weight: .bold, design: .rounded)).lineLimit(1)
                 Text(project.config?.kind.title ?? "").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).lineLimit(1)
             }
-            if let a = project.analysis { FeasibilityBadge(analysis: a).fixedSize() }
+            if let a = project.analysis {
+                Button { withAnimation { project.inspectorTab = .analysis } } label: { FeasibilityBadge(analysis: a).fixedSize() }
+                    .buttonStyle(.plain).help(a.feasible ? "Show analysis" : "Show why it is not feasible and how to fix it")
+            }
             Spacer()
             PillButton(title: "Randomize", symbol: "dice.fill", prominent: true) {
                 withAnimation(.spring) { project.randomize() }

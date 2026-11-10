@@ -149,20 +149,24 @@ enum FPVSystem: String, CaseIterable, Identifiable, Codable {
 // MARK: - Fuselage structure
 
 enum FuselageType: String, CaseIterable, Identifiable, Codable {
-    /// RC Factory style: horizontal fuselage plate with upper and lower vertical halves glued on with tabs,
-    /// carbon truss on both sides of the vertical halves.
+    /// Horizontal plate + single-layer upper/lower halves + carbon chords & diagonals.
     case cross
-    /// As `cross`, plus doubler layers on both sides of the front fuselage (nose → wing) for bigger motors / EPP.
+    /// RC Factory style: the vertical halves are two foam layers laminated side by side (double web).
     case laminated
+    /// Laminated web with a carbon tube embedded between the layers – best torsional stiffness.
+    case laminatedTube
     var id: String { rawValue }
-    var name: String { [.cross: "Cross + truss", .laminated: "Cross + doublers"][self]! }
+    var name: String { [.cross: "Cross", .laminated: "Laminated cross", .laminatedTube: "Laminated + tube"][self]! }
     var detail: String {
         switch self {
-        case .cross: return "Horizontal plate, upper & lower halves, carbon truss"
-        case .laminated: return "Adds doubler layers on the front fuselage – for big motors or EPP"
+        case .cross: return "Plate + single-layer halves + carbon truss – light, soft in torsion"
+        case .laminated: return "Halves laminated from 2 layers + carbon truss (RC Factory style)"
+        case .laminatedTube: return "Laminated halves with a carbon tube between the layers – stiffest"
         }
     }
-    var symbol: String { [.cross: "plus", .laminated: "square.stack.3d.up"][self]! }
+    var symbol: String { [.cross: "plus", .laminated: "square.stack.3d.up", .laminatedTube: "cylinder"][self]! }
+    var webLayers: Int { self == .cross ? 1 : 2 }
+    var hasTube: Bool { self == .laminatedTube }
 }
 
 extension CarbonSpar {

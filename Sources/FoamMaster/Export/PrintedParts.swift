@@ -21,7 +21,7 @@ enum PrintedParts {
         var out: [PrintedPart] = []
 
         out.append(PrintedPart(name: "Motor mount", fileName: "motor_mount_\(c.motor.rawValue)", quantity: 1,
-                               mesh: motorMount(c.motor, foam: t),
+                               mesh: motorMount(c.motor, foam: t, web: c.kind.hasFuselage ? t * Double(c.fuselageType.webLayers) : t),
                                note: c.kind.isTailless ? "clamps on the wing trailing edge" : (c.kind.isTwinBoom ? "clamps on the pod tail" : "clamps on the fuselage nose")))
         if c.fpv != .none {
             out.append(PrintedPart(name: "FPV camera mount", fileName: "camera_mount_\(Int(c.fpv.cameraWidth))mm", quantity: 1,
@@ -57,7 +57,8 @@ enum PrintedParts {
 
     // MARK: Generators (all dimensions in mm)
 
-    static func motorMount(_ m: MotorClass, foam t: Double) -> Mesh3D {
+    static func motorMount(_ m: MotorClass, foam t: Double, web: Double? = nil) -> Mesh3D {
+        let tw = web ?? t
         let plate = max(m.boltCircle + m.screwHole * 2 + 6, m.bellDiameter * 0.75)
         let th = 2.0
         let r = m.boltCircle / 2
@@ -69,11 +70,11 @@ enum PrintedParts {
         var mesh = Mesh3D.extrude(Poly.rect(center: .zero, size: Vec2(plate, plate)), holes: holes, z0: 0, z1: th)
         // Four corner blocks leave a + shaped channel that grips the vertical fuselage
         // halves and the horizontal plate (or wing + keel) at the same time.
-        let gap = t / 2 + 0.15, len = 22.0, e = plate / 2
+        let gapX = tw / 2 + 0.15, gapY = t / 2 + 0.15, len = 22.0, e = plate / 2
         for sx in [-1.0, 1.0] {
             for sy in [-1.0, 1.0] {
-                let x0 = sx > 0 ? gap : -e, x1 = sx > 0 ? e : -gap
-                let y0 = sy > 0 ? gap : -e, y1 = sy > 0 ? e : -gap
+                let x0 = sx > 0 ? gapX : -e, x1 = sx > 0 ? e : -gapX
+                let y0 = sy > 0 ? gapY : -e, y1 = sy > 0 ? e : -gapY
                 mesh.append(.box(min: [x0, y0, th], max: [x1, y1, th + len]))
             }
         }

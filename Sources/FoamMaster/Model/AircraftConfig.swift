@@ -40,7 +40,9 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
     }
 
     var isTailless: Bool { self == .flyingWing || self == .delta }
-    var hasAilerons: Bool { self == .aerobat }
+    /// Default control layout for the type.
+    var defaultAilerons: Bool { self == .aerobat }
+    var defaultRudder: Bool { !isTailless }
     var isPusher: Bool { isTailless || self == .twinBoom }
     var isTwinBoom: Bool { self == .twinBoom }
     /// Tailed aircraft with a full-length fuselage (fuselage structure option applies).
@@ -132,8 +134,18 @@ struct AircraftConfig: Codable, Equatable {
     var fuselageType: FuselageType = .cross
     /// 1 = one central servo driving both ailerons via torque rods, 2 = one servo per aileron.
     var aileronServos: Int = 2
+    /// Control layout (tailed aircraft). Tailless aircraft always use two elevons.
+    var ailerons: Bool = false
+    var rudder: Bool = true
+    var hasAilerons: Bool { !kind.isTailless && ailerons }
+    var hasRudder: Bool { !kind.isTailless && rudder }
 
-    init(kind: AircraftKind) { self.kind = kind }
+    init(kind: AircraftKind) {
+        self.kind = kind
+        ailerons = kind.defaultAilerons
+        rudder = kind.defaultRudder
+        fuselageType = .laminated
+    }
 
     var semiSpan: Double { wingspan / 2 }
     var taper: Double { tipChord / max(rootChord, 1) }

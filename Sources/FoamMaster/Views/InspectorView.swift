@@ -16,13 +16,13 @@ enum InspectorTab: String, CaseIterable, Identifiable {
 
 struct InspectorView: View {
     @EnvironmentObject var project: Project
-    @State private var tab: InspectorTab = .analysis
+    private var tab: InspectorTab { project.inspectorTab }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
                 ForEach(InspectorTab.allCases) { t in
-                    Button { withAnimation(.spring(duration: 0.25)) { tab = t } } label: {
+                    Button { withAnimation(.spring(duration: 0.25)) { project.inspectorTab = t } } label: {
                         VStack(spacing: 3) {
                             Image(systemName: t.symbol).font(.system(size: 14, weight: .semibold))
                             Text(t.rawValue).font(.system(size: 9.5, weight: .bold))
@@ -68,6 +68,7 @@ struct AnalysisPanel: View {
     var body: some View {
         let a = analysis
         VStack(alignment: .leading, spacing: 14) {
+            if !a.feasible { InfeasibleCard(analysis: a) }
             HStack(spacing: 16) {
                 ScoreRing(score: a.score, feasible: a.feasible).frame(width: 92, height: 92)
                 VStack(alignment: .leading, spacing: 4) {
@@ -107,6 +108,9 @@ struct AnalysisPanel: View {
                 }
             }
             .glass()
+
+            if let st = a.structure { StructureCard(report: st, config: design.config) }
+            ControlsCard(design: design)
 
             VStack(alignment: .leading, spacing: 8) {
                 SectionHeader(title: "Weight breakdown", symbol: "scalemass")
@@ -207,5 +211,142 @@ struct WeightBars: View {
                 Text(String(format: "%.1f g", analysis.totalMass)).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.orange)
             }
         }
+    }
+}
+
+
+// MARK: - Infeasible explanation
+
+struct InfeasibleCard: View {
+    @EnvironmentObject var project: Project
+    var analysis: Analysis
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "xmark.octagon.fill").foregroundStyle(Theme.bad)
+                Text("Why it’s not feasible").font(.system(size: 14, weight: .bold))
+            }
+            ForEach(analysis.checks.filter { $0.severity == .error }) { ch in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(ch.title).font(.system(size: 12, weight: .semibold))
+                    Text(ch.detail).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.bad.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+            }
+            Divider().opacity(0.3)
+            HStack {
+                SectionHeader(title: "Suggested changes", symbol: "wand.and.stars")
+                if project.findingFixes { ProgressView().controlSize(.small) }
+            }
+            if !project.findingFixes && project.fixes.isEmpty {
+                Text("No single change fixes this – combine the hints above.").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            ForEach(project.fixes) { fix in
+                HStack(alignment: .center, spacing: 10) {
+                    Image(systemName: fix.solvesAll ? "checkmark.seal.fill" : "circle.lefthalf.filled")
+                        .foregroundStyle(fix.solvesAll ? Theme.good : Theme.warn)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(fix.title).font(.system(size: 12, weight: .semibold))
+                        Text(fix.detail).font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    Button("Apply") { withAnimation { project.apply(fix) } }
+                        .buttonStyle(.borderedProminent).tint(fix.solvesAll ? Theme.good : Theme.accent).controlSize(.small)
+                }
+            }
+        }
+        .glass()
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.bad.opacity(0.45)))
+    }
+}
+
+struct StructureCard: View {
+    var report: StructureReport
+    var config: AircraftConfig
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Structure (beam model)", symbol: "building.columns")
+            Text("Load case: full deflection at \(Int(report.loadSpeed)) km/h, wing at 3 g.").font(.system(size: 10)).foregroundStyle(.tertiary)
+            Meter(label: "Wing tip deflection", value: report.wingDeflectionRatio * 100, unit: "%", good: 4, bad: 10,
+                  detail: String(format: "%.1f mm", report.wingTipDeflection))
+            if let twist = report.tailTwistDeg {
+                Meter(label: "Fuselage twist (rudder)", value: twist, unit: "°", good: 2, bad: 5, detail: config.kind.isTwinBoom ? "twin booms" : config.fuselageType.name)
+            }
+            if let bend = report.tailBendDeg {
+                Meter(label: "Tail bend (elevator)", value: bend, unit: "°", good: 1, bad: 3, detail: "carbon chords")
+            }
+        }
+        .glass()
+    }
+}
+
+struct Meter: View {
+    var label: String
+    var value: Double
+    var unit: String
+    var good: Double
+    var bad: Double
+    var detail: String
+
+    var body: some View {
+        let color = value < good ? Theme.good : (value < bad ? Theme.warn : Theme.bad)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(label).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                Spacer()
+                Text(String(format: value < 10 ? "%.1f" : "%.0f", value) + " " + unit).font(.system(size: 12, weight: .bold, design: .rounded)).foregroundStyle(color)
+            }
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.white.opacity(0.06))
+                    Capsule().fill(Theme.good.opacity(0.25)).frame(width: g.size.width * good / (bad * 1.5))
+                    Capsule().fill(color).frame(width: max(4, g.size.width * min(value / (bad * 1.5), 1)))
+                }
+            }
+            .frame(height: 6)
+            Text(detail).font(.system(size: 9.5)).foregroundStyle(.tertiary)
+        }
+    }
+}
+
+struct ControlsCard: View {
+    var design: Design
+    var body: some View {
+        let groups = Dictionary(grouping: design.controls, by: \.servoID)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                SectionHeader(title: "Controls & servos", symbol: "gearshape.2")
+                Text("\(design.controls.surfaceCount) surfaces · \(groups.count) servos").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.accent)
+            }
+            ForEach(groups.keys.sorted(), id: \.self) { servo in
+                HStack(alignment: .top) {
+                    Image(systemName: "gearshape.fill").font(.system(size: 10)).foregroundStyle(Theme.accent).padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Servo: \(servo)").font(.system(size: 11.5, weight: .semibold))
+                        Text(groups[servo]!.map(\.name).joined(separator: " + ") + linkNote(servo, groups[servo]!.count))
+                            .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .glass()
+    }
+
+    func linkNote(_ servo: String, _ n: Int) -> String {
+        if servo.contains("torque") { return " · one servo, torque rods" }
+        if servo == "Rudders" { return " · twin rudders linked by a wire" }
+        if servo == "Elevator" && design.config.kind.isTwinBoom { return " · elevator halves joined" }
+        return ""
+    }
+}
+
+extension Array where Element == ControlSurface {
+    /// Physical surfaces (split elevator halves and twin rudders count separately).
+    var surfaceCount: Int {
+        reduce(0) { n, c in n + ((c.name == "Rudders" || (c.name == "Elevator")) ? 2 : 1) }
     }
 }

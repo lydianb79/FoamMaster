@@ -47,6 +47,24 @@ enum SelfTest {
             }.environmentObject(project).frame(height: 1250).background(Theme.background).preferredColorScheme(.dark)
             snapshotView(ui, size: CGSize(width: 1100, height: 1250), to: dir.appendingPathComponent("ui_editor\(i).png"))
         }
+        for kind in [AircraftKind.trainer, .aerobat, .glider] {
+            for f in FuselageType.allCases {
+                var c = kind.defaults; c.fuselageType = f
+                let a = Analysis(design: DesignBuilder.build(c))
+                print("   \(kind.title) \(f.name): twist \(String(format: "%.1f", a.structure?.tailTwistDeg ?? 0))°, bend \(String(format: "%.2f", a.structure?.tailBendDeg ?? 0))°, wing \(String(format: "%.1f", (a.structure?.wingDeflectionRatio ?? 0) * 100))%, AUW \(Int(a.totalMass)) g")
+            }
+            print("   recommended: \(FixFinder.recommendedStructure(for: kind.defaults).name)")
+        }
+        for kind in AircraftKind.allCases {
+            let d = DesignBuilder.build(kind.defaults)
+            print("   controls \(kind.title): \(d.controls.surfaceCount) surfaces, \(Set(d.controls.map(\.servoID)).count) servos – \(d.controls.map { "\($0.name)→\($0.servoID)" }.joined(separator: ", "))")
+        }
+        var bad = AircraftKind.trainer.defaults
+        bad.tailArm = 150; bad.sparEnabled = false; bad.fuselageType = .cross
+        let t0 = Date()
+        let fixes = FixFinder.suggestions(for: bad)
+        print("fixes for broken trainer (\(String(format: "%.2f", Date().timeIntervalSince(t0))) s):")
+        for f in fixes { print("   \(f.solvesAll ? "✓" : "~") \(f.title) – \(f.detail)") }
         var feasible = 0
         for _ in 0..<20 {
             let c = AircraftConfig.random(kind: AircraftKind.allCases.randomElement()!)

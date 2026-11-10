@@ -51,6 +51,7 @@ struct Analysis {
     /// Battery position closest to the target that is physically possible.
     var bestBatteryPosition: Double { min(max(requiredBatteryPosition, batteryLimits.lowerBound), batteryLimits.upperBound) }
     var checks: [Check] = []
+    var structure: StructureReport?
 
     var feasible: Bool { !checks.contains { $0.severity == .error } }
     var worst: Severity { checks.map(\.severity).max() ?? .ok }
@@ -157,7 +158,7 @@ struct Analysis {
         let arRange: ClosedRange<Double> = c.kind == .delta ? 1.2...4 : (c.kind.isTailless ? 2.5...8 : 3...11)
         if !arRange.contains(aspectRatio) { add(.warning, "Aero", "Aspect ratio \(f1(aspectRatio)) unusual", "Typical range for a \(c.kind.title): \(f1(arRange.lowerBound))–\(f1(arRange.upperBound)).") }
         else { add(.ok, "Aero", "Aspect ratio \(f1(aspectRatio))", "Within the typical range for a \(c.kind.title).") }
-        if c.controlChordPct * c.tipChord < 10 && (c.kind.isTailless || c.kind.hasAilerons) { add(.warning, "Geometry", "Control surfaces very narrow at the tip", "Less than 10 mm chord – hard to hinge cleanly.") }
+        if c.controlChordPct * c.tipChord < 10 && (c.kind.isTailless || c.hasAilerons) { add(.warning, "Geometry", "Control surfaces very narrow at the tip", "Less than 10 mm chord – hard to hinge cleanly.") }
 
         // Loading & power
         switch wingLoading {
@@ -203,11 +204,14 @@ struct Analysis {
             else { add(.ok, "Stability", "Vertical tail volume \(String(format: "%.3f", tailVolumeV))", "Adequate yaw stability.") }
         }
 
-        // Structure
-        let slender = c.wingspan / (t * c.material.stiffness)
-        if !c.sparEnabled && slender > 110 { add(.error, "Structure", "Wing far too flexible", "Span/thickness ratio \(f0(slender)) without spar – enable the carbon spar or use thicker foam.") }
-        else if !c.sparEnabled && slender > 70 { add(.warning, "Structure", "Wing may flex", "Consider a carbon spar for this span and foam.") }
-        else { add(.ok, "Structure", "Wing stiffness OK", c.sparEnabled ? "\(c.sparSpec.name) spar specified." : "Foam alone is stiff enough.") }
+        // Structure – beam physics (see StructureReport)
+        let st = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed)
+        structure = st
+        let pct = st.wingDeflectionRatio * 100
+        let wingFix = c.sparEnabled ? "Use thicker foam, a bigger spar or reduce span." : "Enable the carbon spar (top + bottom)."
+        if pct >= 10 { add(.error, "Structure", "Wing far too flexible", "Tip bends \(f0(st.wingTipDeflection)) mm (\(f0(pct)) % of the half span) at 3 g. \(wingFix)") }
+        else if pct >= 4 { add(.warning, "Structure", "Wing flexes noticeably", "Tip bends \(f0(st.wingTipDeflection)) mm (\(f1(pct)) %) at 3 g. \(wingFix)") }
+        else { add(.ok, "Structure", "Wing stiffness OK", "Tip deflection \(f1(st.wingTipDeflection)) mm (\(f1(pct)) %) at 3 g\(c.sparEnabled ? " with spars top + bottom" : "").") }
         if c.material.thickness >= 10 && c.wingspan < 350 { add(.info, "Structure", "Thick foam on a small model", "10 mm sheet adds weight – 5/6 mm is usually enough.") }
 
         // Servos: hinge moment H = Ch · q · S · c at ~2.5 × stall speed (min 30 km/h), Ch ≈ 0.4 at full throw.
@@ -224,17 +228,18 @@ struct Analysis {
         }
         if servoOK { add(.ok, "Servos", "Servo torque sufficient", "\(loads.count) × \(c.servo.name) with ≥40 % reserve.") }
 
-        // Fuselage structure (cross section: horizontal plate + upper/lower halves)
-        if c.kind.hasFuselage {
-            let slender = (c.tailArm + c.hStabChord) / max(c.fuselageHeight * 0.5, 1)
-            let heavyNose = c.motor.mass >= 19 || c.material.family == .epp
-            if c.fuselageType == .cross && heavyNose {
-                add(.warning, "Structure", "Front fuselage needs doublers", "\(c.material.family == .epp ? "EPP" : "A \(c.motor.name)") loads the nose – choose “Cross + doublers”.")
-            } else if slender > 14 {
-                add(.warning, "Structure", "Very long, slim tail", "Tail is \(f0(slender))× the fuselage half-height – increase fuselage height or shorten the tail arm.")
-            } else {
-                add(.ok, "Structure", "\(c.fuselageType.name) fuselage", "Horizontal plate + upper/lower halves form a + section along the whole length; carbon truss on both sides.")
-            }
+        // Fuselage / tail boom stiffness
+        if let bend = st.tailBendDeg, let twist = st.tailTwistDeg {
+            let speed = f0(st.loadSpeed)
+            let twistFix = c.kind.isTwinBoom ? "Increase the boom spacing (stab span) or shorten the tail arm."
+                : (c.fuselageType == .laminatedTube ? "Increase fuselage height or shorten the tail arm." : "Choose \(c.fuselageType == .cross ? "“Laminated cross” or " : "")“Laminated + tube”, increase fuselage height or shorten the tail arm.")
+            if twist >= 5 { add(.error, "Structure", "Fuselage twists too much", "\(f1(twist))° twist at full rudder, \(speed) km/h – the tail will flutter and rudder input rolls the plane. \(twistFix)") }
+            else if twist >= 2 { add(.warning, "Structure", "Fuselage is soft in torsion", "\(f1(twist))° twist at full rudder, \(speed) km/h. \(twistFix)") }
+            else { add(.ok, "Structure", "Torsion OK", "\(f1(twist))° twist at full rudder, \(speed) km/h (\(c.kind.isTwinBoom ? "twin booms" : c.fuselageType.name)).") }
+            let bendFix = c.kind.isTwinBoom ? "Shorten the tail arm or use a smaller stabiliser." : "Increase fuselage height or shorten the tail arm."
+            if bend >= 3 { add(.error, "Structure", "Tail boom bends too much", "\(f1(bend))° tail deflection at full elevator. \(bendFix)") }
+            else if bend >= 1 { add(.warning, "Structure", "Tail boom flexes", "\(f1(bend))° tail deflection at full elevator. \(bendFix)") }
+            else { add(.ok, "Structure", "Boom bending OK", "\(String(format: "%.2f", bend))° tail deflection at full elevator (carbon chords).") }
         }
 
         // Propeller clearance

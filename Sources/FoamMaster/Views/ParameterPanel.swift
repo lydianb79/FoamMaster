@@ -36,7 +36,7 @@ struct ParameterContent: View {
                         if c.kind.hasFuselage {
                             ParamSlider(label: "Dihedral", unit: "°", value: bind(\.dihedral), range: range(\.dihedral, c), step: 0.5)
                         }
-                        if c.kind.isTailless || c.kind.hasAilerons {
+                        if c.kind.isTailless || c.hasAilerons {
                             ParamSlider(label: c.kind.isTailless ? "Elevon chord" : "Aileron chord", unit: "%",
                                         value: Binding(get: { c.controlChordPct * 100 }, set: { project.config?.controlChordPct = $0 / 100 }),
                                         range: 12...40, step: 1)
@@ -57,7 +57,17 @@ struct ParameterContent: View {
                             .pickerStyle(.segmented).labelsHidden()
                             Text(c.fuselageType.detail).font(.system(size: 10)).foregroundStyle(.secondary)
                         }
-                        if c.kind.hasAilerons {
+                        if !c.kind.isTailless {
+                            Picker("", selection: Binding(get: { ControlLayout(ailerons: c.ailerons, rudder: c.rudder) },
+                                                          set: { project.config?.ailerons = $0.ailerons; project.config?.rudder = $0.rudder })) {
+                                Text("R + E").tag(ControlLayout.rudderElevator)
+                                Text("A + E").tag(ControlLayout.aileronElevator)
+                                Text("A + E + R").tag(ControlLayout.full)
+                            }
+                            .pickerStyle(.segmented).labelsHidden()
+                            .help("Control layout: rudder, ailerons, elevator")
+                        }
+                        if c.hasAilerons && !c.kind.isTwinBoom {
                             Picker("", selection: bind(\.aileronServos)) {
                                 Text("1 aileron servo").tag(1)
                                 Text("2 aileron servos").tag(2)

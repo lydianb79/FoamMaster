@@ -96,9 +96,9 @@ struct GalleryContent: View {
         }
         .padding(48)
         .sheet(item: $selected) { kind in
-            SetupSheet(preview: previews.first { $0.kind == kind }!) { fpv, fuselage, servos in
+            SetupSheet(preview: previews.first { $0.kind == kind }!) { fpv, fuselage, layout, servos in
                 selected = nil
-                project.start(kind, fpv: fpv, fuselage: fuselage, aileronServos: servos)
+                project.start(kind, fpv: fpv, fuselage: fuselage, ailerons: layout.ailerons, rudder: layout.rudder, aileronServos: servos)
             } cancel: { selected = nil }
         }
     }
@@ -172,25 +172,48 @@ struct ModelCard: View {
     }
 }
 
+enum ControlLayout: String, CaseIterable, Hashable {
+    case rudderElevator, aileronElevator, full
+    var title: String { [.rudderElevator: "Rudder + elevator", .aileronElevator: "Ailerons + elevator", .full: "Ailerons + elevator + rudder"][self]! }
+    var detail: String { [.rudderElevator: "2 channels – easy, stable", .aileronElevator: "3 channels – no rudder", .full: "4 channels – full aerobatics"][self]! }
+    var ailerons: Bool { self != .rudderElevator }
+    var rudder: Bool { self != .aileronElevator }
+    init(ailerons: Bool, rudder: Bool) { self = ailerons ? (rudder ? .full : .aileronElevator) : .rudderElevator }
+}
+
 /// Options asked for when a base model is picked.
 struct SetupSheet: View {
     var preview: ModelPreview
-    var start: (FPVSystem, FuselageType, Int) -> Void
+    var start: (FPVSystem, FuselageType, ControlLayout, Int) -> Void
     var cancel: () -> Void
     @State private var fpv: FPVSystem
-    @State private var fuselage: FuselageType = .cross
+    @State private var fuselage: FuselageType
+    @State private var layout: ControlLayout
     @State private var servos = 2
 
-    init(preview: ModelPreview, start: @escaping (FPVSystem, FuselageType, Int) -> Void, cancel: @escaping () -> Void) {
+    init(preview: ModelPreview, start: @escaping (FPVSystem, FuselageType, ControlLayout, Int) -> Void, cancel: @escaping () -> Void) {
         self.preview = preview
         self.start = start
         self.cancel = cancel
-        _fpv = State(initialValue: preview.kind.defaults.fpv)
+        let d = preview.kind.defaults
+        _fpv = State(initialValue: d.fpv)
+        _layout = State(initialValue: ControlLayout(ailerons: d.ailerons, rudder: d.rudder))
+        _fuselage = State(initialValue: FixFinder.recommendedStructure(for: d))
+    }
+
+    private var candidate: AircraftConfig {
+        var c = preview.kind.defaults
+        c.fpv = fpv; c.fuselageType = fuselage
+        c.ailerons = layout.ailerons; c.rudder = layout.rudder
+        c.aileronServos = preview.kind.isTwinBoom ? 2 : servos
+        return c
     }
 
     var body: some View {
         let kind = preview.kind
-        VStack(alignment: .leading, spacing: 18) {
+        let design = DesignBuilder.build(candidate)
+        let servoGroups = Dictionary(grouping: design.controls, by: \.servoID)
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 14) {
                 ModelThumbnail(preview: preview).frame(width: 230, height: 135)
                     .background(RadialGradient(colors: [kind.tint.opacity(0.25), .clear], center: .center, startRadius: 5, endRadius: 140))
@@ -202,30 +225,51 @@ struct SetupSheet: View {
                 }
             }
 
+            OptionGroup(title: "Control surfaces", symbol: "slider.horizontal.below.square.filled.and.square") {
+                if kind.isTailless {
+                    Text("Tailless: two elevons (combined aileron + elevator), one servo each.").font(.system(size: 11)).foregroundStyle(.secondary)
+                } else {
+                    OptionTiles(selection: $layout, options: ControlLayout.allCases, title: \.title, detail: \.detail, tint: kind.tint)
+                    if layout.ailerons && !kind.isTwinBoom {
+                        OptionTiles(selection: $servos, options: [1, 2], title: { $0 == 1 ? "1 aileron servo" : "2 aileron servos" },
+                                    detail: { $0 == 1 ? "Central servo, torque rods to both ailerons" : "One servo in each wing half" }, tint: kind.tint)
+                    }
+                }
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle.fill").foregroundStyle(kind.tint)
+                    Text("\(design.controls.surfaceCount) control surfaces · \(servoGroups.count) servos: " +
+                         servoGroups.keys.sorted().map { key -> String in
+                             let n = servoGroups[key]!.surfaceCount
+                             return n > 1 ? "\(key) → \(n) surfaces\(key.contains("torque") ? "" : (key == "Rudders" ? ", linked" : " (joined halves)"))" : key
+                         }.joined(separator: " · "))
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             OptionGroup(title: "FPV system", symbol: "video.fill") {
                 OptionTiles(selection: $fpv, options: FPVSystem.allCases, title: \.name, detail: { $0 == .none ? $0.detail : "\(String(format: "%.0f", $0.mass)) g · \(String(format: "%.1f", $0.power)) W" }, tint: kind.tint)
             }
             if kind.hasFuselage {
                 OptionGroup(title: "Fuselage structure", symbol: "square.split.2x2") {
-                    OptionTiles(selection: $fuselage, options: FuselageType.allCases, title: \.name, detail: \.detail, tint: kind.tint)
-                }
-            }
-            if kind.hasAilerons {
-                OptionGroup(title: "Aileron servos", symbol: "gearshape.2") {
-                    OptionTiles(selection: $servos, options: [1, 2], title: { $0 == 1 ? "1 servo" : "2 servos" },
-                                detail: { $0 == 1 ? "Central servo, torque rods to both ailerons" : "One servo in each wing half" }, tint: kind.tint)
+                    OptionTiles(selection: $fuselage, options: FuselageType.allCases, title: \.name, detail: { f in
+                        var c = candidate; c.fuselageType = f
+                        let st = StructureReport(c, totalMass: Analysis(design: DesignBuilder.build(c)).totalMass, stallSpeed: 16)
+                        let twist = st.tailTwistDeg ?? 0
+                        return "\(String(format: "%.1f", twist))° twist · " + (twist < 2 ? "stiff" : (twist < 5 ? "soft" : "too soft"))
+                    }, tint: kind.tint)
+                    Text(fuselage.detail).font(.system(size: 10.5)).foregroundStyle(.secondary)
                 }
             }
 
             HStack {
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
-                PillButton(title: "Start building", symbol: "arrow.right.circle.fill", prominent: true) { start(fpv, fuselage, servos) }
+                PillButton(title: "Start building", symbol: "arrow.right.circle.fill", prominent: true) { start(fpv, fuselage, layout, servos) }
                     .keyboardShortcut(.defaultAction)
             }
         }
         .padding(24)
-        .frame(width: 620)
+        .frame(width: 680)
         .background(Theme.background)
         .preferredColorScheme(.dark)
     }

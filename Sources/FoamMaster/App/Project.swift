@@ -26,12 +26,46 @@ final class Project: ObservableObject {
     /// Result of the last balance fix, shown in the CG panel until the design changes.
     @Published var balanceNote: String?
 
-    func start(_ kind: AircraftKind, fpv: FPVSystem? = nil, fuselage: FuselageType = .cross, aileronServos: Int = 2) {
+    func start(_ kind: AircraftKind, fpv: FPVSystem? = nil, fuselage: FuselageType? = nil,
+               ailerons: Bool? = nil, rudder: Bool? = nil, aileronServos: Int = 2) {
         var c = kind.defaults
         if let fpv { c.fpv = fpv }
-        c.fuselageType = fuselage
-        c.aileronServos = aileronServos
+        if let ailerons { c.ailerons = ailerons }
+        if let rudder { c.rudder = rudder }
+        c.aileronServos = kind.isTwinBoom ? 2 : aileronServos
+        c.fuselageType = fuselage ?? FixFinder.recommendedStructure(for: c)
         config = Project.balanced(c)
+        inspectorTab = .analysis
+    }
+
+    // MARK: Fix suggestions
+
+    @Published var inspectorTab: InspectorTab = .analysis
+    @Published private(set) var fixes: [FixSuggestion] = []
+    @Published private(set) var findingFixes = false
+    private var fixToken = 0
+
+    private func scheduleFixSearch() {
+        fixToken += 1
+        let token = fixToken
+        fixes = []
+        guard let c = config, let a = analysis, !a.feasible else { findingFixes = false; return }
+        findingFixes = true
+        Task.detached(priority: .userInitiated) {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard await self.fixToken == token else { return }
+            let result = FixFinder.suggestions(for: c)
+            await MainActor.run {
+                guard self.fixToken == token else { return }
+                self.fixes = result
+                self.findingFixes = false
+            }
+        }
+    }
+
+    func apply(_ fix: FixSuggestion) {
+        config = fix.config
+        flash(fix.title)
     }
 
     /// Puts the battery where the CG lands on target; if that is impossible, tries heavier
@@ -89,6 +123,7 @@ final class Project: ObservableObject {
         design = d
         analysis = Analysis(design: d)
         revision += 1
+        scheduleFixSearch()
     }
 
     func balancedBatteryPosition(for c: AircraftConfig) -> Double {
@@ -108,6 +143,8 @@ final class Project: ObservableObject {
             c.fpv = current.fpv
             c.fuselageType = current.fuselageType
             c.aileronServos = current.aileronServos
+            c.ailerons = current.ailerons
+            c.rudder = current.rudder
             c = Project.balanced(c)
             let a = Analysis(design: DesignBuilder.build(c))
             if a.feasible && a.score > bestScore { best = c; bestScore = a.score }

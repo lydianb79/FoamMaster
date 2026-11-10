@@ -41,7 +41,7 @@ enum BuildDocs {
             items.append(BOMItem(category: "Carbon", item: CarbonSpar.tube4.name, spec: "Tail booms, \(Int(ceil(len / 10) * 10)) mm each, glued into grooves under wing and stabiliser", quantity: "2×"))
             items.append(BOMItem(category: "Carbon", item: "Carbon rod Ø1 mm", spec: "Elevator joiner (40 mm) + rudder link wire across the stab", quantity: "1×"))
         }
-        if c.kind.hasAilerons && c.aileronServos == 1 {
+        if c.hasAilerons && c.aileronServos == 1 {
             items.append(BOMItem(category: "Hardware", item: "Steel wire Ø1 mm torque rods", spec: "2 × 70 mm, L-bent into the aileron leading edges, brass tube bearings 2 × 15 mm", quantity: "2×"))
         }
         if d.trussLength > 0 {
@@ -61,7 +61,7 @@ enum BuildDocs {
         items.append(BOMItem(category: "Electronics", item: c.battery.name, spec: "\(c.battery.mass) g", quantity: "1×"))
         items.append(BOMItem(category: "Electronics", item: c.servo.name, spec: "\(c.servo.torque) kg·cm", quantity: "\(servoCount)×"))
         items.append(BOMItem(category: "Electronics", item: "Receiver", spec: "\(max(4, servoCount + 1))+ channels, micro", quantity: "1×"))
-        if c.kind.hasAilerons && c.aileronServos == 2 { items.append(BOMItem(category: "Electronics", item: "Servo extension", spec: "100 mm (aileron servos)", quantity: "2×")) }
+        if c.hasAilerons && c.aileronServos == 2 { items.append(BOMItem(category: "Electronics", item: "Servo extension", spec: "100 mm (aileron servos)", quantity: "2×")) }
         if c.fpv != .none {
             items.append(BOMItem(category: "FPV", item: c.fpv.name, spec: "\(c.fpv.detail) · ≈\(String(format: "%.1f", c.fpv.mass)) g · ≈\(String(format: "%.1f", c.fpv.power)) W", quantity: "1×"))
             items.append(BOMItem(category: "FPV", item: "Antenna", spec: c.fpv == .analog ? "5.8 GHz dipole, mounted vertically" : "Stock antenna, route away from carbon parts", quantity: "1×"))
@@ -99,7 +99,7 @@ enum BuildDocs {
         } else {
             s.append(BuildStep(title: "Mount the motor", text: "Screw the motor onto the printed firewall (\(c.motor.screw)) and push its + shaped clamp over the nose so it grips the plate and both fuselage halves. 1–2° right thrust can be shimmed with a washer.", symbol: "fanblades"))
         }
-        if c.kind.hasAilerons && c.aileronServos == 1 {
+        if c.hasAilerons && c.aileronServos == 1 {
             s.append(BuildStep(title: "Aileron torque rods", text: "Bend two 1 mm wires into L-shapes, slide them through short brass tubes glued into the wing at the hinge line next to the fuselage and press the long legs into the aileron leading edges. The single aileron servo below the wing drives both rods with one pushrod each.", symbol: "arrow.triangle.branch"))
         }
         if c.fpv != .none {
@@ -110,7 +110,7 @@ enum BuildDocs {
         s.append(BuildStep(title: "Balance (CG)", text: "Mark the CG \(cg) mm behind the root leading edge (marked ⊕ on the plan). Move the battery until the model balances level on your fingertips at that mark. Recommended range: \(String(format: "%.0f–%.0f", a.cgRange.lowerBound, a.cgRange.upperBound)) mm.", symbol: "scalemass"))
         s.append(BuildStep(title: "Set throws & first flight", text: c.kind.isTailless
             ? "Elevon throws: ±8 mm pitch, ±6 mm roll, 30 % expo. Trim elevons 1–2 mm up. Hand-launch firmly level at ~70 % throttle."
-            : "Throws: elevator ±8 mm, rudder ±12 mm\(c.kind.hasAilerons ? ", ailerons ±10 mm" : ""), 30 % expo. Hand-launch level at ~60 % throttle into the wind.", symbol: "paperplane"))
+            : "Throws: elevator ±8 mm, rudder ±12 mm\(c.hasAilerons ? ", ailerons ±10 mm" : ""), 30 % expo. Hand-launch level at ~60 % throttle into the wind.", symbol: "paperplane"))
         return s
     }
 }
