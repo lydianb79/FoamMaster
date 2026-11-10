@@ -9,13 +9,36 @@ extension AircraftConfig {
     /// the cutout, motor body behind it, prop spinning inside the cutout.
     var motorNotchDepth: Double { max(26, motorLength + 14) }
     var motorNotchWidth: Double { motor.propInches * 25.4 + 10 }
+    /// Half width of the trailing-edge cutout: at least the prop + clearance, and it ends at the elevons.
+    var motorNotchHalfWidth: Double { max(semiSpan * 0.12, motorNotchWidth / 2) }
     /// Firewall (printed mount plate) position. The clamp always grips the structure ahead of / behind it:
     /// pusher = structure in front, motor and prop behind; tractor = structure behind, motor and prop in front.
     /// Lateral position of the two motors of a dual-tractor layout: props clear the fuselage/pod and each other.
+    /// As far inboard as possible (less roll inertia and less yaw if one motor quits) while the props clear the
+    /// fuselage/pod/centre fin by 4 mm and – with FPV – stay outside a 150° camera field of view.
     var dualMotorX: Double {
         let r = motor.propInches * 25.4 / 2
-        let body = kind.isTailless ? 6 : fuselagePlateWidth / 2 + 6
-        return max(r + body + 6, semiSpan * 0.28)
+        var x = r + dualBodyHalfWidth + 4
+        if fpv != .none {
+            let halfFOV = 75.0 * .pi / 180
+            for _ in 0..<4 {
+                let propZ = sweep * x / semiSpan - 2 - motorLength - 4
+                let ahead = fpvCameraZ - propZ          // > 0: the prop disc is in front of the camera
+                if ahead > 0 { x = max(x, r + ahead * tan(halfFOV)) }
+            }
+        }
+        return x
+    }
+    /// Half width of whatever sits between the two props (centre fin / keel, or fuselage plate / pod).
+    var dualBodyHalfWidth: Double {
+        kind.isTailless ? (taillessFins == .centreFin ? material.thickness / 2 + 2 : 4) : fuselagePlateWidth / 2 + 2
+    }
+    /// Longitudinal position of the FPV camera lens.
+    var fpvCameraZ: Double {
+        if kind.isTailless { return 4 }
+        if kind.isTwinBoom { return -noseLength + 10 }
+        if kind.isJet { return -0.45 * noseLength }
+        return -noseLength + 14
     }
     var firewallZ: Double {
         if isDual { return sweep * dualMotorX / semiSpan - 2 }   // just ahead of the leading edge at the motor station
@@ -230,8 +253,9 @@ enum DesignBuilder {
             let w = wing
             let f = c.controlChordPct
             let single = !c.isDual
-            let nw = single ? c.motorNotchWidth : 0, nd = single ? c.motorNotchDepth : 0
-            let v0 = single ? max(s * 0.12, nw / 2 + 6) : s * 0.12
+            // The cutout reaches exactly to the elevon inner edges – no leftover trailing-edge strip beside it.
+            let nw = single ? 2 * c.motorNotchHalfWidth : 0, nd = single ? c.motorNotchDepth : 0
+            let v0 = single ? nw / 2 : s * 0.12
             let v1 = s - 14
             if v1 - v0 < 40 { issues.append("Elevons are too short: the motor cutout needs \(Int(nw)) mm at the centre – use a smaller prop or more span.") }
             let out = w.build(full: true, surfaces: v1 > v0 + 10 ? [v0...v1] : [], fraction: f)
@@ -242,7 +266,7 @@ enum DesignBuilder {
                 var p = poly
                 p.replaceSubrange(i...i, with: [Vec2(w.te(-nw / 2), -nw / 2), Vec2(w.te(0) - nd, -nw / 2),
                                                 Vec2(w.te(0) - nd, nw / 2), Vec2(w.te(nw / 2), nw / 2)])
-                return p
+                return Poly.cleaned(p)
             }
             var outline = withMotorNotch(out.outline)
             var mainRegion = withMotorNotch(out.main)
@@ -282,7 +306,7 @@ enum DesignBuilder {
                 for tu in fin.tabs { holes.append(slot(minU: u0 + tu - 4, maxU: u0 + tu + 4, minV: -t / 2, maxV: t / 2)) }
                 parts.append(Part(name: "Centre fin", role: .fin, outline: fin.outline, features: [.label("FIN", Vec2(fc * 0.45, finHeight * 0.4))],
                                   instances: [Placement(origin: [0, t / 2, u0], u: [0, 0, 1], v: [0, 1, 0])], material: c.material))
-            } else if finHeight > 5 {
+            } else if finHeight > 5 && c.taillessFins == .winglets {
                 // Winglets are glued to the SIDE of the wing tip: tip tabs go through slots in the winglet.
                 let wl = sideFin(chord: c.tipChord, height: finHeight)
                 for v in [-s, s] {

@@ -83,12 +83,15 @@ enum SceneBuilder {
                             color: r.isControl ? Palette.control : base, transform: transform)
                 }
             }
-            // Carbon spars
+            // Carbon: wing spars (if enabled), truss strips, boom grooves, X-bracing – drawn as strips on both faces.
             for f in part.features {
-                if case let .spar(p0, p1, _) = f, d.config.sparEnabled {
-                    for inst in part.instances {
-                        let off = part.thickness / 2 + 0.3
-                        scene.addLine(inst.point(p0, offset: -off), inst.point(p1, offset: -off), color: Palette.carbon)
+                guard case let .spar(p0, p1, width) = f else { continue }
+                if part.role == .wing && (width == 3 || width == 5) && !d.config.sparEnabled { continue }
+                let w = max(width, 1.6)
+                for inst in part.instances {
+                    for side in [-1.0, 1.0] {
+                        let a = inst.point(p0, offset: side * part.thickness / 2), b = inst.point(p1, offset: side * part.thickness / 2)
+                        scene.addMesh(strip(from: a, to: b, normal: inst.normal * side, width: w), color: Palette.carbon)
                     }
                 }
             }
@@ -132,6 +135,11 @@ enum SceneBuilder {
                     scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.vtx)
                     scene.addLine(p, p + [0, 30, 6], color: SIMD4(0.9, 0.9, 0.95, 0.9))
                 }
+            case "Printed" where item.name.hasPrefix("Motor mount"):
+                // The real clamp mount: plate on the firewall, jaws over the structure (aft for tractors, forward for pushers).
+                let mesh = PrintedParts.motorMount(for: c)
+                let placed = c.isPusher ? mesh.transformed { q in SIMD3<Double>(-q.x, q.y, -q.z) } : mesh
+                scene.addMesh(placed.translated([p.x, 0, c.firewallZ]), color: Palette.printed)
             case "Printed":
                 let size: SIMD3<Double>
                 if item.name.hasPrefix("Horn") { continue }   // drawn with its linkage below
@@ -282,6 +290,18 @@ enum SceneBuilder {
         var spinner = sphere(center: [0, 0, tipZ], radius: hub)
         spinner = spinner.transformed { p in [p.x, p.y, tipZ + (p.z - tipZ) * (((p.z - tipZ) * outward) > 0 ? 1.8 : 0.4)] }
         m.append(spinner)
+        return m
+    }
+
+    /// Thin flat strip lying on a surface (carbon strips / rods).
+    static func strip(from a: SIMD3<Double>, to b: SIMD3<Double>, normal n: SIMD3<Double>, width w: Double, height h: Double = 0.6) -> Mesh3D {
+        let d = simd_normalize(b - a), side = simd_normalize(simd_cross(n, d)) * (w / 2), up = simd_normalize(n) * h
+        let c = [a - side, a + side, b + side, b - side]
+        let top = c.map { $0 + up }
+        var m = Mesh3D()
+        func quad(_ p: SIMD3<Double>, _ q: SIMD3<Double>, _ r: SIMD3<Double>, _ s: SIMD3<Double>) { m.triangles += [(p, q, r), (p, r, s)] }
+        quad(c[0], c[1], c[2], c[3]); quad(top[3], top[2], top[1], top[0])
+        for i in 0..<4 { let j = (i + 1) % 4; quad(c[i], c[j], top[j], top[i]) }
         return m
     }
 

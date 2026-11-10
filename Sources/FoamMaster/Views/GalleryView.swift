@@ -40,18 +40,8 @@ extension AircraftKind {
         case .glider: return ["Tractor", "Long span", "Thermal"]
         }
     }
-    /// Accent per type so the cards read differently at a glance.
-    var tint: Color {
-        switch self {
-        case .flyingWing: return Theme.accent
-        case .delta: return Color(red: 1, green: 0.35, blue: 0.45)
-        case .twinBoom: return Theme.good
-        case .jet: return Color(red: 0.45, green: 0.6, blue: 1.0)
-        case .trainer: return Theme.warn
-        case .aerobat: return Theme.orange
-        case .glider: return Theme.violet
-        }
-    }
+    /// One accent colour for every type – the shapes and tags tell them apart.
+    var tint: Color { Theme.accent }
 }
 
 struct GalleryView: View {

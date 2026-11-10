@@ -17,6 +17,24 @@ enum Poly {
 
     static func area(_ p: [Vec2]) -> Double { abs(signedArea(p)) }
 
+    /// Removes duplicate points and zero-width spikes (a vertex where the outline doubles back on itself).
+    static func cleaned(_ poly: [Vec2], eps: Double = 1e-6) -> [Vec2] {
+        var p = poly
+        var changed = true
+        while changed && p.count > 3 {
+            changed = false
+            for i in 0..<p.count {
+                let a = p[(i + p.count - 1) % p.count], b = p[i], c = p[(i + 1) % p.count]
+                let ab = b - a, bc = c - b
+                let dup = simd_length(ab) < eps
+                let spike = abs(cross(ab, bc)) < eps * 10 && simd_dot(ab, bc) < 0
+                let straight = abs(cross(ab, bc)) < eps * 10 && simd_dot(ab, bc) > 0
+                if dup || spike || straight { p.remove(at: i); changed = true; break }
+            }
+        }
+        return p
+    }
+
     static func centroid(_ p: [Vec2]) -> Vec2 {
         let a = signedArea(p)
         guard abs(a) > 1e-9 else { return p.reduce(.zero, +) / Double(max(p.count, 1)) }

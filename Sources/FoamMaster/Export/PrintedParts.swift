@@ -23,11 +23,11 @@ enum PrintedParts {
         if c.isDual {
             // Wing-only clamp: grips the leading edge from above and below (no vertical slot).
             out.append(PrintedPart(name: "Motor mount (wing LE)", fileName: "motor_mount_\(c.motor.rawValue)_wing", quantity: 2,
-                                   mesh: motorMount(c.motor, foam: t, web: 0), note: "clamps on the wing leading edge at the MOTOR marks"))
+                                   mesh: motorMount(for: c), note: "wing clamp for \(Int(t)) mm foam, M2 clamp bolt – leading edge at the MOTOR marks"))
         } else {
             out.append(PrintedPart(name: "Motor mount", fileName: "motor_mount_\(c.motor.rawValue)", quantity: 1,
-                                   mesh: motorMount(c.motor, foam: t, web: c.kind.hasFuselage ? t * Double(c.fuselageType.webLayers) : t),
-                                   note: c.kind.isTailless ? "clamps on the wing trailing edge" : (c.kind.isTwinBoom ? "clamps on the pod tail" : "clamps on the fuselage nose")))
+                                   mesh: motorMount(for: c),
+                                   note: "+ clamp for \(Int(t)) mm foam, M2 clamp bolt – " + (c.kind.isTailless ? "front of the trailing-edge cutout" : (c.kind.isTwinBoom ? "pod tail" : (c.kind.isJet ? "front of the prop slot" : "fuselage nose")))))
         }
         if c.fpv != .none {
             // Tailed aircraft: saddle that slides over the top edge of the vertical fuselage at the nose.
@@ -73,32 +73,70 @@ enum PrintedParts {
 
     // MARK: Generators (all dimensions in mm)
 
+    static let mountPlate = 2.4
+    static let mountJaw = 24.0
+
+    /// Motor mount matching the aircraft: wing-only clamp for dual tractors, + channel clamp otherwise.
+    static func motorMount(for c: AircraftConfig) -> Mesh3D {
+        let t = c.material.thickness
+        if c.isDual { return motorMount(c.motor, foam: t, web: 0) }
+        return motorMount(c.motor, foam: t, web: t * Double(c.fuselageType.webLayers))
+    }
+
+    /// Profile extruded along an axis. axis 2: profile (x, y) along z · 1: profile (x, z) along y · 0: profile (y, z) along x.
+    static func prism(_ profile: [Vec2], holes: [[Vec2]] = [], axis: Int, from a: Double, to b: Double) -> Mesh3D {
+        let m = Mesh3D.extrude(profile, holes: holes, z0: a, z1: b)
+        switch axis {
+        case 0: return m.transformed { p in SIMD3<Double>(p.z, p.x, p.y) }                     // cyclic = rotation
+        case 1: return Mesh3D(triangles: m.transformed { p in SIMD3<Double>(p.x, p.z, p.y) }   // swap = mirror → flip winding
+                                .triangles.map { ($0.0, $0.2, $0.1) })
+        default: return m
+        }
+    }
+
+    /// Clamp-type motor mount. Firewall plate (z 0…plate) with the motor bolt pattern; clamp jaws extend +z over
+    /// the foam. Jaw gaps = foam thickness + 0.2 mm, an M2 clamp bolt passes through jaws and foam, and a 0.3 mm
+    /// lip at the jaw tips bites into the foam. `web` = vertical web thickness (0 = wing-only clamp).
     static func motorMount(_ m: MotorClass, foam t: Double, web: Double? = nil) -> Mesh3D {
         let tw = web ?? t
-        let plate = max(m.boltCircle + m.screwHole * 2 + 6, m.bellDiameter * 0.75)
-        let th = 2.0
-        let r = m.boltCircle / 2
+        let th = mountPlate, len = mountJaw
+        let plate = max(m.boltCircle + m.screwHole * 2 + 6, m.bellDiameter * 0.8, t + 14)
+        let r = m.boltCircle / 2, e = plate / 2
         var holes: [[Vec2]] = [Poly.circle(.zero, max(2.5, m.boltCircle * 0.28), segments: 32)]
         for k in 0..<4 {
             let a = Double(k) * .pi / 2 + .pi / 4
             holes.append(Poly.circle(Vec2(cos(a), sin(a)) * r, m.screwHole / 2, segments: 16))
         }
         var mesh = Mesh3D.extrude(Poly.rect(center: .zero, size: Vec2(plate, plate)), holes: holes, z0: 0, z1: th)
-        // Four corner blocks leave a + shaped channel that grips the vertical fuselage
-        // halves and the horizontal plate (or wing + keel) at the same time.
-        let gapX = tw / 2 + 0.15, gapY = t / 2 + 0.15, len = 22.0, e = plate / 2
+        let gapY = t / 2 + 0.1, jaw = 3.0
+        let bolt = { (c: Vec2) in [Poly.circle(c, 1.1, segments: 14)] }
         if tw <= 0 {
-            // Wing-only clamp (dual tractor on the leading edge): solid jaws above and below the wing.
-            mesh.append(.box(min: [-e, gapY, th], max: [e, e, th + len]))
-            mesh.append(.box(min: [-e, -e, th], max: [e, -gapY, th + len]))
+            // Wing clamp: full-width jaws above and below the wing, bolt vertically through both.
+            let profile = Poly.rect(minU: -e, maxU: e, minV: th, maxV: th + len)
+            mesh.append(prism(profile, holes: bolt(Vec2(0, th + len - 7)), axis: 1, from: gapY, to: gapY + jaw))
+            mesh.append(prism(profile, holes: bolt(Vec2(0, th + len - 7)), axis: 1, from: -gapY - jaw, to: -gapY))
+            // Gussets between plate and jaws at both sides.
+            for (y0, y1) in [(gapY + jaw, e), (-e, -gapY - jaw)] {
+                let tri = y0 > 0 ? [Vec2(y0, th), Vec2(y1, th), Vec2(y0, th + len * 0.6)] : [Vec2(y0, th), Vec2(y1, th), Vec2(y1, th + len * 0.6)]
+                for x0 in [-e, e - 2] { mesh.append(prism(Poly.ccw(tri), axis: 0, from: x0, to: x0 + 2)) }
+            }
+            // Grip lips
+            mesh.append(.box(min: [-e, gapY - 0.3, th + len - 2], max: [e, gapY, th + len]))
+            mesh.append(.box(min: [-e, -gapY, th + len - 2], max: [e, -gapY + 0.3, th + len]))
             return mesh
         }
-        for sx in [-1.0, 1.0] {
-            for sy in [-1.0, 1.0] {
-                let x0 = sx > 0 ? gapX : -e, x1 = sx > 0 ? e : -gapX
-                let y0 = sy > 0 ? gapY : -e, y1 = sy > 0 ? e : -gapY
-                mesh.append(.box(min: [x0, y0, th], max: [x1, y1, th + len]))
-            }
+        // Cross clamp: four corner jaws leave a + channel for the vertical web(s) and the horizontal plate / wing;
+        // the bolt runs sideways through the jaws and the web.
+        let gapX = tw / 2 + 0.1
+        for sy in [-1.0, 1.0] {
+            let y0 = sy > 0 ? gapY : -e, y1 = sy > 0 ? e : -gapY
+            let profile = Poly.rect(minU: y0, maxU: y1, minV: th, maxV: th + len)
+            let h = bolt(Vec2((y0 + y1) / 2, th + len - 7))
+            mesh.append(prism(profile, holes: h, axis: 0, from: gapX, to: e))
+            mesh.append(prism(profile, holes: h, axis: 0, from: -e, to: -gapX))
+            // Grip lips on the web faces.
+            mesh.append(.box(min: [gapX - 0.3, y0, th + len - 2], max: [gapX, y1, th + len]))
+            mesh.append(.box(min: [-gapX, y0, th + len - 2], max: [-gapX + 0.3, y1, th + len]))
         }
         return mesh
     }

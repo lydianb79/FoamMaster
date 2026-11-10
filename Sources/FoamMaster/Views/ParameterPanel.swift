@@ -44,7 +44,9 @@ struct ParameterContent: View {
                                 ForEach(TaillessFins.allCases) { Text($0.name).tag($0) }
                             }
                             .pickerStyle(.segmented).labelsHidden()
-                            ParamSlider(label: c.taillessFins == .centreFin ? "Fin height" : "Winglet height", unit: "mm", value: bind(\.wingletHeight), range: range(\.wingletHeight, c), step: 1)
+                            if c.taillessFins != .none {
+                                ParamSlider(label: c.taillessFins == .centreFin ? "Fin height" : "Winglet height", unit: "mm", value: bind(\.wingletHeight), range: range(\.wingletHeight, c), step: 1)
+                            }
                             if c.taillessFins == .centreFin {
                                 ParamSlider(label: "Fin position (LE from nose)", unit: "mm", value: bind(\.finPosition), range: 0...max(10, c.rootChord * 0.58 - c.motorNotchDepth - 4), step: 1)
                             }
@@ -60,13 +62,6 @@ struct ParameterContent: View {
                             }
                             .pickerStyle(.segmented).labelsHidden()
                         }
-                        Toggle(isOn: bind(\.aio)) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("AIO flight controller").font(.system(size: 12, weight: .semibold))
-                                Text(c.aio ? "FC + receiver + ESCs, 26 × 26 mm mount" : "Separate ESC + receiver").font(.system(size: 10)).foregroundStyle(.secondary)
-                            }
-                        }
-                        .toggleStyle(.switch).tint(Theme.accent)
                         if !c.kind.isTailless {
                             Toggle(isOn: bind(\.tailWinglets)) { Text("Winglets").font(.system(size: 12, weight: .semibold)) }
                                 .toggleStyle(.switch).tint(Theme.accent)
@@ -133,6 +128,16 @@ struct ParameterContent: View {
                         Text(c.kind.propBladeReason).font(.system(size: 9.5)).foregroundStyle(.tertiary).padding(.leading, 78)
                         PickerRow(label: "Battery", selection: bind(\.battery), options: BatteryPack.allCases) { "\($0.name) · \(Int($0.mass)) g" }
                         PickerRow(label: "Servos", selection: bind(\.servo), options: ServoClass.allCases) { $0.name }
+                        HStack {
+                            Text("Control").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary).frame(width: 58, alignment: .leading)
+                            Picker("", selection: bind(\.aio)) {
+                                Text(c.isDual ? "ESCs + RX" : "ESC + RX").tag(false)
+                                Text("AIO FC").tag(true)
+                            }
+                            .pickerStyle(.segmented).labelsHidden()
+                        }
+                        Text(c.aio ? "FC + receiver + ESCs on one 26 × 26 mm board – printed mount included" : "Separate ESC\(c.isDual ? "s" : "") and receiver")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).padding(.leading, 62)
                     }
                     .glass()
 

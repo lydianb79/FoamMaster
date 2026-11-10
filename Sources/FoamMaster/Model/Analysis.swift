@@ -195,6 +195,11 @@ struct Analysis {
         }
         if staticMargin < 0 { add(.warning, "Balance", "Currently tail-heavy (unstable)", "Negative static margin with the current battery position.") }
 
+        if c.kind.isTailless && c.taillessFins == .none {
+            let sweepRatio = c.sweep / max(c.semiSpan, 1)
+            if sweepRatio < 0.35 { add(.warning, "Stability", "No fins and little sweep", "Without winglets or a fin the wing needs more sweep for yaw stability (sweep ≥ 35 % of the half span).") }
+            else { add(.info, "Stability", "Finless wing", "Yaw stability comes from the sweep only – expect some wag in turbulence.") }
+        }
         if !c.kind.isTailless && !c.hasAilerons {
             add(.warning, "Controls", "No ailerons on a flat wing", "Without dihedral, rudder-only planes roll very slowly. Choose a layout with ailerons.")
         }
@@ -249,13 +254,12 @@ struct Analysis {
         // Propeller clearance
         let r = c.motor.propInches * 25.4 / 2
         if c.isDual {
-            let body = c.kind.isTailless ? 6 : c.fuselagePlateWidth / 2
-            let clear = c.dualMotorX - r - body
+            let clear = c.dualMotorX - r - c.dualBodyHalfWidth
             if clear < 3 { add(.error, "Geometry", "Props hit the fuselage", "Dual motors at ±\(f0(c.dualMotorX)) mm leave \(f1(clear)) mm prop clearance – use smaller props.") }
-            else { add(.ok, "Geometry", "Dual tractor layout", "Motors at ±\(f0(c.dualMotorX)) mm, \(f1(clear)) mm prop clearance to the \(c.kind.isTailless ? "centre" : "fuselage"), counter-rotating props.") }
+            else { add(.ok, "Geometry", "Dual tractor layout", "Motors at ±\(f0(c.dualMotorX)) mm (\(f0(c.dualMotorX * 2)) mm apart) – as far inboard as the \(f1(clear)) mm prop clearance allows\(c.fpv != .none ? ", props outside the camera's 150° view" : ""), counter-rotating.") }
         } else if c.kind.isTailless {
-            let clear = c.motorNotchWidth / 2 - r
-            add(.ok, "Geometry", "Motor sits in the trailing-edge cutout", "\(f0(c.motorNotchWidth)) × \(f0(c.motorNotchDepth)) mm cutout, \(f1(clear)) mm prop clearance each side.")
+            let clear = c.motorNotchHalfWidth - r
+            add(.ok, "Geometry", "Motor sits in the trailing-edge cutout", "\(f0(c.motorNotchHalfWidth * 2)) × \(f0(c.motorNotchDepth)) mm cutout up to the elevons, \(f1(clear)) mm prop clearance each side.")
             if c.battery.size.l > c.rootChord * 0.7 { add(.warning, "Geometry", "Battery long for the centre section", "Battery \(f0(c.battery.size.l)) mm vs root chord \(f0(c.rootChord)) mm.") }
         } else if c.kind.isTwinBoom {
             let w = TaperedPanel(rootChord: c.rootChord, tipChord: c.tipChord, sweep: c.sweep, semiSpan: c.semiSpan)

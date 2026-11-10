@@ -12,10 +12,13 @@ enum MotorLayout: String, CaseIterable, Identifiable, Codable {
 
 /// Vertical stabilisation of tailless aircraft.
 enum TaillessFins: String, CaseIterable, Identifiable, Codable {
-    case winglets, centreFin
+    case winglets, centreFin, none
     var id: String { rawValue }
-    var name: String { self == .winglets ? "Winglets" : "Centre fin" }
-    var detail: String { self == .winglets ? "Two fins at the wing tips" : "One fin on the centre line – position adjustable" }
+    var name: String { [.winglets: "Winglets", .centreFin: "Centre fin", .none: "No fins"][self]! }
+    var detail: String {
+        [.winglets: "Two fins at the wing tips", .centreFin: "One fin on the centre line – position adjustable",
+         .none: "Plain tips – relies on sweep for yaw stability"][self]!
+    }
 }
 
 enum AircraftKind: String, CaseIterable, Identifiable, Codable {
