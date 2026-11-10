@@ -51,6 +51,9 @@ enum Palette {
     static let printed = SIMD4<Float>(0.07, 0.07, 0.08, 1)
     static let vtx = SIMD4<Float>(0.2, 0.75, 0.45, 1)
     static let prop = SIMD4<Float>(1.0, 0.82, 0.1, 1)
+    static let esc = SIMD4<Float>(0.15, 0.6, 0.68, 1)
+    static let receiver = SIMD4<Float>(0.55, 0.6, 0.7, 1)
+    static let aio = SIMD4<Float>(0.1, 0.45, 0.25, 1)
     static let cg = SIMD4<Float>(1.0, 0.2, 0.6, 1)
     static let edge = SIMD4<Float>(0.1, 0.12, 0.18, 0.55)
     static let grid = SIMD4<Float>(0.4, 0.7, 1.0, 0.12)
@@ -98,24 +101,39 @@ enum SceneBuilder {
             }
         }
 
-        // Components
+        // Components – printed parts use the same meshes as the exported STLs.
         let c = d.config
+        let t = c.material.thickness
+        let tw = t * Double(c.fuselageType.webLayers)
         for item in d.components {
             let p = item.position
             switch item.category {
             case "Battery":
                 let s = c.battery.size
-                let size: SIMD3<Double> = c.kind.isTailless ? [s.w, s.h, s.l] : [s.h, s.w, s.l]
-                scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.battery)
+                // Printed tray between foam and battery, battery sits on it.
+                if c.kind.isTailless {
+                    let down: Double = c.batteryUnderWing ? -1 : 1
+                    let tray = Mesh3D.box(min: [-s.w / 2 - 1.2, -0.6, -s.l / 2 - 2], max: [s.w / 2 + 1.2, 0.6, s.l / 2 + 2])
+                    scene.addMesh(tray.translated([p.x, down * (t / 2 + 0.6), p.z]), color: Palette.printed)
+                    let q = p + [0, down * 1.2, 0]
+                    scene.addMesh(.box(min: q - [s.w, s.h, s.l] / 2, max: q + [s.w, s.h, s.l] / 2), color: Palette.battery)
+                } else {
+                    let tray = Mesh3D.box(min: [-0.6, -s.w / 2 - 1.2, -s.l / 2 - 2], max: [0.6, s.w / 2 + 1.2, s.l / 2 + 2])
+                    scene.addMesh(tray.translated([tw / 2 + 0.6, p.y, p.z]), color: Palette.printed)
+                    let q = p + [1.2, 0, 0]
+                    scene.addMesh(.box(min: q - [s.h, s.w, s.l] / 2, max: q + [s.h, s.w, s.l] / 2), color: Palette.battery)
+                }
             case "Power" where item.name.contains("brushless"):
                 let right = item.position.x > 0.1
                 let r = c.motor.bellDiameter / 2
                 let out: Double = c.isPusher ? 1 : -1          // direction from firewall towards the prop
-                scene.addMesh(cylinder(center: p, radius: r, length: c.motorLength * 0.85), color: Palette.motor)
-                // Shaft from the bell to the prop hub.
-                let shaftEnd = c.propPlaneZ
-                scene.addMesh(cylinder(center: [p.x, 0, (p.z + out * c.motorLength * 0.42 + shaftEnd) / 2], radius: 1.2,
-                                       length: abs(shaftEnd - (p.z + out * c.motorLength * 0.42)) + 1), color: SIMD4(0.75, 0.75, 0.78, 1))
+                let fw = c.firewallZ, L = c.motorLength
+                // Stator base on the firewall, rotating bell, shaft to the prop hub.
+                scene.addMesh(cylinder(center: [p.x, 0, fw + out * L * 0.15], radius: r * 0.82, length: L * 0.3), color: SIMD4(0.25, 0.25, 0.28, 1))
+                scene.addMesh(cylinder(center: [p.x, 0, fw + out * L * 0.62], radius: r, length: L * 0.64), color: Palette.motor)
+                let shaftStart = fw + out * L * 0.94, shaftEnd = c.propPlaneZ
+                scene.addMesh(cylinder(center: [p.x, 0, (shaftStart + shaftEnd) / 2], radius: 1.2, length: abs(shaftEnd - shaftStart) + 1),
+                              color: SIMD4(0.75, 0.75, 0.78, 1))
                 let pr = c.motor.propInches * 25.4 / 2
                 let z = c.propPlaneZ
                 for k in 0..<48 {
@@ -125,18 +143,32 @@ enum SceneBuilder {
                 // Counter-rotating pair: the right-hand prop is the mirror image of the left one.
                 scene.addMesh(propeller(radius: pr, blades: c.kind.propBlades, z: z, hub: r * 0.45, outward: out, mirrored: c.isPusher != right)
                                 .translated([p.x, 0, 0]), color: Palette.prop)
+            case "Power" where item.name.hasPrefix("ESC"):
+                let e: SIMD3<Double> = c.motor.escMass > 4 ? [24, 13, 5] : [18, 10, 4]
+                // Flat under a wing, or flat against the fuselage side.
+                let size: SIMD3<Double> = (c.isDual || c.kind.isTailless) ? [e.y, e.z, e.x] : [e.z, e.y, e.x]
+                scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.esc)
+                scene.addLine(p, [c.motorXs.min(by: { abs($0 - p.x) < abs($1 - p.x) }) ?? 0, 0, c.motorZ], color: SIMD4(0.9, 0.3, 0.3, 0.8))
+            case "Radio" where item.name.hasPrefix("Receiver"):
+                let size: SIMD3<Double> = c.kind.isTailless ? [10, 3, 14] : [3, 10, 14]
+                scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.receiver)
             case "FPV":
                 if item.name.hasPrefix("FPV camera") {
                     let w = c.fpv.cameraWidth
-                    scene.addMesh(.box(min: p - [w / 2, w / 2, w / 2], max: p + [w / 2, w / 2, w / 2]), color: Palette.carbon)
-                    scene.addMesh(cylinder(center: p - [0, 0, w / 2 + 2], radius: w * 0.3, length: 4), color: SIMD4(0.3, 0.35, 0.45, 1))
+                    // Printed mount (clamp on planes, flat foot on wings) under the camera.
+                    let mount = PrintedParts.cameraMount(width: w, tilt: c.kind.cameraTilt, saddleWeb: c.kind.isTailless ? nil : tw)
+                    let placed = mount.transformed { q in SIMD3<Double>(q.x, q.z, q.y) }
+                    scene.addMesh(placed.translated([0, p.y - w / 2 - 1.2, p.z]), color: Palette.printed)
+                    // Camera body + lens, tilted up like the mount.
+                    let tilt = c.kind.cameraTilt * .pi / 180
+                    var cam = Mesh3D.box(min: [-w / 2, -w / 2, -w / 2], max: [w / 2, w / 2, w / 2])
+                    cam.append(cylinder(center: [0, 0, -w / 2 - 2], radius: w * 0.3, length: 4))
+                    scene.addMesh(cam.rotated(tilt, axis: [1, 0, 0]).translated(p + [0, 1, 0]), color: Palette.carbon)
                 } else {
                     let v = c.fpv.vtxSize
                     let size: SIMD3<Double> = c.kind.isTailless ? [v.w, v.h, v.l] : [v.h, v.w, v.l]
                     scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.vtx)
-                    // Antenna points away from the airframe (down when the VTX sits under a wing).
                     let ant: SIMD3<Double> = c.kind.isTailless ? [0, -30, 6] : [0, 30, 6]
-                    scene.addMesh(cylinder(center: p + ant * 0.5, radius: 0.6, length: 1).transformed { $0 }, color: Palette.vtx)
                     scene.addLine(p, p + ant, color: SIMD4(0.3, 0.95, 0.55, 1))
                 }
             case "Printed" where item.name.hasPrefix("Motor mount"):
@@ -145,16 +177,18 @@ enum SceneBuilder {
                 let placed = c.isPusher ? mesh.transformed { q in SIMD3<Double>(-q.x, q.y, -q.z) } : mesh
                 scene.addMesh(placed.translated([p.x, 0, c.firewallZ]), color: Palette.printed)
             case "Printed":
-                let size: SIMD3<Double>
-                if item.name.hasPrefix("Horn") { continue }   // drawn with its linkage below
-                if item.name.hasPrefix("Motor mount") { let m = c.motor.bellDiameter * 0.8; size = [m, m, 6] }
-                else if item.name.hasPrefix("Camera mount") { size = [c.fpv.cameraWidth + 3, 2, 16] }
-                else { size = [40, 2, 20] }
-                scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.printed)
+                continue   // horns are drawn with their linkages, camera mount with the camera
             case "Radio" where item.name.hasPrefix("AIO"):
                 let b = AIOController.boardSize
-                let size: SIMD3<Double> = c.kind.isTailless ? [b, 1.6, b] : [1.6, b, b]
-                scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: SIMD4(0.1, 0.45, 0.25, 1))
+                // Printed 26 × 26 mm standoff mount on the foam, board on the standoffs.
+                let mount = PrintedParts.aioMount()
+                if c.kind.isTailless {
+                    scene.addMesh(mount.transformed { q in SIMD3<Double>(q.x, -q.z, q.y) }.translated([p.x, -t / 2, p.z]), color: Palette.printed)
+                    scene.addMesh(.box(min: p - [b / 2, 0.8, b / 2], max: p + [b / 2, 0.8, b / 2]), color: Palette.aio)
+                } else {
+                    scene.addMesh(mount.transformed { q in SIMD3<Double>(-q.z, q.y, q.x) }.translated([-tw / 2, p.y, p.z]), color: Palette.printed)
+                    scene.addMesh(.box(min: p - [0.8, b / 2, b / 2], max: p + [0.8, b / 2, b / 2]), color: Palette.aio)
+                }
             case "Hardware" where item.name.hasPrefix("Tail booms"):
                 let len = c.tailArm + c.hStabChord * 0.55 - c.rootChord * 0.15
                 for x in [-c.boomX, c.boomX] {
@@ -166,6 +200,13 @@ enum SceneBuilder {
                     // H sideways (shaft axis), W vertical, L fore-aft – see DesignBuilder.armTip.
                     let size: SIMD3<Double> = [s.h, s.w, s.l]
                     scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.servo)
+                    // Printed servo frame flange around the cutout.
+                    let inWing = abs(p.y) < 0.5
+                    let cut = inWing ? Vec2(s.l + 0.4, s.h + 0.4) : Vec2(s.l + 0.4, s.w + 0.4)
+                    let ring = Mesh3D.extrude(Poly.rect(center: .zero, size: cut + Vec2(5, 5)), holes: [Poly.rect(center: .zero, size: cut)], z0: 0, z1: 1.2)
+                    let placed = inWing ? ring.transformed { q in SIMD3<Double>(p.x + q.y, t / 2 + q.z, p.z + q.x) }
+                                        : ring.transformed { q in SIMD3<Double>(tw / 2 + q.z, p.y + q.y, p.z + q.x) }
+                    scene.addMesh(placed, color: Palette.printed)
                 }
             }
         }

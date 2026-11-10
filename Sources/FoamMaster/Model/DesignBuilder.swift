@@ -100,11 +100,28 @@ enum DesignBuilder {
         var trussLength = 0.0
 
         var t: Double { c.material.thickness }
-        /// Tailless: flat on the wing centre; others: flat against the left side of the upper fuselage over the wing.
+        /// AIO board centre, sitting on the 5.4 mm standoffs of its printed mount.
+        /// Tailless: under the wing left of the keel; others: on the left side of the upper fuselage over the wing.
         var aioPosition: SIMD3<Double> {
-            // Tailless: under the wing on the left of the keel (top is reserved for camera + battery).
-            c.kind.isTailless ? [-(t / 2 + AIOController.boardSize / 2 + 1), -t / 2 - 1, c.rootChord * 0.42]
-                              : [-(t / 2 + 4), t / 2 + AIOController.boardSize / 2 + 2, c.rootChord * 0.3]
+            c.kind.isTailless ? [-(t / 2 + AIOController.boardSize / 2 + 1), -t / 2 - 6.2, c.rootChord * 0.42]
+                              : [-(t / 2 + 6.2), t / 2 + AIOController.boardSize / 2 + 2, c.rootChord * 0.3]
+        }
+        /// ESC size (l × w × h) – bigger motors need bigger ESCs.
+        var escSize: SIMD3<Double> { c.motor.escMass > 4 ? [24, 13, 5] : [18, 10, 4] }
+        /// ESC position for the motor at lateral position x: taped where the motor leads reach it.
+        func escPosition(motorX x: Double) -> SIMD3<Double> {
+            let e = escSize
+            if c.isDual { return [x * 0.8, -t / 2 - e.z / 2, c.rootChord * 0.3] }                       // under the wing behind its motor
+            // Tailless: forward under the wing left of the keel (extend the motor leads) – keeps the CG reachable.
+            if c.kind.isTailless { return [-(t / 2 + e.y / 2 + 2), -t / 2 - e.z / 2, c.rootChord * 0.25] }
+            if c.kind.isTwinBoom { return [-(t / 2 + e.z / 2), -t / 2 - e.y / 2 - 2, c.rootChord * 0.55] } // pod bottom, left side
+            if c.kind.isJet { return [-(t / 2 + e.z / 2), -t / 2 - e.y / 2 - 2, c.firewallZ - e.x / 2 - 6] }
+            return [-(t / 2 + e.z / 2), -t / 2 - e.y / 2 - 2, -c.noseLength + e.x / 2 + 30]               // lower nose, left side
+        }
+        /// Receiver on the left side of the upper fuselage behind the servos (under the wing on tailless).
+        var receiverPosition: SIMD3<Double> {
+            if c.kind.isTailless { return [t / 2 + 7, -t / 2 - 2, c.rootChord * 0.2] }
+            return [-(t / 2 + 2), t / 2 + 12, c.rootChord * (c.kind.isJet ? 0.45 : 0.72)]
         }
         var s: Double { c.semiSpan }
         var propRadius: Double { c.motor.propInches * 25.4 / 2 }
@@ -324,7 +341,7 @@ enum DesignBuilder {
             batteryPos = [0, c.batteryUnderWing ? -t / 2 - b.h / 2 : t / 2 + b.h / 2, c.batteryPosition]
             // Camera on the apex, battery behind it (never on top of each other); VTX under the wing,
             // right of the keel, so the top surface stays free.
-            fpvCamera = [0, t / 2 + 8, c.fpvCameraZ]
+            fpvCamera = [0, t / 2 + 1.2 + c.fpv.cameraWidth / 2, c.fpvCameraZ]
             let v = c.fpv.vtxSize
             fpvVTX = [t / 2 + v.w / 2 + 1, -t / 2 - v.h / 2, c.rootChord * 0.42]
             if c.fpv != .none {
@@ -447,15 +464,19 @@ enum DesignBuilder {
             // --- Upper fuselage half (with fin & rudder) and lower half.
             let hWing = fh * 0.5 - t / 2
             let hNose = fh * 0.4 - t / 2
+            // The nose tapers to the firewall so the clamp-type motor mount covers the whole nose face.
+            let mountHalf = PrintedParts.motorMountPlate(c.motor, foam: t) / 2
+            let noseFront = c.isDual ? hNose * 0.65 : min(hNose * 0.65, max(mountHalf - t / 2 - 0.5, 4))
+            let noseFrontLow = c.isDual ? (fh * 0.5 - t / 2) * 0.55 : min((fh * 0.5 - t / 2) * 0.55, max(mountHalf - t / 2 - 0.5, 4))
             let hBoom = c.boomTopHeight
             let finTop = hBoom + c.vStabHeight
             let finLE = uH - 1.25 * vsc
             if finLE < ub + 10 { issues.append("Fin is too long for the tail arm – fin leading edge reaches the wing.") }
             let rg = c.hasRudder ? TaperedPanel.endGap : 0     // rudder clears the plate / elevator by this gap
             let upper: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0)] + (rg > 0 ? [Vec2(uH, rg)] : []) + [Vec2(uR, rg), Vec2(uR, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
-                                 Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, hNose * 0.65)]
+                                 Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, noseFront)]
             var upperMain: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
-                                     Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, hNose * 0.65)]
+                                     Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, noseFront)]
             let rudder = [Vec2(uH, rg), Vec2(uR, rg), Vec2(uR, finTop), Vec2(uH, finTop)]
             let hasRudder = c.hasRudder
             if !hasRudder { upperMain = upper }
@@ -467,7 +488,7 @@ enum DesignBuilder {
 
             let uL = ta + hsc * 0.35
             let hLowWing = fh * 0.5 - t / 2
-            let lower: [Vec2] = [Vec2(uN, 0), Vec2(uN, -hLowWing * 0.55), Vec2(uN + 0.3 * c.noseLength, -hLowWing), Vec2(c.rootChord * 0.85, -hLowWing),
+            let lower: [Vec2] = [Vec2(uN, 0), Vec2(uN, -noseFrontLow), Vec2(uN + 0.3 * c.noseLength, -hLowWing), Vec2(c.rootChord * 0.85, -hLowWing),
                                  Vec2(uL, -c.lowerTailHeight), Vec2(uL, 0)]
             let loTabs = [uN + max(44, c.noseLength * 0.6), c.rootChord * 0.75, (c.rootChord + ta) / 2 + 15].filter { $0 + 6 < uL }
             var lowerOut = lower
@@ -537,7 +558,9 @@ enum DesignBuilder {
             }
 
             batteryPos = [tw / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
-            fpvCamera = [0, t / 2 + hNose + 8, uN + 14]
+            // Camera clamp sits on the top edge of the nose: interpolate the outline height at the camera station.
+            let camTop = hNose * 0.65 + hNose * 0.35 * min(1, 14 / (0.35 * c.noseLength))
+            fpvCamera = [0, t / 2 + camTop + 1.2 + c.fpv.cameraWidth / 2, uN + 14]
             // VTX flat on the right side of the upper fuselage behind the servos (AIO sits on the left).
             fpvVTX = [tw / 2 + c.fpv.vtxSize.h / 2 + 0.5, t / 2 + hWing * 0.5, c.rootChord * 0.6]
         }
@@ -705,7 +728,7 @@ enum DesignBuilder {
                                                armPosition: armTip(rBody, side: -1), hornAxis: [-1, 0, 0]))
             }
             batteryPos = [tw / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
-            fpvCamera = [0, t / 2 + hCanopy * 0.55, -0.45 * c.noseLength]
+            fpvCamera = [0, t / 2 + hCanopy * 0.58 + 1.2 + c.fpv.cameraWidth / 2, -0.45 * c.noseLength]
             fpvVTX = [tw / 2 + c.fpv.vtxSize.h / 2 + 0.5, t / 2 + hMid * 0.5, c.rootChord * 0.4]
         }
 
@@ -835,7 +858,8 @@ enum DesignBuilder {
                                            armPosition: armTip([0, t / 2 + s2.y, s2.x], side: -1), hornAxis: [1, 0, 0])) }
 
             batteryPos = [t / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
-            fpvCamera = [0, t / 2 + hp * 0.5 + 8, uN + 10]
+            let camTop = hp * 0.5 + hp * 0.4 * min(1, 10 / (0.35 * c.noseLength))
+            fpvCamera = [0, t / 2 + camTop + 1.2 + c.fpv.cameraWidth / 2, uN + 10]
             fpvVTX = [t / 2 + c.fpv.vtxSize.h / 2 + 0.5, t / 2 + hp * 0.45, c.rootChord * 0.55]
         }
 
@@ -849,8 +873,7 @@ enum DesignBuilder {
                 components.append(MassItem(name: c.motor.name + tag, mass: c.motor.mass, position: [x, 0, motorZ], category: "Power"))
                 components.append(MassItem(name: "Propeller\(tag)", mass: c.motor.propInches * 0.35, position: [x, 0, c.propPlaneZ], category: "Power"))
                 components.append(MassItem(name: "Motor mount (printed)\(tag)", mass: 1.5 + c.motor.mass * 0.12, position: [x, 0, c.firewallZ], category: "Printed"))
-                let escZ = c.isDual ? c.rootChord * 0.25 : (pusher ? c.rootChord * 0.15 : -c.noseLength * 0.3)
-                if !c.aio { components.append(MassItem(name: "ESC\(tag)", mass: c.motor.escMass, position: [x * 0.5, 0, escZ], category: "Power")) }
+                if !c.aio { components.append(MassItem(name: "ESC\(tag)", mass: c.motor.escMass, position: escPosition(motorX: x), category: "Power")) }
             }
             if c.isDual {
                 // Mark both motor stations on the wing plan (mount plate + clamp, prop clearance).
@@ -868,7 +891,7 @@ enum DesignBuilder {
             if c.aio {
                 components.append(MassItem(name: "AIO flight controller", mass: AIOController.mass + 1.2, position: aioPosition, category: "Radio"))
             } else {
-                components.append(MassItem(name: "Receiver", mass: 2.5, position: [0, 0, pusher ? c.rootChord * 0.1 : c.rootChord * 0.3], category: "Radio"))
+                components.append(MassItem(name: "Receiver", mass: 2.5, position: receiverPosition, category: "Radio"))
             }
             components.append(MassItem(name: "Wiring & connectors", mass: c.isDual ? 4.5 : 3, position: [0, 0, c.rootChord * 0.15], category: "Radio"))
             components.append(MassItem(name: c.battery.name, mass: c.battery.mass, position: batteryPos, category: "Battery"))

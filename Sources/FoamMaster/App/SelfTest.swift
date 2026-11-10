@@ -129,6 +129,21 @@ enum SelfTest {
                 }
             }
         }
+        // Close-ups of the motor area for visual checks.
+        for (name, kind, dual) in [("trainer", AircraftKind.trainer, false), ("wing", .flyingWing, false), ("dualtrainer", .trainer, true), ("twin", .twinBoom, false)] {
+            var c = kind.defaults; if dual { c.motorLayout = .dualTractor }
+            if name == "wing" { c.fpv = .o4Lite; c.aio = true }
+            c = Project.balanced(c)
+            let d = DesignBuilder.build(c); let a = Analysis(design: d)
+            let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+            if let r = Renderer(view: view) {
+                r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
+                let x = Float(c.motorXs.last ?? 0)
+                r.target = SIMD3<Float>(x, 0, Float(c.firewallZ))
+                r.zoom = 0.22; r.yaw = 0.9; r.pitch = 0.35
+                if let img = r.snapshot(width: 1000, height: 700) { savePNG(img, dir.appendingPathComponent("close_\(name).png")) }
+            }
+        }
         var feasible = 0
         for _ in 0..<20 {
             let c = AircraftConfig.random(kind: AircraftKind.allCases.randomElement()!)

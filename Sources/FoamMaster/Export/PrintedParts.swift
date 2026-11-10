@@ -74,13 +74,22 @@ enum PrintedParts {
     // MARK: Generators (all dimensions in mm)
 
     static let mountPlate = 2.4
+    /// Side length of the square firewall plate of the motor mount.
+    static func motorMountPlate(_ m: MotorClass, foam t: Double) -> Double {
+        max(m.boltCircle + m.screwHole * 2 + 6, m.bellDiameter * 0.8, t + 14)
+    }
     static let mountJaw = 24.0
 
     /// Motor mount matching the aircraft: wing-only clamp for dual tractors, + channel clamp otherwise.
+    /// Motor mount matching the structure it grips:
+    /// dual tractor → wing clamp; flying wing / delta → wing on top, keel slot below;
+    /// fuselage types → + channel for the horizontal plate and both vertical halves.
     static func motorMount(for c: AircraftConfig) -> Mesh3D {
         let t = c.material.thickness
         if c.isDual { return motorMount(c.motor, foam: t, web: 0) }
-        return motorMount(c.motor, foam: t, web: t * Double(c.fuselageType.webLayers))
+        if c.kind.isTailless { return motorMount(c.motor, foam: t, webTop: nil, webBottom: t) }
+        let tw = t * Double(c.fuselageType.webLayers)
+        return motorMount(c.motor, foam: t, webTop: tw, webBottom: tw)
     }
 
     /// Profile extruded along an axis. axis 2: profile (x, y) along z · 1: profile (x, z) along y · 0: profile (y, z) along x.
@@ -99,8 +108,16 @@ enum PrintedParts {
     /// lip at the jaw tips bites into the foam. `web` = vertical web thickness (0 = wing-only clamp).
     static func motorMount(_ m: MotorClass, foam t: Double, web: Double? = nil) -> Mesh3D {
         let tw = web ?? t
+        if tw > 0 { return motorMount(m, foam: t, webTop: tw, webBottom: tw) }
+        return motorMount(m, foam: t, webTop: nil, webBottom: nil)
+    }
+
+    /// `webTop` / `webBottom`: thickness of the vertical web above / below the horizontal surface, or nil when
+    /// there is none (that jaw is then solid across). Both nil = wing-only clamp with a vertical clamp bolt.
+    static func motorMount(_ m: MotorClass, foam t: Double, webTop: Double?, webBottom: Double?) -> Mesh3D {
+        let tw: Double = (webTop == nil && webBottom == nil) ? 0 : 1
         let th = mountPlate, len = mountJaw
-        let plate = max(m.boltCircle + m.screwHole * 2 + 6, m.bellDiameter * 0.8, t + 14)
+        let plate = motorMountPlate(m, foam: t)
         let r = m.boltCircle / 2, e = plate / 2
         var holes: [[Vec2]] = [Poly.circle(.zero, max(2.5, m.boltCircle * 0.28), segments: 32)]
         for k in 0..<4 {
@@ -125,11 +142,17 @@ enum PrintedParts {
             mesh.append(.box(min: [-e, -gapY, th + len - 2], max: [e, -gapY + 0.3, th + len]))
             return mesh
         }
-        // Cross clamp: four corner jaws leave a + channel for the vertical web(s) and the horizontal plate / wing;
-        // the bolt runs sideways through the jaws and the web.
-        let gapX = tw / 2 + 0.1
+        // Cross clamp: corner jaws leave a channel for each vertical web and the horizontal plate / wing;
+        // the bolt runs sideways through the jaws and the web. A side without a web gets one solid jaw.
         for sy in [-1.0, 1.0] {
             let y0 = sy > 0 ? gapY : -e, y1 = sy > 0 ? e : -gapY
+            guard let web = sy > 0 ? webTop : webBottom else {
+                let yIn = sy > 0 ? gapY : -gapY - jaw, yOut = sy > 0 ? gapY + jaw : -gapY
+                mesh.append(.box(min: [-e, min(yIn, yOut), th], max: [e, max(yIn, yOut), th + len]))
+                mesh.append(.box(min: [-e, sy > 0 ? gapY - 0.3 : -gapY, th + len - 2], max: [e, sy > 0 ? gapY : -gapY + 0.3, th + len]))
+                continue
+            }
+            let gapX = web / 2 + 0.1
             let profile = Poly.rect(minU: y0, maxU: y1, minV: th, maxV: th + len)
             let h = bolt(Vec2((y0 + y1) / 2, th + len - 7))
             mesh.append(prism(profile, holes: h, axis: 0, from: gapX, to: e))
