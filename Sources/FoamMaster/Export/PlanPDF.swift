@@ -60,6 +60,7 @@ enum PlanPDF {
             ("Wing loading", "\(f1(a.wingLoading)) g/dm²"), ("Material", c.material.displayName),
             ("CG (from root LE)", "\(Int(a.recommendedCG.rounded())) mm  (\(Int(a.cgRange.lowerBound))–\(Int(a.cgRange.upperBound)))"),
             ("Battery position", "\(Int(c.batteryPosition)) mm from LE"),
+            ("Propeller", c.motor.propRecommendation(cells: c.battery.cells, pusher: c.kind.isPusher)),
             ("Thrust / weight", f1(a.thrustToWeight)), ("Stall speed", "≈\(Int(a.stallSpeed)) km/h"),
             ("Flight time", "≈\(Int(a.flightTime)) min"), ("Feasibility", a.feasible ? "PASSED (score \(a.score))" : "NOT FEASIBLE")
         ]

@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct ParameterPanel: View {
-    var body: some View { ScrollView { ParameterContent() } }
+    /// Top padding keeps the first card clear of the window's traffic-light buttons (hidden title bar).
+    var body: some View { ScrollView { ParameterContent().padding(.top, 26) } }
 }
 
 struct ParameterContent: View {
@@ -39,7 +40,14 @@ struct ParameterContent: View {
                                         range: 12...40, step: 1)
                         }
                         if c.kind.isTailless {
-                            ParamSlider(label: c.kind == .delta ? "Fin height" : "Winglet height", unit: "mm", value: bind(\.wingletHeight), range: range(\.wingletHeight, c), step: 1)
+                            Picker("", selection: bind(\.taillessFins)) {
+                                ForEach(TaillessFins.allCases) { Text($0.name).tag($0) }
+                            }
+                            .pickerStyle(.segmented).labelsHidden()
+                            ParamSlider(label: c.taillessFins == .centreFin ? "Fin height" : "Winglet height", unit: "mm", value: bind(\.wingletHeight), range: range(\.wingletHeight, c), step: 1)
+                            if c.taillessFins == .centreFin {
+                                ParamSlider(label: "Fin position (LE from nose)", unit: "mm", value: bind(\.finPosition), range: 0...max(10, c.rootChord * 0.58 - c.motorNotchDepth - 4), step: 1)
+                            }
                         }
                     }
                     .glass()
@@ -47,13 +55,6 @@ struct ParameterContent: View {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionHeader(title: "Build options", symbol: "slider.horizontal.3")
                         PickerRow(label: "FPV", selection: bind(\.fpv), options: FPVSystem.allCases) { $0 == .none ? $0.name : "\($0.name) · \(Int($0.mass.rounded())) g" }
-                        if c.kind.hasFuselage {
-                            Picker("", selection: bind(\.fuselageType)) {
-                                ForEach(FuselageType.allCases) { Label($0.name, systemImage: $0.symbol).tag($0) }
-                            }
-                            .pickerStyle(.segmented).labelsHidden()
-                            Text(c.fuselageType.detail).font(.system(size: 10)).foregroundStyle(.secondary)
-                        }
                         if !c.kind.isTailless {
                             Picker("", selection: Binding(get: { ControlLayout(ailerons: c.ailerons, rudder: c.rudder) },
                                                           set: { project.config?.ailerons = $0.ailerons; project.config?.rudder = $0.rudder })) {
@@ -104,6 +105,11 @@ struct ParameterContent: View {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionHeader(title: "Electronics", symbol: "bolt.fill")
                         PickerRow(label: "Motor", selection: bind(\.motor), options: MotorClass.allCases) { $0.name }
+                        HStack(spacing: 6) {
+                            Image(systemName: "fanblades.fill").font(.system(size: 10)).foregroundStyle(Theme.accent)
+                            Text("Prop \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.kind.isPusher))")
+                                .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
+                        }.padding(.leading, 62)
                         PickerRow(label: "Battery", selection: bind(\.battery), options: BatteryPack.allCases) { "\($0.name) · \(Int($0.mass)) g" }
                         PickerRow(label: "Servos", selection: bind(\.servo), options: ServoClass.allCases) { $0.name }
                     }

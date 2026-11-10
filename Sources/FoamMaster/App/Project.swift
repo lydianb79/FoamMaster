@@ -26,14 +26,14 @@ final class Project: ObservableObject {
     /// Result of the last balance fix, shown in the CG panel until the design changes.
     @Published var balanceNote: String?
 
-    func start(_ kind: AircraftKind, fpv: FPVSystem? = nil, fuselage: FuselageType? = nil,
+    func start(_ kind: AircraftKind, fpv: FPVSystem? = nil, fins: TaillessFins? = nil,
                ailerons: Bool? = nil, rudder: Bool? = nil, aileronServos: Int = 2) {
         var c = kind.defaults
         if let fpv { c.fpv = fpv }
         if let ailerons { c.ailerons = ailerons }
         if let rudder { c.rudder = rudder }
         c.aileronServos = kind.isTwinBoom ? 2 : aileronServos
-        c.fuselageType = fuselage ?? FixFinder.recommendedStructure(for: c)
+        if let fins { c.taillessFins = fins }
         config = Project.balanced(c)
         inspectorTab = .analysis
     }
@@ -145,6 +145,7 @@ final class Project: ObservableObject {
             c.aileronServos = current.aileronServos
             c.ailerons = current.ailerons
             c.rudder = current.rudder
+            c.taillessFins = current.taillessFins
             c = Project.balanced(c)
             let a = Analysis(design: DesignBuilder.build(c))
             if a.feasible && a.score > bestScore { best = c; bestScore = a.score }

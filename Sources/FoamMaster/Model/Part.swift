@@ -104,6 +104,9 @@ struct ControlSurface {
     var chord: Double = 20
     /// Controls sharing one servo (e.g. both ailerons on torque rods) carry the same id.
     var servoID: String = ""
+    /// Tip of the servo arm (pushrod end at the servo) and the direction the horn sticks out of the surface.
+    var armPosition: SIMD3<Double> = .zero
+    var hornAxis: SIMD3<Double> = [0, 1, 0]
 }
 
 /// Complete derived design: parts plus the components that go into it.

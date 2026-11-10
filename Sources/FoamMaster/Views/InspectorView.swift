@@ -274,7 +274,7 @@ struct StructureCard: View {
             Meter(label: "Wing tip deflection", value: report.wingDeflectionRatio * 100, unit: "%", good: 4, bad: 10,
                   detail: String(format: "%.1f mm", report.wingTipDeflection))
             if let twist = report.tailTwistDeg {
-                Meter(label: "Fuselage twist (rudder)", value: twist, unit: "°", good: 2, bad: 5, detail: config.kind.isTwinBoom ? "twin booms" : config.fuselageType.name)
+                Meter(label: "Fuselage twist (rudder)", value: twist, unit: "°", good: 3, bad: 6, detail: config.kind.isTwinBoom ? "twin booms" : config.fuselageType.name)
             }
             if let bend = report.tailBendDeg {
                 Meter(label: "Tail bend (elevator)", value: bend, unit: "°", good: 1, bad: 3, detail: "carbon chords")

@@ -65,6 +65,14 @@ enum SelfTest {
         let fixes = FixFinder.suggestions(for: bad)
         print("fixes for broken trainer (\(String(format: "%.2f", Date().timeIntervalSince(t0))) s):")
         for f in fixes { print("   \(f.solvesAll ? "✓" : "~") \(f.title) – \(f.detail)") }
+        for m in MotorClass.allCases {
+            let plate = max(m.boltCircle + m.screwHole * 2 + 6, m.bellDiameter * 0.75)
+            var holes: [[Vec2]] = [Poly.circle(.zero, max(2.5, m.boltCircle * 0.28), segments: 32)]
+            for k in 0..<4 { let a = Double(k) * .pi / 2 + .pi / 4; holes.append(Poly.circle(Vec2(cos(a), sin(a)) * m.boltCircle / 2, m.screwHole / 2, segments: 16)) }
+            let tri = Poly.triangulate(outer: Poly.rect(center: .zero, size: Vec2(plate, plate)), holes: holes)
+            let expected = 4 + holes.reduce(0) { $0 + $1.count } + 2 * holes.count - 2
+            print("   tri \(m.rawValue): \(tri.triangles.count / 3) of \(expected)")
+        }
         var feasible = 0
         for _ in 0..<20 {
             let c = AircraftConfig.random(kind: AircraftKind.allCases.randomElement()!)

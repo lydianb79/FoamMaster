@@ -66,6 +66,13 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
         case .m2204: return cells == 2 ? 450 : 620
         }
     }
+    /// Recommended propeller (diameter × pitch in inches) – pitch drops with cell count to keep the current in range.
+    func propRecommendation(cells: Int, pusher: Bool) -> String {
+        let ratio = cells <= 1 ? 0.6 : (cells == 2 ? 0.55 : 0.45)
+        let pitch = (propInches * ratio * 2).rounded() / 2
+        let fmt = { (x: Double) in x == x.rounded() ? String(format: "%.0f", x) : String(format: "%.1f", x) }
+        return "\(fmt(propInches)) × \(fmt(pitch))\" \(pusher ? "pusher (reverse rotation)" : "tractor")"
+    }
     var propInches: Double { [.m0802: 2.5, .m1103: 3, .m1104: 4, .m1306: 5, .m1806: 6, .m2204: 6][self]! }
     /// Motor bolt circle diameter (mm) and screw clearance diameter.
     var boltCircle: Double { [.m0802: 6.6, .m1103: 8.5, .m1104: 9, .m1306: 12, .m1806: 16, .m2204: 16][self]! }
@@ -143,26 +150,29 @@ enum FPVSystem: String, CaseIterable, Identifiable, Codable {
     var power: Double { [.none: 0, .analog: 2.5, .o4Lite: 5.5, .walksnail: 4.5][self]! }
     /// Camera body width (mm) – all three use 14 mm class micro cameras here.
     var cameraWidth: Double { [.none: 0, .analog: 14, .o4Lite: 14, .walksnail: 14][self]! }
+    /// Printed-mount fitting notes per system (camera bodies are 14 mm "nano" class for all three).
+    var mountNote: String {
+        switch self {
+        case .none: return ""
+        case .analog: return "nano 14 mm camera, M2 side screws"
+        case .o4Lite: return "O4 Lite camera 14 mm, M2 side screws – check against your unit"
+        case .walksnail: return "Avatar Mini 1S Lite camera 14 mm, M2 side screws – check against your unit"
+        }
+    }
     var vtxSize: (l: Double, w: Double, h: Double) { [.none: (0, 0, 0), .analog: (20, 14, 5), .o4Lite: (28, 20, 7), .walksnail: (25, 20, 7)][self]! }
 }
 
 // MARK: - Fuselage structure
 
+/// Fuselage construction. Only the RC Factory style cross is offered: horizontal plate + single-layer
+/// upper/lower halves + carbon chords & diagonals (kept as an enum so saved configs stay readable).
 enum FuselageType: String, CaseIterable, Identifiable, Codable {
-    /// Horizontal plate + single-layer upper/lower halves + carbon chords & diagonals.
     case cross
-    /// RC Factory style: the vertical halves are two foam layers laminated side by side (double web).
-    case laminated
     var id: String { rawValue }
-    var name: String { [.cross: "Cross", .laminated: "Laminated cross"][self]! }
-    var detail: String {
-        switch self {
-        case .cross: return "Plate + single-layer halves + carbon truss – light, soft in torsion"
-        case .laminated: return "Halves laminated from 2 layers + carbon truss (RC Factory style)"
-        }
-    }
-    var symbol: String { [.cross: "plus", .laminated: "square.stack.3d.up"][self]! }
-    var webLayers: Int { self == .cross ? 1 : 2 }
+    var name: String { "Cross" }
+    var detail: String { "Horizontal plate + upper & lower halves + carbon truss" }
+    var symbol: String { "plus" }
+    var webLayers: Int { 1 }
 }
 
 extension CarbonSpar {

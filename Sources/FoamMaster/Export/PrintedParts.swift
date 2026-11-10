@@ -24,8 +24,18 @@ enum PrintedParts {
                                mesh: motorMount(c.motor, foam: t, web: c.kind.hasFuselage ? t * Double(c.fuselageType.webLayers) : t),
                                note: c.kind.isTailless ? "clamps on the wing trailing edge" : (c.kind.isTwinBoom ? "clamps on the pod tail" : "clamps on the fuselage nose")))
         if c.fpv != .none {
-            out.append(PrintedPart(name: "FPV camera mount", fileName: "camera_mount_\(Int(c.fpv.cameraWidth))mm", quantity: 1,
-                                   mesh: cameraMount(width: c.fpv.cameraWidth), note: "\(Int(c.fpv.cameraWidth)) mm camera, M2 side screws, 15° up-tilt"))
+            // Tailed aircraft: saddle that slides over the top edge of the vertical fuselage at the nose.
+            // Tailless: flat base glued on the wing apex.
+            let saddle: Double? = c.kind.isTailless ? nil : t
+            let tilt = c.kind.cameraTilt
+            out.append(PrintedPart(name: "FPV camera mount (\(c.fpv.name))", fileName: "camera_mount_\(c.fpv.rawValue)_\(Int(tilt))deg", quantity: 1,
+                                   mesh: cameraMount(width: c.fpv.cameraWidth, tilt: tilt, saddleWeb: saddle),
+                                   note: "\(c.fpv.mountNote), \(Int(tilt))° up-tilt, \(saddle == nil ? "flat base for the wing apex" : "saddle for the \(Int(t)) mm fuselage edge")"))
+            let v = c.fpv.vtxSize
+            out.append(PrintedPart(name: "VTX tray (\(c.fpv.name))", fileName: "vtx_tray_\(c.fpv.rawValue)", quantity: 1,
+                                   mesh: vtxTray(length: v.l, width: v.w, height: v.h), note: "\(Int(v.l)) × \(Int(v.w)) mm pocket, zip-tie slots"))
+            out.append(PrintedPart(name: "Antenna holder", fileName: "antenna_holder", quantity: 1,
+                                   mesh: antennaHolder(), note: "keeps the antenna vertical and away from carbon"))
         }
 
         if !d.controls.isEmpty {
@@ -104,11 +114,17 @@ enum PrintedParts {
         return mesh
     }
 
-    static func cameraMount(width w: Double) -> Mesh3D {
+    static func cameraMount(width w: Double, tilt: Double = 15, saddleWeb: Double? = nil) -> Mesh3D {
         let inner = w + 0.4, wall = 1.4, base = 1.2, h = w * 0.8
         var mesh = Mesh3D.box(min: [-inner / 2 - wall, -8, 0], max: [inner / 2 + wall, 8, base])
-        // Side cheeks (YZ profile, tilted 15° back) with an M2 screw hole.
-        let a = 15.0 * .pi / 180
+        if let web = saddleWeb {
+            // Two skirts under the base form a slot that grips the fuselage top edge.
+            let gap = web / 2 + 0.15
+            mesh.append(.box(min: [gap, -8, -6], max: [gap + 1.2, 8, 0]))
+            mesh.append(.box(min: [-gap - 1.2, -8, -6], max: [-gap, 8, 0]))
+        }
+        // Side cheeks (YZ profile, tilted back by the up-tilt) with an M2 screw hole.
+        let a = tilt * .pi / 180
         let profile = [Vec2(-8, 0), Vec2(8, 0), Vec2(8 + h * tan(a), h), Vec2(-8 + h * tan(a), h)]
         let hole = [Poly.circle(Vec2(h * 0.6 * tan(a), h * 0.6), 1.1, segments: 14)]
         for x in [-inner / 2 - wall, inner / 2] {
@@ -117,6 +133,21 @@ enum PrintedParts {
             // (u, v, w) → (w, u, v) is a cyclic axis swap, i.e. a proper rotation: normals stay outward.
             mesh.append(cheek)
         }
+        return mesh
+    }
+
+    static func vtxTray(length l: Double, width w: Double, height h: Double) -> Mesh3D {
+        let L = l + 3, W = w + 3
+        let slots = [Poly.rect(center: Vec2(-L / 2 + 3, 0), size: Vec2(1.8, W * 0.6)), Poly.rect(center: Vec2(L / 2 - 3, 0), size: Vec2(1.8, W * 0.6))]
+        var mesh = Mesh3D.extrude(Poly.rect(center: .zero, size: Vec2(L, W)), holes: slots, z0: 0, z1: 1.2)
+        let rim = max(2, h * 0.4)
+        mesh.append(.extrude(Poly.rect(center: .zero, size: Vec2(L, W)), holes: [Poly.rect(center: .zero, size: Vec2(L - 2.4, W - 2.4))], z0: 1.2, z1: 1.2 + rim))
+        return mesh
+    }
+
+    static func antennaHolder() -> Mesh3D {
+        var mesh = Mesh3D.box(min: [-6, -6, 0], max: [6, 6, 1.2])
+        mesh.append(.extrude(Poly.circle(.zero, 3.6, segments: 24), holes: [Poly.circle(.zero, 2.2, segments: 24)], z0: 1.2, z1: 14))
         return mesh
     }
 

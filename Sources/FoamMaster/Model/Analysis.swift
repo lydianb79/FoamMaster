@@ -235,9 +235,10 @@ struct Analysis {
         if let bend = st.tailBendDeg, let twist = st.tailTwistDeg {
             let speed = f0(st.loadSpeed)
             let twistFix = c.kind.isTwinBoom ? "Increase the boom spacing (stab span) or shorten the tail arm."
-                : (c.fuselageType == .cross ? "Choose “Laminated cross”, increase fuselage height or shorten the tail arm." : "Increase fuselage height, stiffer foam or shorten the tail arm.")
-            if twist >= 5 { add(.error, "Structure", "Fuselage twists too much", "\(f1(twist))° twist at full rudder, \(speed) km/h – the tail will flutter and rudder input rolls the plane. \(twistFix)") }
-            else if twist >= 2 { add(.warning, "Structure", "Fuselage is soft in torsion", "\(f1(twist))° twist at full rudder, \(speed) km/h. \(twistFix)") }
+                : "Increase fuselage height, use thicker/stiffer foam or shorten the tail arm."
+            // Worst case: full rudder at twice the stall speed.
+            if twist >= 6 { add(.error, "Structure", "Fuselage twists too much", "\(f1(twist))° twist at full rudder, \(speed) km/h – the tail will flutter and rudder input rolls the plane. \(twistFix)") }
+            else if twist >= 3 { add(.warning, "Structure", "Fuselage is soft in torsion", "\(f1(twist))° twist at full rudder, \(speed) km/h. \(twistFix)") }
             else { add(.ok, "Structure", "Torsion OK", "\(f1(twist))° twist at full rudder, \(speed) km/h (\(c.kind.isTwinBoom ? "twin booms" : c.fuselageType.name)).") }
             let bendFix = c.kind.isTwinBoom ? "Shorten the tail arm or use a smaller stabiliser." : "Increase fuselage height or shorten the tail arm."
             if bend >= 3 { add(.error, "Structure", "Tail boom bends too much", "\(f1(bend))° tail deflection at full elevator. \(bendFix)") }

@@ -60,7 +60,8 @@ enum BuildDocs {
 
         items.append(BOMItem(category: "Electronics", item: c.motor.name, spec: "\(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S, ~\(Int(a.thrust)) g thrust", quantity: "1×"))
         items.append(BOMItem(category: "Electronics", item: "ESC", spec: "\(c.motor.escMass > 4 ? 12 : 6) A, \(c.battery.cells)S", quantity: "1×"))
-        items.append(BOMItem(category: "Electronics", item: "Propeller \(String(format: "%.1f", c.motor.propInches))\"", spec: c.kind.isPusher ? "Pusher (reverse) prop" : "Tractor prop", quantity: "2× (spare)"))
+        items.append(BOMItem(category: "Electronics", item: "Propeller \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.kind.isPusher))",
+                             spec: "Recommended for the \(c.motor.name) on \(c.battery.cells)S – balance before use", quantity: "2× (spare)"))
         items.append(BOMItem(category: "Electronics", item: c.battery.name, spec: "\(c.battery.mass) g", quantity: "1×"))
         items.append(BOMItem(category: "Electronics", item: c.servo.name, spec: "\(c.servo.torque) kg·cm", quantity: "\(servoCount)×"))
         items.append(BOMItem(category: "Electronics", item: "Receiver", spec: "\(max(4, servoCount + 1))+ channels, micro", quantity: "1×"))
@@ -90,7 +91,7 @@ enum BuildDocs {
         }
         if c.kind.hasFuselage {
             s.append(BuildStep(title: "Join the wing halves to the fuselage plate", text: "Push the wing-half tabs into the notches in the plate sides and glue with foam-safe CA. Then slit the spar lines on the top and the bottom and glue one carbon strip into each – the strips run across the plate and lock the joint.", symbol: "rectangle.split.3x1"))
-            s.append(BuildStep(title: "Fuselage top & bottom halves", text: "Press the tabs of the top half into the centre-line slots of the plate, then the bottom half from below. Check both halves are exactly 90° to the plate and in line – this + section is what makes the fuselage stiff.\(c.fuselageType == .laminated ? " Glue the doubler layers on both sides of the front fuselage." : "")", symbol: "plus"))
+            s.append(BuildStep(title: "Fuselage top & bottom halves", text: "Press the tabs of the top half into the centre-line slots of the plate, then the bottom half from below. Check both halves are exactly 90° to the plate and in line – this + section is what makes the fuselage stiff.", symbol: "plus"))
             s.append(BuildStep(title: "Carbon truss", text: "Cut shallow slits along the zig-zag lines on both sides of the top and bottom halves and glue in 3 × 0.5 mm carbon strips. Wick thin CA into every corner where the strips meet.", symbol: "triangle"))
         }
         if c.kind.isJet {

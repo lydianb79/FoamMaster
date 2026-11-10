@@ -161,10 +161,27 @@ enum Poly {
 
     // MARK: - Triangulation (ear clipping with hole bridging)
 
+    /// Triangulates a polygon with holes. The result is verified against the topology
+    /// (n + 2h − 2 triangles); on failure other bridge choices / hole orders are tried.
     static func triangulate(outer: [Vec2], holes: [[Vec2]] = []) -> (points: [Vec2], triangles: [Int]) {
+        let hs = holes.filter { $0.count >= 3 }
+        let expected = outer.count + hs.reduce(0) { $0 + $1.count } + 2 * hs.count - 2
+        var best: (points: [Vec2], triangles: [Int])?
+        for reverseOrder in [false, true] {
+            for skip in 0..<4 {
+                let r = triangulate(outer: outer, holes: hs, skip: skip, reverseOrder: reverseOrder)
+                if r.triangles.count / 3 == expected { return r }
+                if best == nil || r.triangles.count > best!.triangles.count { best = r }
+            }
+        }
+        return best!
+    }
+
+    private static func triangulate(outer: [Vec2], holes: [[Vec2]], skip: Int, reverseOrder: Bool) -> (points: [Vec2], triangles: [Int]) {
         var poly = ccw(outer)
-        let hs = holes.map { cw($0) }.filter { $0.count >= 3 }
+        var hs = holes.map { cw($0) }.filter { $0.count >= 3 }
             .sorted { ($0.map(\.x).max() ?? 0) > ($1.map(\.x).max() ?? 0) }
+        if reverseOrder { hs.reverse() }
 
         for (hi, hole) in hs.enumerated() {
             let mi = hole.indices.max { hole[$0].x < hole[$1].x }!
@@ -172,6 +189,7 @@ enum Poly {
             let remaining = Array(hs[(hi + 1)...])
             let candidates = poly.indices.sorted { simd_distance(poly[$0], m) < simd_distance(poly[$1], m) }
             var chosen = candidates.first!
+            var valid = 0
             search: for vi in candidates {
                 let v = poly[vi]
                 for i in 0..<poly.count {
@@ -187,7 +205,8 @@ enum Poly {
                     }
                 }
                 chosen = vi
-                break
+                if valid >= skip { break }
+                valid += 1
             }
             var rotated = Array(hole[mi...] + hole[..<mi])
             rotated.append(m)

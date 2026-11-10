@@ -98,9 +98,9 @@ struct GalleryContent: View {
         }
         .padding(48)
         .sheet(item: $selected) { kind in
-            SetupSheet(preview: previews.first { $0.kind == kind }!) { fpv, fuselage, layout, servos in
+            SetupSheet(preview: previews.first { $0.kind == kind }!) { fpv, fins, layout, servos in
                 selected = nil
-                project.start(kind, fpv: fpv, fuselage: fuselage, ailerons: layout.ailerons, rudder: layout.rudder, aileronServos: servos)
+                project.start(kind, fpv: fpv, fins: fins, ailerons: layout.ailerons, rudder: layout.rudder, aileronServos: servos)
             } cancel: { selected = nil }
         }
     }
@@ -186,26 +186,26 @@ enum ControlLayout: String, CaseIterable, Hashable {
 /// Options asked for when a base model is picked.
 struct SetupSheet: View {
     var preview: ModelPreview
-    var start: (FPVSystem, FuselageType, ControlLayout, Int) -> Void
+    var start: (FPVSystem, TaillessFins, ControlLayout, Int) -> Void
     var cancel: () -> Void
     @State private var fpv: FPVSystem
-    @State private var fuselage: FuselageType
+    @State private var fins: TaillessFins
     @State private var layout: ControlLayout
     @State private var servos = 2
 
-    init(preview: ModelPreview, start: @escaping (FPVSystem, FuselageType, ControlLayout, Int) -> Void, cancel: @escaping () -> Void) {
+    init(preview: ModelPreview, start: @escaping (FPVSystem, TaillessFins, ControlLayout, Int) -> Void, cancel: @escaping () -> Void) {
         self.preview = preview
         self.start = start
         self.cancel = cancel
         let d = preview.kind.defaults
         _fpv = State(initialValue: d.fpv)
         _layout = State(initialValue: ControlLayout(ailerons: d.ailerons, rudder: d.rudder))
-        _fuselage = State(initialValue: FixFinder.recommendedStructure(for: d))
+        _fins = State(initialValue: d.taillessFins)
     }
 
     private var candidate: AircraftConfig {
         var c = preview.kind.defaults
-        c.fpv = fpv; c.fuselageType = fuselage
+        c.fpv = fpv; c.taillessFins = fins
         c.ailerons = layout.ailerons; c.rudder = layout.rudder
         c.aileronServos = preview.kind.isTwinBoom ? 2 : servos
         return c
@@ -232,6 +232,7 @@ struct SetupSheet: View {
             OptionGroup(title: "Control surfaces", symbol: "slider.horizontal.below.square.filled.and.square") {
                 if kind.isTailless {
                     Text("Tailless: two elevons (combined aileron + elevator), one servo each.").font(.system(size: 11)).foregroundStyle(.secondary)
+                    OptionTiles(selection: $fins, options: TaillessFins.allCases, title: \.name, detail: \.detail, tint: kind.tint)
                 } else {
                     OptionTiles(selection: $layout, options: ControlLayout.allCases, title: \.title, detail: \.detail, tint: kind.tint)
                     if layout.ailerons && !kind.isTwinBoom {
@@ -253,18 +254,6 @@ struct SetupSheet: View {
             OptionGroup(title: "FPV system", symbol: "video.fill") {
                 OptionTiles(selection: $fpv, options: FPVSystem.allCases, title: \.name, detail: { $0 == .none ? $0.detail : "\(String(format: "%.0f", $0.mass)) g · \(String(format: "%.1f", $0.power)) W" }, tint: kind.tint)
             }
-            if kind.hasFuselage {
-                OptionGroup(title: "Fuselage structure", symbol: "square.split.2x2") {
-                    OptionTiles(selection: $fuselage, options: FuselageType.allCases, title: \.name, detail: { f in
-                        var c = candidate; c.fuselageType = f
-                        let st = StructureReport(c, totalMass: Analysis(design: DesignBuilder.build(c)).totalMass, stallSpeed: 16)
-                        let twist = st.tailTwistDeg ?? 0
-                        return "\(String(format: "%.1f", twist))° twist · " + (twist < 2 ? "stiff" : (twist < 5 ? "soft" : "too soft"))
-                    }, tint: kind.tint)
-                    Text(fuselage.detail).font(.system(size: 10.5)).foregroundStyle(.secondary)
-                }
-            }
-
             }
             .padding(.trailing, 6)
             }
@@ -273,7 +262,7 @@ struct SetupSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
-                PillButton(title: "Start building", symbol: "arrow.right.circle.fill", prominent: true) { start(fpv, fuselage, layout, servos) }
+                PillButton(title: "Start building", symbol: "arrow.right.circle.fill", prominent: true) { start(fpv, fins, layout, servos) }
                     .keyboardShortcut(.defaultAction)
             }
         }

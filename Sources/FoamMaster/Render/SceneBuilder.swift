@@ -50,6 +50,7 @@ enum Palette {
     static let servo = SIMD4<Float>(0.2, 0.45, 0.95, 1)
     static let printed = SIMD4<Float>(0.07, 0.07, 0.08, 1)
     static let vtx = SIMD4<Float>(0.2, 0.75, 0.45, 1)
+    static let prop = SIMD4<Float>(0.78, 0.8, 0.84, 1)
     static let cg = SIMD4<Float>(1.0, 0.2, 0.6, 1)
     static let edge = SIMD4<Float>(0.1, 0.12, 0.18, 0.55)
     static let grid = SIMD4<Float>(0.4, 0.7, 1.0, 0.12)
@@ -111,7 +112,8 @@ enum SceneBuilder {
                     let a0 = Double(k) / 48 * 2 * .pi, a1 = Double(k + 1) / 48 * 2 * .pi
                     scene.addLine([cos(a0) * pr, sin(a0) * pr, z], [cos(a1) * pr, sin(a1) * pr, z], color: SIMD4(1, 1, 1, 0.25))
                 }
-                scene.addMesh(Mesh3D.box(min: [-pr, -3, z - 0.6], max: [pr, 3, z + 0.6]).rotated(0.5, axis: [0, 0, 1]), color: SIMD4(0.15, 0.15, 0.18, 1))
+                // Propeller is a bought part – light grey, not printed black.
+                scene.addMesh(Mesh3D.box(min: [-pr, -3, z - 0.6], max: [pr, 3, z + 0.6]).rotated(0.5, axis: [0, 0, 1]), color: Palette.prop)
             case "FPV":
                 if item.name.hasPrefix("FPV camera") {
                     let w = c.fpv.cameraWidth
@@ -125,8 +127,8 @@ enum SceneBuilder {
                 }
             case "Printed":
                 let size: SIMD3<Double>
+                if item.name.hasPrefix("Horn") { continue }   // drawn with its linkage below
                 if item.name.hasPrefix("Motor mount") { let m = c.motor.bellDiameter * 0.8; size = [m, m, 6] }
-                else if item.name.hasPrefix("Horn") { size = [1.4, 9, 9] }
                 else if item.name.hasPrefix("Camera mount") { size = [c.fpv.cameraWidth + 3, 2, 16] }
                 else { size = [40, 2, 20] }
                 scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.printed)
@@ -143,7 +145,19 @@ enum SceneBuilder {
                 }
             }
         }
-        for ctrl in d.controls { scene.addLine(ctrl.servoPosition, ctrl.hornPosition, color: SIMD4(0.9, 0.9, 0.95, 0.8)) }
+        // Linkages: servo arm (white), pushrod, and the printed horn standing out of the surface.
+        for ctrl in d.controls {
+            let arm = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition
+            let shaft = arm - [0, 10, 0]
+            scene.addMesh(.box(min: simd_min(shaft, arm) - [0.8, 0, 2], max: simd_max(shaft, arm) + [0.8, 0, 2]), color: SIMD4(0.95, 0.95, 0.95, 1))
+            scene.addLine(arm, ctrl.hornPosition, color: SIMD4(0.9, 0.9, 0.95, 0.9))
+            let a = ctrl.hornAxis
+            let base = ctrl.hornPosition - a * 9
+            let lo = simd_min(base, ctrl.hornPosition), hi = simd_max(base, ctrl.hornPosition)
+            // Horn plate lies in the plane of the pushrod motion (contains the horn axis and the flight direction).
+            let thin: SIMD3<Double> = abs(a.y) > 0.5 ? [0.7, 0, 0] : [0, 0.7, 0]
+            scene.addMesh(.box(min: lo - thin - [0, 0, 5], max: hi + thin + [0, 0, 5]), color: Palette.printed)
+        }
 
         scene.fitBounds()
 
