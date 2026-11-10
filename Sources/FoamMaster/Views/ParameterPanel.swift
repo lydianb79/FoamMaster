@@ -1,8 +1,15 @@
 import SwiftUI
 
 struct ParameterPanel: View {
-    /// Top padding keeps the first card clear of the window's traffic-light buttons (hidden title bar).
-    var body: some View { ScrollView { ParameterContent().padding(.top, 26) } }
+    /// The scroll area starts below the window's traffic-light buttons (hidden title bar), so cards never
+    /// scroll underneath them.
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: 30)
+            ScrollView { ParameterContent() }
+                .clipped()
+        }
+    }
 }
 
 struct ParameterContent: View {
@@ -90,6 +97,30 @@ struct ParameterContent: View {
                     }
                     .glass()
 
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionHeader(title: "Electronics", symbol: "bolt.fill")
+                        PickerRow(label: "Motor", selection: bind(\.motor), options: MotorClass.allCases) { $0.name }
+                        HStack(spacing: 6) {
+                            Image(systemName: "fanblades.fill").font(.system(size: 10)).foregroundStyle(Theme.accent)
+                            Text("Prop \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.isPusher, blades: c.kind.propBlades, pair: c.isDual))")
+                                .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
+                        }.padding(.leading, 62)
+                        Text(c.kind.propBladeReason).font(.system(size: 9.5)).foregroundStyle(.tertiary).padding(.leading, 78)
+                        PickerRow(label: "Battery", selection: bind(\.battery), options: BatteryPack.allCases) { "\($0.name) · \(Int($0.mass)) g" }
+                        PickerRow(label: "Servos", selection: bind(\.servo), options: ServoClass.allCases) { $0.name }
+                        HStack {
+                            Text("Control").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary).frame(width: 58, alignment: .leading)
+                            Picker("", selection: bind(\.aio)) {
+                                Text(c.isDual ? "ESCs + RX" : "ESC + RX").tag(false)
+                                Text("AIO FC").tag(true)
+                            }
+                            .pickerStyle(.segmented).labelsHidden()
+                        }
+                        Text(c.aio ? "FC + receiver + ESCs on one 26 × 26 mm board – printed mount included" : "Separate ESC\(c.isDual ? "s" : "") and receiver")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).padding(.leading, 62)
+                    }
+                    .glass()
+
                     if !c.kind.isTailless {
                         VStack(alignment: .leading, spacing: 10) {
                             SectionHeader(title: c.kind.isTwinBoom ? "Pod, booms & tail" : "Fuselage & Tail", symbol: "arrow.left.and.right")
@@ -114,30 +145,6 @@ struct ParameterContent: View {
                             }
                         }
                         .toggleStyle(.switch).tint(Theme.accent)
-                    }
-                    .glass()
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionHeader(title: "Electronics", symbol: "bolt.fill")
-                        PickerRow(label: "Motor", selection: bind(\.motor), options: MotorClass.allCases) { $0.name }
-                        HStack(spacing: 6) {
-                            Image(systemName: "fanblades.fill").font(.system(size: 10)).foregroundStyle(Theme.accent)
-                            Text("Prop \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.isPusher, blades: c.kind.propBlades, pair: c.isDual))")
-                                .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
-                        }.padding(.leading, 62)
-                        Text(c.kind.propBladeReason).font(.system(size: 9.5)).foregroundStyle(.tertiary).padding(.leading, 78)
-                        PickerRow(label: "Battery", selection: bind(\.battery), options: BatteryPack.allCases) { "\($0.name) · \(Int($0.mass)) g" }
-                        PickerRow(label: "Servos", selection: bind(\.servo), options: ServoClass.allCases) { $0.name }
-                        HStack {
-                            Text("Control").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary).frame(width: 58, alignment: .leading)
-                            Picker("", selection: bind(\.aio)) {
-                                Text(c.isDual ? "ESCs + RX" : "ESC + RX").tag(false)
-                                Text("AIO FC").tag(true)
-                            }
-                            .pickerStyle(.segmented).labelsHidden()
-                        }
-                        Text(c.aio ? "FC + receiver + ESCs on one 26 × 26 mm board – printed mount included" : "Separate ESC\(c.isDual ? "s" : "") and receiver")
-                            .font(.system(size: 10)).foregroundStyle(.secondary).padding(.leading, 62)
                     }
                     .glass()
 

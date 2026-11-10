@@ -277,7 +277,7 @@ struct StructureCard: View {
                 Meter(label: "Fuselage twist (rudder)", value: twist, unit: "°", good: 3, bad: 6, detail: config.kind.isTwinBoom ? "twin booms" : config.fuselageType.name)
             }
             if let bend = report.tailBendDeg {
-                Meter(label: "Tail bend (elevator)", value: bend, unit: "°", good: 1, bad: 3, detail: "carbon chords")
+                Meter(label: "Tail bend (elevator)", value: bend, unit: "°", good: 1, bad: 3, detail: "foam cross section")
             }
         }
         .glass()

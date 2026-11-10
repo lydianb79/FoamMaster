@@ -44,9 +44,6 @@ enum BuildDocs {
         if c.isDual {
             items.append(BOMItem(category: "Carbon", item: "Carbon flat strip 3 × 0.5 mm", spec: "Leading-edge reinforcement between the motors, \(Int(c.dualMotorX * 2 + 40)) mm", quantity: "1×"))
         }
-        if c.kind.isJet {
-            items.append(BOMItem(category: "Carbon", item: "Carbon rod Ø0.8 mm", spec: "X-bracing across the wing centre, 2 × \(Int(c.rootChord + c.semiSpan * 0.5)) mm", quantity: "2×"))
-        }
         if c.hasAilerons && c.aileronServos == 1 {
             items.append(BOMItem(category: "Hardware", item: "Steel wire Ø1 mm torque rods", spec: "2 × 70 mm, L-bent into the aileron leading edges, brass tube bearings 2 × 15 mm", quantity: "2×"))
         }
@@ -101,10 +98,9 @@ enum BuildDocs {
         if c.kind.hasFuselage {
             s.append(BuildStep(title: "Join the wing halves to the fuselage plate", text: "Push the wing-half tabs into the notches in the plate sides and glue with foam-safe CA. Then slit the spar lines on the top and the bottom and glue one carbon strip into each – the strips run across the plate and lock the joint.", symbol: "rectangle.split.3x1"))
             s.append(BuildStep(title: "Fuselage top & bottom halves", text: "Press the tabs of the top half into the centre-line slots of the plate, then the bottom half from below. Check both halves are exactly 90° to the plate and in line – this + section is what makes the fuselage stiff.", symbol: "plus"))
-            s.append(BuildStep(title: "Carbon truss", text: "Cut shallow slits along the zig-zag lines on both sides of the top and bottom halves and glue in 3 × 0.5 mm carbon strips. Wick thin CA into every corner where the strips meet.", symbol: "triangle"))
         }
         if c.kind.isJet {
-            s.append(BuildStep(title: "Wing, nose and tail plates", text: "Glue the Ø0.8 mm carbon rods into the X-bracing lines and the spar strips top and bottom. Key the pointed nose plate into the leading edge and the tail plate into the trailing edge – this gives one flat piece from nose to tail.", symbol: "rectangle.split.3x1"))
+            s.append(BuildStep(title: "Wing, nose and tail plates", text: "Glue the spar strips into the top and bottom of the wing. Key the pointed nose plate into the leading edge and the tail plate into the trailing edge – this gives one flat piece from nose to tail.", symbol: "rectangle.split.3x1"))
             s.append(BuildStep(title: "Fuselage halves & prop slot", text: "Glue the front and rear top halves and the bottom halves on with their tabs. The halves stop either side of the prop slot – keep the slot free so the prop spins through the wing.", symbol: "plus"))
             s.append(BuildStep(title: "Mid-mounted motor", text: "Push the + shaped motor mount onto the rear end of the front fuselage halves so the prop sits in the middle of the slot. Check the prop clears the slot edges all round.", symbol: "fanblades"))
         }

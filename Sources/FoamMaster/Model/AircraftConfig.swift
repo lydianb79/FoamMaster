@@ -134,18 +134,18 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
             c.controlChordPct = 0.24
             c.fuselageLength = 560; c.fuselageHeight = 92; c.noseLength = 190; c.tailArm = 330
             c.hStabSpan = 250; c.hStabChord = 92; c.vStabHeight = 95; c.vStabChord = 105
-            c.material = .depron5; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
+            c.material = .depron6; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
         case .trainer:
             c.wingspan = 600; c.rootChord = 130; c.tipChord = 105; c.sweep = 12; c.dihedral = 0
             c.fuselageLength = 480; c.fuselageHeight = 84; c.noseLength = 95; c.tailArm = 270
             c.hStabSpan = 200; c.hStabChord = 70; c.vStabHeight = 80; c.vStabChord = 75
-            c.material = .depron5; c.motor = .m1104; c.battery = .s2_300; c.servo = .g25
+            c.material = .depron6; c.motor = .m1104; c.battery = .s2_300; c.servo = .g25
         case .aerobat:
             c.wingspan = 560; c.rootChord = 190; c.tipChord = 150; c.sweep = 20; c.dihedral = 0
             c.controlChordPct = 0.32
             c.fuselageLength = 560; c.fuselageHeight = 135; c.noseLength = 110; c.tailArm = 290
-            c.hStabSpan = 250; c.hStabChord = 110; c.vStabHeight = 120; c.vStabChord = 120
-            c.material = .depron5; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
+            c.hStabSpan = 250; c.hStabChord = 110; c.vStabHeight = 100; c.vStabChord = 105
+            c.material = .depron6; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
         case .glider:
             c.wingspan = 600; c.rootChord = 95; c.tipChord = 60; c.sweep = 15; c.dihedral = 0
             c.fuselageLength = 470; c.fuselageHeight = 92; c.noseLength = 62; c.tailArm = 265

@@ -68,22 +68,10 @@ struct StructureReport {
         let H = hu + t + hl
         let W = c.fuselagePlateWidth, wb = c.plateTailWidth, wp = (W + wb) / 2
         // Bending: foam web + 4 carbon chords (top/bottom edge, both sides) + optional tube near the axis.
-        let chordArm = H / 2 - 1.5
-        var EIv = E * tw * H * H * H / 12 + Self.carbonE * 4 * 1.5 * chordArm * chordArm
+        // Foam only – the fuselage carries no carbon (only the wing spar is carbon).
+        let EIv = E * tw * H * H * H / 12 + E * wp * t * t * t / 12
         // Torsion: open thin-walled section Σ b·t³/3 (laminated layers act as one thick web).
-        var GJ = G * ((hu + hl) * tw * tw * tw / 3 + wp * t * t * t / 3)
-        // Carbon truss on BOTH faces of each vertical half turns it into a sandwich: the diagonals give the
-        // faces a high in-plane shear stiffness (Gt)eq = E·A·h·cos²φ / (L·s) per Warren panel, the foam core
-        // closes the cell (Bredt: GJ = 4A² / ∮ds/(Gt)). 30 % is kept for glue compliance and strip spacing.
-        func trussCell(_ h: Double) -> Double {
-            guard h > 6 else { return 0 }
-            let hb = h - 5, panel = 32.0, L = (panel * panel + hb * hb).squareRoot()
-            let faceGt = Self.carbonE * 1.5 * hb * (panel / L) * (panel / L) / (L * panel)
-            let area = hb * tw
-            let path = 2 * hb / faceGt + 2 * tw / (G * hb / 2)
-            return 0.3 * 4 * area * area / path
-        }
-        GJ += trussCell(hu) + trussCell(hl)
+        let GJ = G * ((hu + hl) * tw * tw * tw / 3 + wp * t * t * t / 3)
         bendingStiffness = EIv
         torsionStiffness = GJ
         tailBendDeg = Fh * boom * boom / (2 * EIv) * 180 / .pi

@@ -252,7 +252,7 @@ struct Analysis {
             let bendFix = c.kind.isTwinBoom ? "Shorten the tail arm or use a smaller stabiliser." : "Increase fuselage height or shorten the tail arm."
             if bend >= 3 { add(.error, "Structure", "Tail boom bends too much", "\(f1(bend))° tail deflection at full elevator. \(bendFix)") }
             else if bend >= 1 { add(.warning, "Structure", "Tail boom flexes", "\(f1(bend))° tail deflection at full elevator. \(bendFix)") }
-            else { add(.ok, "Structure", "Boom bending OK", "\(String(format: "%.2f", bend))° tail deflection at full elevator (carbon chords).") }
+            else { add(.ok, "Structure", "Boom bending OK", "\(String(format: "%.2f", bend))° tail deflection at full elevator.") }
         }
 
         // Propeller clearance

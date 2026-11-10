@@ -186,7 +186,7 @@ enum FuselageType: String, CaseIterable, Identifiable, Codable {
     case cross
     var id: String { rawValue }
     var name: String { "Cross" }
-    var detail: String { "Horizontal plate + upper & lower halves + carbon truss" }
+    var detail: String { "Horizontal plate + upper & lower halves, keyed with tabs" }
     var symbol: String { "plus" }
     var webLayers: Int { 1 }
 }

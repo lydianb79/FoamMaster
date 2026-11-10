@@ -75,7 +75,7 @@ extension AircraftConfig {
 /// Construction follows the multi-layer style of commercial flat-foam kits:
 /// conventional aircraft get a full-length horizontal fuselage plate (with the stabiliser as
 /// part of it) and upper/lower vertical fuselage halves glued on with tabs, wing halves keyed
-/// into the plate sides, carbon spars top + bottom and a carbon truss on the fuselage sides.
+/// into the plate sides and carbon spars top + bottom in the wing.
 enum DesignBuilder {
     static let slotClearance = 0.15
 
@@ -172,27 +172,9 @@ enum DesignBuilder {
             return [.spar(Vec2(w.le(v0) + 0.3 * w.chord(v0), v0), Vec2(w.le(v1) + 0.3 * w.chord(v1), v1), c.sparSpec.widthMM)]
         }
 
-        /// Carbon truss (3 × 0.5 mm strips) on both sides of a vertical part: two straight chords
-        /// along the edges plus zig-zag diagonals between them – a Warren girder like the kits use.
-        mutating func truss(from u0: Double, to u1: Double, low: (Double) -> Double, high: (Double) -> Double) -> [Feature] {
-            guard u1 - u0 > 30 else { return [] }
-            let n = max(2, Int((u1 - u0) / 32))
-            var f: [Feature] = []
-            var prev = Vec2(u0, low(u0))
-            for i in 1...n {
-                let u = u0 + (u1 - u0) * Double(i) / Double(n)
-                let uPrev = u0 + (u1 - u0) * Double(i - 1) / Double(n)
-                let p = Vec2(u, i % 2 == 1 ? high(u) : low(u))
-                f.append(.spar(prev, p, 3))
-                // chords
-                let lo0 = Vec2(uPrev, low(uPrev)), lo1 = Vec2(u, low(u))
-                let hi0 = Vec2(uPrev, high(uPrev)), hi1 = Vec2(u, high(u))
-                f.append(.spar(lo0, lo1, 3)); f.append(.spar(hi0, hi1, 3))
-                trussLength += (simd_distance(prev, p) + simd_distance(lo0, lo1) + simd_distance(hi0, hi1)) * 2   // both sides
-                prev = p
-            }
-            return f
-        }
+        /// Fuselage carbon truss was removed on request – only the wing spar is carbon.
+        /// Kept as a no-op so the call sites stay readable.
+        func truss(from u0: Double, to u1: Double, low: (Double) -> Double, high: (Double) -> Double) -> [Feature] { [] }
 
         func finOutline(chord fc: Double, height h: Double, rudderFrac: Double = 0) -> (outline: [Vec2], main: [Vec2], rudder: [Vec2]?, tabs: [Double]) {
             let topLE = min(h * 0.55 + fc * 0.25, fc * 0.75 + h * 0.2)
@@ -609,9 +591,6 @@ enum DesignBuilder {
                 }
             }
             var wingFeatures = out.features + sparFeatures(w, from: -s * 0.9, to: 0) + sparFeatures(w, from: 0, to: s * 0.9)
-            // X-bracing carbon rods (Ø0.8 mm) across the centre section, as in the kit.
-            let bx = min(slotHalf + 30, s * 0.6)
-            wingFeatures += [.spar(Vec2(w.le(bx) + 6, -bx), Vec2(te0 - 6, bx * 0.3), 0.8), .spar(Vec2(w.le(bx) + 6, bx), Vec2(te0 - 6, -bx * 0.3), 0.8)]
 
             // --- Nose plate (pointed) keyed into the leading edge.
             var nose = Poly.ccw([Vec2(uN, -2), Vec2(uN + 0.5 * c.noseLength, -hw * 0.85), Vec2(w.le(hw), -hw), Vec2(0, 0),

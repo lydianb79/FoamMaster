@@ -170,12 +170,21 @@ enum PrintedParts {
 
     static func cameraMount(width w: Double, tilt: Double = 15, saddleWeb: Double? = nil) -> Mesh3D {
         let inner = w + 0.4, wall = 1.4, base = 1.2, h = w * 0.8
-        var mesh = Mesh3D.box(min: [-inner / 2 - wall, -8, 0], max: [inner / 2 + wall, 8, base])
+        var mesh: Mesh3D
         if let web = saddleWeb {
-            // Two skirts under the base form a slot that grips the fuselage top edge.
-            let gap = web / 2 + 0.15
-            mesh.append(.box(min: [gap, -8, -6], max: [gap + 1.2, 8, 0]))
-            mesh.append(.box(min: [-gap - 1.2, -8, -6], max: [-gap, 8, 0]))
+            // Planes: clamp over the top edge of the vertical fuselage – jaws sized to the foam thickness,
+            // M2 clamp bolt through both jaws and the foam, 0.3 mm grip lips at the jaw tips.
+            mesh = .box(min: [-inner / 2 - wall, -8, 0], max: [inner / 2 + wall, 8, base])
+            let gap = web / 2 + 0.1, jaw = 1.8, depth = 12.0
+            let profile = Poly.rect(minU: -8, maxU: 8, minV: -depth, maxV: 0)
+            let bolt = [Poly.circle(Vec2(0, -7), 1.1, segments: 14)]
+            mesh.append(prism(profile, holes: bolt, axis: 0, from: gap, to: gap + jaw))
+            mesh.append(prism(profile, holes: bolt, axis: 0, from: -gap - jaw, to: -gap))
+            mesh.append(.box(min: [gap - 0.3, -8, -depth], max: [gap, 8, -depth + 2]))
+            mesh.append(.box(min: [-gap, -8, -depth], max: [-gap + 0.3, 8, -depth + 2]))
+        } else {
+            // Flying wing / delta: wide flat foot glued straight onto the wing.
+            mesh = .box(min: [-13, -11, 0], max: [13, 11, base])
         }
         // Side cheeks (YZ profile, tilted back by the up-tilt) with an M2 screw hole.
         let a = tilt * .pi / 180
