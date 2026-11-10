@@ -65,6 +65,12 @@ extension AircraftConfig {
     var jetSlotFront: Double { firewallZ - firewallThickness }
     var jetSlotRear: Double { jetPropZ + propDepthOut + AircraftConfig.propClearance }
     var jetSlotHalfWidth: Double { propRadius + AircraftConfig.propClearance + 1 }
+    /// Height of the prop window in the jet's fuselage above (and below) the wing plate.
+    var jetWindowHeight: Double { propRadius + AircraftConfig.propClearance + 1 }
+    /// Lowest fuselage height that still closes the fuselage over the prop (window + frame top and bottom).
+    var minFuselageHeight: Double {
+        kind.isJet ? ((2 * (jetWindowHeight + DesignBuilder.jetFrameRim) + material.thickness) / 2).rounded(.up) * 2 : 0
+    }
     /// Centre of the motor body.
     var motorZ: Double { isPusher ? firewallZ + motorLength / 2 : firewallZ - motorLength / 2 }
     /// z of the propeller disc (on the far side of the motor from the firewall).
@@ -100,8 +106,12 @@ enum DesignBuilder {
     static let slotClearance = 0.15
     /// Elevator up-throw the rudder must clear: its lower edge rises behind the hinge by tan(35°) per mm.
     static let rudderCutSlope = tan(35.0 * .pi / 180)
+    /// Foam left above / below the jet's prop window.
+    static let jetFrameRim = 8.0
 
-    static func build(_ c: AircraftConfig) -> Design {
+    static func build(_ input: AircraftConfig) -> Design {
+        var c = input
+        c.fuselageHeight = max(c.fuselageHeight, c.minFuselageHeight)
         var b = Builder(c: c)
         b.run()
         return Design(config: c, parts: b.parts, components: b.components, controls: b.controls,
@@ -641,26 +651,34 @@ enum DesignBuilder {
             }
             let elevator = Poly.ccw([Vec2(uH, -sh), Vec2(uH, sh), Vec2(stab.te(sh), sh), Vec2(stab.te(sh), -sh)])
 
-            // --- Vertical fuselage: front and rear halves, split at the prop slot.
-            let hCanopy = fh * 0.5 - t / 2, hMid = fh * 0.32, hBoom = c.boomTopHeight
+            // --- Vertical fuselage: one upper and one lower piece from nose to tail. The prop spins in a window cut
+            // into both (and the prop slot in the wing); a frame of foam closes the fuselage above and below it.
+            let hCanopy = fh * 0.5 - t / 2, hBoom = c.boomTopHeight
             let finTop = hBoom + c.vStabHeight
             let finLE = uH - 1.3 * vsc
-            let fw = c.jetSlotFront                          // front halves end at the firewall plate
-            var upFront = [Vec2(uN + 12, 0), Vec2(fw, 0), Vec2(fw, hMid), Vec2(c.rootChord * 0.2, hCanopy),
-                           Vec2(-0.3 * c.noseLength, hCanopy * 0.85), Vec2(uN + 0.45 * c.noseLength, hCanopy * 0.4), Vec2(uN + 12, 3)]
+            let wF = c.jetSlotFront, wR = c.jetSlotRear          // window front (firewall plate) / rear
+            let wH = c.jetWindowHeight                            // window height above / below the plate
+            let hFrame = wH + DesignBuilder.jetFrameRim           // fuselage height over the window
             let rgJ = c.hasRudder ? TaperedPanel.endGap : 0
             let rCut = rgJ + rudderChord * DesignBuilder.rudderCutSlope        // cut-out over the elevator
-            var upRear = [Vec2(zp + gap, 0), Vec2(uH, 0)] + (rgJ > 0 ? [Vec2(uH, rgJ)] : []) + [Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH - 0.35 * vsc, finTop), Vec2(finLE, hBoom), Vec2(zp + gap + 15, hMid * 0.9), Vec2(zp + gap, hMid * 0.8)]
-            var upRearMain = [Vec2(zp + gap, 0), Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.35 * vsc, finTop), Vec2(finLE, hBoom), Vec2(zp + gap + 15, hMid * 0.9), Vec2(zp + gap, hMid * 0.8)]
+            let window: [Vec2] = [Vec2(wF, 0), Vec2(wF, wH), Vec2(wR, wH), Vec2(wR, 0)]
+            let topLine: [Vec2] = [Vec2(finLE, hBoom), Vec2(wR + 18, hFrame), Vec2(wF - 18, hFrame), Vec2(c.rootChord * 0.2, max(hCanopy, hFrame)),
+                                   Vec2(-0.3 * c.noseLength, hCanopy * 0.85), Vec2(uN + 0.45 * c.noseLength, hCanopy * 0.4), Vec2(uN + 12, 3)]
+            var upper = [Vec2(uN + 12, 0)] + window + [Vec2(uH, 0)] + (rgJ > 0 ? [Vec2(uH, rgJ)] : []) +
+                [Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH - 0.35 * vsc, finTop)] + topLine
+            var upperMain = [Vec2(uN + 12, 0)] + window + [Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.35 * vsc, finTop)] + topLine
             let rudder = [Vec2(uH, rgJ), Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH, finTop)]
-            if !c.hasRudder { upRearMain = upRear }
-            if finLE < zp + gap + 20 { issues.append("Fin is too long for the tail arm.") }
+            if !c.hasRudder { upperMain = upper }
+            if finLE < wR + 25 { issues.append("Fin is too long for the tail arm – it reaches the prop window.") }
+            if c.rootChord * 0.2 > wF - 25 { issues.append("The prop window starts too far forward – increase the root chord or use a smaller prop.") }
             let hLow = fh * 0.3
-            var loFront = Poly.ccw([Vec2(uN + 0.3 * c.noseLength, 0), Vec2(fw, 0), Vec2(fw, -hLow * 0.7), Vec2(c.rootChord * 0.2, -hLow), Vec2(uN + 0.5 * c.noseLength, -hLow * 0.5)])
             let uL = ta + hsc * 0.3
-            var loRear = Poly.ccw([Vec2(zp + gap, 0), Vec2(uL, 0), Vec2(uL, -c.lowerTailHeight * 0.7), Vec2(zp + gap + 25, -hLow * 0.7), Vec2(zp + gap, -hLow * 0.7)])
+            var lower = [Vec2(uN + 0.3 * c.noseLength, 0), Vec2(wF, 0), Vec2(wF, -wH), Vec2(wR, -wH), Vec2(wR, 0), Vec2(uL, 0),
+                         Vec2(uL, -c.lowerTailHeight * 0.7), Vec2(wR + 25, -hFrame), Vec2(wF - 18, -hFrame),
+                         Vec2(c.rootChord * 0.2, -min(hLow, hFrame)), Vec2(uN + 0.5 * c.noseLength, -hLow * 0.5)]
+            if uL < wR + 35 { issues.append("Tail arm is too short for the prop window.") }
 
-            // Tabs → slots in whichever horizontal part lies underneath.
+            // Tabs → slots in whichever horizontal part lies underneath (never inside the window).
             var noseHoles: [Hole] = [], tailHoles: [Hole] = []
             func addSlots(_ us: [Double]) {
                 for u in us {
@@ -668,31 +686,24 @@ enum DesignBuilder {
                     if u < -6 { noseHoles.append(h) } else if u < te0 - 8 { wingHoles.append(h) } else if u > te0 + 8 { tailHoles.append(h) }
                 }
             }
-            let ufTabs = [uN + 0.6 * c.noseLength, c.rootChord * 0.15].filter { $0 + 8 < fw }
-            let urTabs = [(te0 + ta) / 2, ta + hsc * 0.2].filter { $0 + 8 < uH && $0 > zp + gap + 8 }
-            let lfTabs = [uN + 0.7 * c.noseLength, c.rootChord * 0.3].filter { $0 + 8 < fw }
-            let lrTabs = [(te0 + uL) / 2].filter { $0 > zp + gap + 8 }
-            for u in ufTabs { upFront = Poly.insertTab(upFront, at: Vec2(u, 0), width: 10, height: t) }
-            for u in urTabs { upRear = Poly.insertTab(upRear, at: Vec2(u, 0), width: 10, height: t); upRearMain = Poly.insertTab(upRearMain, at: Vec2(u, 0), width: 10, height: t) }
-            for u in lfTabs { loFront = Poly.insertTab(loFront, at: Vec2(u, 0), width: 10, height: t) }
-            for u in lrTabs { loRear = Poly.insertTab(loRear, at: Vec2(u, 0), width: 10, height: t) }
-            addSlots(ufTabs + urTabs + lfTabs + lrTabs)
+            let clearOfWindow = { (u: Double) in u + 8 < wF || u - 8 > wR }
+            let upTabs = [uN + 0.6 * c.noseLength, c.rootChord * 0.15, (te0 + ta) / 2, ta + hsc * 0.2].filter { clearOfWindow($0) && $0 + 8 < uH }
+            let loTabs = [uN + 0.7 * c.noseLength, c.rootChord * 0.3, (te0 + uL) / 2].filter { clearOfWindow($0) && $0 + 8 < uL }
+            for u in upTabs { upper = Poly.insertTab(upper, at: Vec2(u, 0), width: 10, height: t); upperMain = Poly.insertTab(upperMain, at: Vec2(u, 0), width: 10, height: t) }
+            for u in loTabs { lower = Poly.insertTab(lower, at: Vec2(u, 0), width: 10, height: t) }
+            lower = Poly.ccw(lower)
+            addSlots(upTabs + loTabs)
             let eHornV = max(armOffset, tw / 2 + 10)
             tailHoles.append(hornSlot(at: Vec2(uH + 6, eHornV)))
 
             // Servo box in the upper front half, over the wing.
             let sv = c.servo.size
             let s1 = Vec2(c.rootChord * 0.05 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
-            var upFrontHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: upFront)]
-            var upRearHoles: [Hole] = []
+            var upperHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: upperMain)]
             if c.hasRudder {
-                upFrontHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upFront))
-                upRearHoles.append(hornSlot(at: Vec2(uH + 6, rgJ + 6 * DesignBuilder.rudderCutSlope + 8)))
+                upperHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upperMain))
+                upperHoles.append(hornSlot(at: Vec2(uH + 6, rgJ + 6 * DesignBuilder.rudderCutSlope + 8)))
             }
-            let rearTruss = truss(from: zp + gap + 6, to: min(finLE + vsc * 0.5, uH - 6), low: { _ in 2.5 }, high: { [hMid, hBoom, zp, finLE] u in
-                let k = (u - zp) / max(finLE - zp, 1)
-                return hMid * 0.8 + (hBoom - hMid * 0.8) * min(max(k, 0), 1) - 2.5
-            })
 
             tipWinglets(outline: &wingOutline, main: &wingMain, tipV: [-s, s], tipLE: w.le(s))
             parts.append(Part(name: "Wing", role: .wing, outline: wingOutline, holes: wingHoles, features: wingFeatures,
@@ -704,17 +715,13 @@ enum DesignBuilder {
                               features: [.hinge(Vec2(uH, -sh), Vec2(uH, sh))],
                               regions: [Region(polygon: tailMain, isControl: false), Region(polygon: elevator, isControl: true)],
                               instances: [.horizontal(at: .zero)], material: c.material))
-            parts.append(Part(name: "Fuselage top front\(layerNote)", role: .fuselage, outline: upFront, holes: upFrontHoles,
-                              features: [.label("CANOPY", Vec2(c.rootChord * 0.05, hCanopy * 0.6))],
+            parts.append(Part(name: "Fuselage top\(layerNote)", role: .fuselage, outline: upper, holes: upperHoles,
+                              features: (c.hasRudder ? [.hinge(Vec2(uH, 0), Vec2(uH, finTop))] : []) +
+                                        [.label("CANOPY", Vec2(c.rootChord * 0.05, hCanopy * 0.6)), .label("PROP WINDOW", Vec2((wF + wR) / 2 - 18, wH + 3))],
+                              regions: c.hasRudder ? [Region(polygon: upperMain, isControl: false), Region(polygon: rudder, isControl: true)] : [],
                               instances: webX.map { .vertical(at: [$0, t / 2, 0]) }, material: c.material))
-            parts.append(Part(name: "Fuselage top rear\(layerNote)", role: .fuselage, outline: upRear, holes: upRearHoles,
-                              features: (c.hasRudder ? [.hinge(Vec2(uH, 0), Vec2(uH, finTop))] : []) + rearTruss,
-                              regions: c.hasRudder ? [Region(polygon: upRearMain, isControl: false), Region(polygon: rudder, isControl: true)] : [],
-                              instances: webX.map { .vertical(at: [$0, t / 2, 0]) }, material: c.material))
-            parts.append(Part(name: "Fuselage bottom front\(layerNote)", role: .fuselage, outline: loFront,
+            parts.append(Part(name: "Fuselage bottom\(layerNote)", role: .fuselage, outline: lower,
                               features: [.zone(Poly.rect(center: Vec2(c.batteryPosition, -c.battery.size.w / 2 - 1), size: Vec2(c.battery.size.l, c.battery.size.w)), "Battery")],
-                              instances: webX.map { .vertical(at: [$0, -t / 2, 0]) }, material: c.material))
-            parts.append(Part(name: "Fuselage bottom rear\(layerNote)", role: .fuselage, outline: loRear,
                               instances: webX.map { .vertical(at: [$0, -t / 2, 0]) }, material: c.material))
 
             let eBody: SIMD3<Double> = [0, t / 2 + s1.y, s1.x]

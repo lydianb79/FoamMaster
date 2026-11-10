@@ -156,6 +156,18 @@ enum SelfTest {
             let a = Analysis(design: DesignBuilder.build(c))
             print("   span800 \(kind.title): AUW \(Int(a.totalMass)) g, score \(a.score), feasible \(a.feasible)" + a.checks.filter { $0.severity >= .warning }.map { " [\($0.title)]" }.joined())
         }
+        // Jet side view: prop window in the fuselage with a frame above and below.
+        do {
+            let c = Project.balanced(AircraftKind.jet.defaults)
+            let d = DesignBuilder.build(c); let a = Analysis(design: d)
+            let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+            if let r = Renderer(view: view) {
+                r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
+                r.target = SIMD3<Float>(0, 0, Float(c.jetPropZ)); r.zoom = 0.45; r.yaw = 1.45; r.pitch = 0.1
+                if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("jet_side.png")) }
+            }
+            print("   jet window: fuselage \(Int(d.config.fuselageHeight)) mm (min \(Int(c.minFuselageHeight))), window ±\(Int(c.jetWindowHeight)) mm, prop gap \(String(format: "%.1f", a.propGap)) mm, feasible \(a.feasible)" + a.checks.filter { $0.severity >= .warning }.map { " [\($0.title)]" }.joined())
+        }
         // Tail close-ups from the side with the elevator up: the rudder cut-out must clear it.
         for kind in [AircraftKind.trainer, .jet, .nutBall] {
             let c = Project.balanced(kind.defaults)

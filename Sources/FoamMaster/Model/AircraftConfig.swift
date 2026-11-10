@@ -131,7 +131,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         case .jet:
             c.wingspan = 540; c.rootChord = 230; c.tipChord = 85; c.sweep = 175; c.dihedral = 0
             c.controlChordPct = 0.24
-            c.fuselageLength = 560; c.fuselageHeight = 92; c.noseLength = 190; c.tailArm = 330
+            c.fuselageLength = 560; c.fuselageHeight = 140; c.noseLength = 190; c.tailArm = 330
             c.hStabSpan = 250; c.hStabChord = 92; c.vStabHeight = 95; c.vStabChord = 105
             c.material = .depron6; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
         case .trainer:
@@ -248,7 +248,7 @@ struct AircraftConfig: Codable, Equatable {
         case \AircraftConfig.controlChordPct: return 0.12...0.4
         case \AircraftConfig.wingletHeight: return 0...140
         case \AircraftConfig.fuselageLength: return 280...600
-        case \AircraftConfig.fuselageHeight: return 36...130
+        case \AircraftConfig.fuselageHeight: return kind.isJet ? 110...190 : 36...130
         case \AircraftConfig.noseLength: return kind.isTailless ? 30...200 : (kind.isJet ? 100...280 : 45...200)
         case \AircraftConfig.tailArm: return 140...380
         case \AircraftConfig.hStabSpan: return 90...320

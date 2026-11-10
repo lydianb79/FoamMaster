@@ -182,7 +182,10 @@ struct ParameterContent: View {
     }
 
     private func range(_ kp: PartialKeyPath<AircraftConfig>, _ c: AircraftConfig) -> ClosedRange<Double> {
-        AircraftConfig.range(kp, kind: c.kind)
+        let r = AircraftConfig.range(kp, kind: c.kind)
+        // The jet's fuselage must stay taller than its prop (window + frame above and below).
+        if kp == \AircraftConfig.fuselageHeight, c.minFuselageHeight > r.lowerBound { return c.minFuselageHeight...max(r.upperBound, c.minFuselageHeight + 10) }
+        return r
     }
 }
 

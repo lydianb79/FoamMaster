@@ -8,6 +8,8 @@ import UniformTypeIdentifiers
 final class Project: ObservableObject {
     @Published var config: AircraftConfig? {
         didSet {
+            // Keep the fuselage taller than the prop window (jet) – e.g. after a motor change.
+            if let c = config, c.fuselageHeight < c.minFuselageHeight { config?.fuselageHeight = c.minFuselageHeight }
             if let c = config { lastConfig = c }
             if config != oldValue { rebuild() }
         }
