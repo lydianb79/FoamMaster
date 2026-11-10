@@ -57,6 +57,23 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
     var defaultRudder: Bool { !isTailless }
     var isPusher: Bool { isTailless || self == .twinBoom || self == .jet }
     var isJet: Bool { self == .jet }
+    /// Recommended number of prop blades: 2 for efficiency where the diameter is free; 3 where the diameter
+    /// is limited (prop slot / trailing-edge cutout) or for strong, smooth thrust in 3D flying.
+    var propBlades: Int {
+        switch self {
+        case .trainer, .glider, .twinBoom: return 2
+        case .aerobat, .jet, .flyingWing, .delta: return 3
+        }
+    }
+    var propBladeReason: String {
+        switch self {
+        case .trainer, .glider, .twinBoom: return "2-blade – most efficient, longest flight time"
+        case .aerobat: return "3-blade – more thrust and smoother response for 3D"
+        case .jet: return "3-blade – diameter is limited by the prop slot"
+        case .flyingWing, .delta: return "3-blade – diameter is limited by the trailing-edge cutout"
+        }
+    }
+
     /// FPV camera up-tilt: faster types fly flatter and need more tilt to look at the horizon.
     var cameraTilt: Double {
         switch self {

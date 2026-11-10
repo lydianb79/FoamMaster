@@ -17,8 +17,8 @@ Requires Xcode / Swift 5.9+, macOS 14+. `swift run` also works for quick iterati
 - **FPV** – none, Analog, DJI O4 Lite or Walksnail; weight, CG position, power draw (flight time), BOM and a printed camera mount are included.
 - **Multi-layer construction** (in the style of commercial flat-foam kits) – conventional aircraft get a full-length horizontal fuselage plate with the stabiliser built in, upper and lower fuselage halves glued on with tabs (a + section along the whole length), wing halves keyed into the plate sides, carbon spars on top and bottom, a carbon zig-zag truss on both fuselage sides and optional doubler layers. Flying wings get a centre keel and the motor sits in a trailing-edge cutout; the twin boom pusher has a pod built the same way.
 - **Tailless fins** – winglets or a centre fin with adjustable position.
-- **Linkages** – every servo stands upright with its shaft sideways; arm, straight pushrod and horn (holes above the hinge line) are placed so elevator and rudder pushrods never cross, and are drawn in 3D.
-- **Propeller** – recommended diameter × pitch for the chosen motor and cell count.
+- **Linkages** – servos lie flat in the wing (only their width crosses the foam) and pass through the vertical fuselage halves, always with the shaft sideways; arm, straight pushrod and horn (holes above the hinge line) are placed so elevator and rudder pushrods never cross, and are drawn in 3D.
+- **Propeller** – recommended diameter × pitch and blade count (2-blade where diameter is free, 3-blade where it is limited by a prop slot / cutout or for 3D), drawn as a real twisted prop.
 - **Control layout** – chosen in the setup sheet: rudder + elevator, ailerons + elevator, or all four; ailerons on one central servo (torque rods) or one per side. The app shows how many surfaces and servos result and which servo drives what (joined elevator halves, linked twin rudders).
 - **Metal 3D view** – orbit/pan/zoom, control-surface deflection preview, live CG marker with target range.
 - **Materials** – Depron or EPP in 3 / 5 / 6 / 10 mm, optional carbon spar.

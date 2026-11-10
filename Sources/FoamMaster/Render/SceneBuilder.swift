@@ -46,11 +46,11 @@ enum Palette {
     static let control = SIMD4<Float>(1.0, 0.52, 0.18, 1)
     static let carbon = SIMD4<Float>(0.08, 0.08, 0.1, 1)
     static let motor = SIMD4<Float>(0.75, 0.2, 0.25, 1)
-    static let battery = SIMD4<Float>(0.98, 0.82, 0.2, 1)
+    static let battery = SIMD4<Float>(0.62, 0.42, 0.95, 1)
     static let servo = SIMD4<Float>(0.2, 0.45, 0.95, 1)
     static let printed = SIMD4<Float>(0.07, 0.07, 0.08, 1)
     static let vtx = SIMD4<Float>(0.2, 0.75, 0.45, 1)
-    static let prop = SIMD4<Float>(0.78, 0.8, 0.84, 1)
+    static let prop = SIMD4<Float>(1.0, 0.82, 0.1, 1)
     static let cg = SIMD4<Float>(1.0, 0.2, 0.6, 1)
     static let edge = SIMD4<Float>(0.1, 0.12, 0.18, 0.55)
     static let grid = SIMD4<Float>(0.4, 0.7, 1.0, 0.12)
@@ -112,8 +112,7 @@ enum SceneBuilder {
                     let a0 = Double(k) / 48 * 2 * .pi, a1 = Double(k + 1) / 48 * 2 * .pi
                     scene.addLine([cos(a0) * pr, sin(a0) * pr, z], [cos(a1) * pr, sin(a1) * pr, z], color: SIMD4(1, 1, 1, 0.25))
                 }
-                // Propeller is a bought part – light grey, not printed black.
-                scene.addMesh(Mesh3D.box(min: [-pr, -3, z - 0.6], max: [pr, 3, z + 0.6]).rotated(0.5, axis: [0, 0, 1]), color: Palette.prop)
+                scene.addMesh(propeller(radius: pr, blades: c.kind.propBlades, z: z, hub: r * 0.45), color: Palette.prop)
             case "FPV":
                 if item.name.hasPrefix("FPV camera") {
                     let w = c.fpv.cameraWidth
@@ -140,7 +139,8 @@ enum SceneBuilder {
             default:
                 if item.name.hasPrefix("Servo") {
                     let s = c.servo.size
-                    let size: SIMD3<Double> = [s.w, s.h, s.l]
+                    // H sideways (shaft axis), W vertical, L fore-aft – see DesignBuilder.armTip.
+                    let size: SIMD3<Double> = [s.h, s.w, s.l]
                     scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.servo)
                 }
             }
@@ -229,6 +229,43 @@ enum SceneBuilder {
             scene.addLine([cx + o, y, cz - e], [cx + o, y, cz + e], color: col)
             scene.addLine([cx - e, y, cz + o], [cx + e, y, cz + o], color: col)
         }
+    }
+
+    /// Propeller: spinner + n blades with a realistic planform (narrow root, widest at ~35 % radius,
+    /// rounded tip) and pitch – each blade is twisted from ~35° at the root to ~12° at the tip.
+    static func propeller(radius R: Double, blades n: Int, z: Double, hub: Double) -> Mesh3D {
+        var m = Mesh3D()
+        let stations: [(r: Double, chord: Double)] = [(0.12, 0.13), (0.25, 0.2), (0.38, 0.22), (0.55, 0.19), (0.72, 0.15), (0.88, 0.1), (0.97, 0.06), (1.0, 0.02)]
+        let thick = max(0.6, R * 0.012)
+        for b in 0..<n {
+            let phi = Double(b) / Double(n) * 2 * .pi + 0.4
+            var lead: [SIMD3<Double>] = [], trail: [SIMD3<Double>] = []
+            for st in stations {
+                let r = st.r * R, ch = st.chord * R
+                let pitch = (35 - 23 * st.r) * .pi / 180
+                // Blade section in the local frame: x = radius, chord line tilted by the pitch angle about x.
+                let half = ch / 2
+                let le = SIMD3<Double>(r, half * cos(pitch), -half * sin(pitch))
+                let te = SIMD3<Double>(r, -half * cos(pitch), half * sin(pitch))
+                lead.append(le); trail.append(te)
+            }
+            let rot = simd_quatd(angle: phi, axis: [0, 0, 1])
+            func w(_ p: SIMD3<Double>, _ off: Double) -> SIMD3<Double> { rot.act(p + [0, 0, off]) + [0, 0, z] }
+            for i in 0..<(stations.count - 1) {
+                for off in [-thick / 2, thick / 2] {
+                    m.triangles.append((w(lead[i], off), w(trail[i], off), w(trail[i + 1], off)))
+                    m.triangles.append((w(lead[i], off), w(trail[i + 1], off), w(lead[i + 1], off)))
+                }
+                // leading and trailing edge walls
+                m.triangles.append((w(lead[i], -thick / 2), w(lead[i + 1], -thick / 2), w(lead[i + 1], thick / 2)))
+                m.triangles.append((w(trail[i], -thick / 2), w(trail[i + 1], thick / 2), w(trail[i + 1], -thick / 2)))
+            }
+        }
+        m.append(cylinder(center: [0, 0, z], radius: hub, length: R * 0.12))
+        var spinner = sphere(center: [0, 0, z], radius: hub)
+        spinner = spinner.transformed { p in [p.x, p.y, z + (p.z - z) * 1.6] }
+        m.append(spinner)
+        return m
     }
 
     static func cylinder(center c: SIMD3<Double>, radius r: Double, length l: Double, segments n: Int = 24) -> Mesh3D {

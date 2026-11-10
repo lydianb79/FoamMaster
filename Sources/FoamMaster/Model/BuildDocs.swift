@@ -60,8 +60,8 @@ enum BuildDocs {
 
         items.append(BOMItem(category: "Electronics", item: c.motor.name, spec: "\(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S, ~\(Int(a.thrust)) g thrust", quantity: "1×"))
         items.append(BOMItem(category: "Electronics", item: "ESC", spec: "\(c.motor.escMass > 4 ? 12 : 6) A, \(c.battery.cells)S", quantity: "1×"))
-        items.append(BOMItem(category: "Electronics", item: "Propeller \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.kind.isPusher))",
-                             spec: "Recommended for the \(c.motor.name) on \(c.battery.cells)S – balance before use", quantity: "2× (spare)"))
+        items.append(BOMItem(category: "Electronics", item: "Propeller \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.kind.isPusher, blades: c.kind.propBlades))",
+                             spec: "\(c.kind.propBladeReason) · for the \(c.motor.name) on \(c.battery.cells)S – balance before use", quantity: "2× (spare)"))
         items.append(BOMItem(category: "Electronics", item: c.battery.name, spec: "\(c.battery.mass) g", quantity: "1×"))
         items.append(BOMItem(category: "Electronics", item: c.servo.name, spec: "\(c.servo.torque) kg·cm", quantity: "\(servoCount)×"))
         items.append(BOMItem(category: "Electronics", item: "Receiver", spec: "\(max(4, servoCount + 1))+ channels, micro", quantity: "1×"))

@@ -107,9 +107,10 @@ struct ParameterContent: View {
                         PickerRow(label: "Motor", selection: bind(\.motor), options: MotorClass.allCases) { $0.name }
                         HStack(spacing: 6) {
                             Image(systemName: "fanblades.fill").font(.system(size: 10)).foregroundStyle(Theme.accent)
-                            Text("Prop \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.kind.isPusher))")
+                            Text("Prop \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.kind.isPusher, blades: c.kind.propBlades))")
                                 .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
                         }.padding(.leading, 62)
+                        Text(c.kind.propBladeReason).font(.system(size: 9.5)).foregroundStyle(.tertiary).padding(.leading, 78)
                         PickerRow(label: "Battery", selection: bind(\.battery), options: BatteryPack.allCases) { "\($0.name) · \(Int($0.mass)) g" }
                         PickerRow(label: "Servos", selection: bind(\.servo), options: ServoClass.allCases) { $0.name }
                     }

@@ -87,15 +87,20 @@ enum DesignBuilder {
             return Hole(kind: .servo, polygon: r, note: name)
         }
 
-        /// Servo arm tip. Every servo stands upright in its cutout with the long side fore-aft and the
-        /// output shaft pointing sideways (±x) at the aft top corner; the arm points up at neutral, so the
-        /// pushrod runs straight fore-aft in a vertical plane beside the servo to a horn at the same x.
+        /// Servo arm tip. One mounting convention everywhere: servo length L fore-aft, width W vertical,
+        /// height H sideways – i.e. the output shaft (which leaves the L×W top face) points sideways (±x).
+        /// In the wing that means the servo lies FLAT (L×H cutout, only W crosses the thin foam); in a
+        /// vertical fuselage web it passes through the web (L×W cutout) like on profile planes.
+        /// The arm points up at neutral, so the pushrod runs straight fore-aft to a horn at the same x.
         func armTip(_ center: SIMD3<Double>, side: Double) -> SIMD3<Double> {
             let sv = c.servo.size
-            return center + [side * (sv.w / 2 + 2.5), sv.h / 2 + 6, sv.l / 2 - 5]
+            return center + [side * (sv.h / 2 + 2), 10, sv.l / 2 - 5]
         }
-        /// Spanwise offset of the horn from the servo centre so the pushrod is straight.
-        var armOffset: Double { c.servo.size.w / 2 + 2.5 }
+        /// Sideways offset of the arm (and horn) from the servo centre so the pushrod is straight.
+        var armOffset: Double { c.servo.size.h / 2 + 2.5 }
+        /// Wing cutout (lying flat) and fuselage-web cutout sizes in plan coordinates (u, v).
+        var wingServoCut: Vec2 { Vec2(c.servo.size.l, c.servo.size.h) }
+        var webServoCut: Vec2 { Vec2(c.servo.size.l, c.servo.size.w) }
 
         func hornSlot(at p: Vec2, alongU: Bool = true) -> Hole {
             let size = alongU ? Vec2(10, 1.6) : Vec2(1.6, 10)
@@ -192,11 +197,11 @@ enum DesignBuilder {
 
             let sv = c.servo.size
             for side in [-1.0, 1.0] where v1 > v0 + 10 {
-                let vs = v0 + max(sv.w, 14)
+                let vs = v0 + max(sv.h / 2 + 6, 14)
                 let hingeU = w.te(vs) - f * w.chord(vs)
                 let center = Vec2(hingeU - 10 - sv.l / 2, side * vs)
                 let name = side < 0 ? "Left elevon" : "Right elevon"
-                holes.append(servoCut(name, center: center, size: Vec2(sv.l, sv.w), in: mainRegion))
+                holes.append(servoCut(name, center: center, size: wingServoCut, in: mainRegion))
                 let vh = vs + armOffset, hingeH = w.te(vh) - f * w.chord(vh)
                 holes.append(hornSlot(at: Vec2(hingeH + 6, side * vh)))
                 let body: SIMD3<Double> = [center.y, 0, center.x]
@@ -286,15 +291,15 @@ enum DesignBuilder {
                     for side in [-1.0, 1.0] {
                         controls.append(ControlSurface(name: side < 0 ? "Left aileron" : "Right aileron",
                                                        hingeMid: [side * (hw + span / 2), 0, hingeRoot], hornPosition: [side * (hw + 4), -t, hingeRoot - 6],
-                                                       servoPosition: [0, -t / 2 - 3 - sv.h / 2, c.rootChord - 6 - sv.l / 2],
+                                                       servoPosition: [0, -t / 2 - 3 - sv.w / 2, c.rootChord - 6 - sv.l / 2],
                                                        area: area, chord: chord, servoID: "Ailerons (torque rods)",
-                                                       armPosition: [side * (sv.w / 2 + 2.5), -t / 2 - 3 - sv.h / 2 + sv.h / 2 - 4, c.rootChord - 11]))
+                                                       armPosition: [side * (sv.h / 2 + 2), -t / 2 - 3 - sv.w / 2 + 10, c.rootChord - 11]))
                     }
                 } else {
-                    let vs = a0 + 14
+                    let vs = a0 + max(14, sv.h / 2 + 6)
                     let hingeU = half.te(vs) - f * half.chord(vs)
                     let center = Vec2(hingeU - 8 - sv.l / 2, vs)
-                    holes.append(servoCut("Aileron", center: center, size: Vec2(sv.l, sv.w), in: main))
+                    holes.append(servoCut("Aileron", center: center, size: wingServoCut, in: main))
                     let vh = vs + armOffset, hingeH = half.te(vh) - f * half.chord(vh)
                     holes.append(hornSlot(at: Vec2(hingeH + 6, vh)))
                     for side in [-1.0, 1.0] {
@@ -393,15 +398,15 @@ enum DesignBuilder {
 
             // Servos in the upper half above the plate.
             let sv = c.servo.size
-            let s1 = Vec2(c.rootChord * 0.06 + sv.l / 2, 3 + sv.h / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
-            var upperHoles = [servoCut("Elevator", center: s1, size: Vec2(sv.l, sv.h), in: upperMain)]
+            let s1 = Vec2(c.rootChord * 0.06 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
+            var upperHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: upperMain)]
             if hasRudder {
-                upperHoles.append(servoCut("Rudder", center: s2, size: Vec2(sv.l, sv.h), in: upperMain))
+                upperHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upperMain))
                 upperHoles.append(hornSlot(at: Vec2(uH + 6, 10)))
             }
             var lowerHoles: [Hole] = []
             if c.hasAilerons && c.aileronServos == 1 {
-                lowerHoles.append(servoCut("Ailerons", center: Vec2(c.rootChord - 6 - sv.l / 2, -(3 + sv.h / 2)), size: Vec2(sv.l, sv.h), in: lower))
+                lowerHoles.append(servoCut("Ailerons", center: Vec2(c.rootChord - 6 - sv.l / 2, -(3 + sv.w / 2)), size: webServoCut, in: lower))
             }
 
             // Carbon truss on both sides of the boom and along the lower half.
@@ -487,12 +492,12 @@ enum DesignBuilder {
             }
             if c.hasAilerons {
                 let sv = c.servo.size
-                let vs = a0 + 14
+                let vs = a0 + max(14, sv.h / 2 + 6)
                 let hingeU = w.te(vs) - fA * w.chord(vs)
                 for side in [-1.0, 1.0] {
                     let name = side < 0 ? "Left aileron" : "Right aileron"
                     let center = Vec2(hingeU - 8 - sv.l / 2, side * vs)
-                    wingHoles.append(servoCut(name, center: center, size: Vec2(sv.l, sv.w), in: wingMain))
+                    wingHoles.append(servoCut(name, center: center, size: wingServoCut, in: wingMain))
                     let vh = vs + armOffset, hingeH = w.te(vh) - fA * w.chord(vh)
                     wingHoles.append(hornSlot(at: Vec2(hingeH + 6, side * vh)))
                     let body: SIMD3<Double> = [side * vs, 0, center.x]
@@ -569,11 +574,11 @@ enum DesignBuilder {
 
             // Servo box in the upper front half, over the wing.
             let sv = c.servo.size
-            let s1 = Vec2(c.rootChord * 0.05 + sv.l / 2, 3 + sv.h / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
-            var upFrontHoles = [servoCut("Elevator", center: s1, size: Vec2(sv.l, sv.h), in: upFront)]
+            let s1 = Vec2(c.rootChord * 0.05 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
+            var upFrontHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: upFront)]
             var upRearHoles: [Hole] = []
             if c.hasRudder {
-                upFrontHoles.append(servoCut("Rudder", center: s2, size: Vec2(sv.l, sv.h), in: upFront))
+                upFrontHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upFront))
                 upRearHoles.append(hornSlot(at: Vec2(uH + 6, 10)))
             }
             let rearTruss = truss(from: zp + gap + 6, to: min(finLE + vsc * 0.5, uH - 6), low: { _ in 2.5 }, high: { [hMid, hBoom, zp, finLE] u in
@@ -641,12 +646,12 @@ enum DesignBuilder {
             var wingHoles: [Hole] = []
             if c.hasAilerons {
                 let sv = c.servo.size
-                let vs = a0 + 14
+                let vs = a0 + max(14, sv.h / 2 + 6)
                 let hingeU = w.te(vs) - fA * w.chord(vs)
                 for side in [-1.0, 1.0] {
                     let name = side < 0 ? "Left aileron" : "Right aileron"
                     let center = Vec2(hingeU - 8 - sv.l / 2, side * vs)
-                    wingHoles.append(servoCut(name, center: center, size: Vec2(sv.l, sv.w), in: out.main))
+                    wingHoles.append(servoCut(name, center: center, size: wingServoCut, in: out.main))
                     let vh = vs + armOffset, hingeH = w.te(vh) - fA * w.chord(vh)
                     wingHoles.append(hornSlot(at: Vec2(hingeH + 6, side * vh)))
                     let body: SIMD3<Double> = [side * vs, 0, center.x]
@@ -674,9 +679,9 @@ enum DesignBuilder {
             let noseHoles = centreSlots(topTabs.filter { $0 < 0 } + botTabs.filter { $0 < 0 })
 
             let sv = c.servo.size
-            let s1 = Vec2(c.rootChord * 0.08 + sv.l / 2, 3 + sv.h / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
-            var podHoles = [servoCut("Elevator", center: s1, size: Vec2(sv.l, sv.h), in: podTop)]
-            if c.hasRudder { podHoles.append(servoCut("Rudders", center: s2, size: Vec2(sv.l, sv.h), in: podTop)) }
+            let s1 = Vec2(c.rootChord * 0.08 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
+            var podHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: podTop)]
+            if c.hasRudder { podHoles.append(servoCut("Rudders", center: s2, size: webServoCut, in: podTop)) }
             if fh / 2 - t / 2 < 8 { issues.append("Pod height is too small.") }
 
             parts.append(Part(name: "Wing", role: .wing, outline: wingOutline, holes: wingHoles, features: wingFeatures,
