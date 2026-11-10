@@ -46,7 +46,11 @@ extension AircraftKind {
 }
 
 struct GalleryView: View {
-    var body: some View { ScrollView { GalleryContent() } }
+    var body: some View {
+        GeometryReader { geo in
+            ScrollView { GalleryContent(available: geo.size) }
+        }
+    }
 }
 
 struct ModelPreview: Identifiable {
@@ -58,7 +62,18 @@ struct ModelPreview: Identifiable {
 
 struct GalleryContent: View {
     @EnvironmentObject var project: Project
+    /// Window size – the thumbnails shrink so that all cards fit without scrolling where possible.
+    var available = CGSize(width: 1300, height: 820)
     @State private var selected: AircraftKind?
+    static let pad: CGFloat = 32, gridSpacing: CGFloat = 16, headerHeight: CGFloat = 44, topPad: CGFloat = 34
+    /// Card height without the thumbnail (padding, title row, stat chips, spacing).
+    static let cardChrome: CGFloat = 142
+    private var thumbHeight: CGFloat {
+        let cols = max(1, Int((available.width - 2 * Self.pad + Self.gridSpacing) / (320 + Self.gridSpacing)))
+        let rows = CGFloat((previews.count + cols - 1) / cols)
+        let free = available.height - Self.topPad - Self.headerHeight - 20 - Self.pad * 0.75 - (rows - 1) * Self.gridSpacing
+        return min(190, max(110, free / rows - Self.cardChrome))
+    }
     private var previews: [ModelPreview] { Self.all }
     private static let all: [ModelPreview] = AircraftKind.allCases.map { k in
         let d = DesignBuilder.build(Project.balanced(k.defaults))
@@ -66,28 +81,32 @@ struct GalleryContent: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 28) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 20) {
+            // Compact one-line header so both rows of cards fit in the window.
+            HStack(alignment: .firstTextBaseline, spacing: 14) {
+                HStack(spacing: 8) {
                     Image(systemName: "paperplane.fill")
-                        .font(.system(size: 30, weight: .bold))
+                        .font(.system(size: 24, weight: .bold))
                         .foregroundStyle(Theme.accentGradient)
                     Text("FoamMaster")
-                        .font(.system(size: 42, weight: .heavy, design: .rounded))
+                        .font(.system(size: 32, weight: .heavy, design: .rounded))
                         .foregroundStyle(Theme.accentGradient)
                 }
                 Text("Design, check and build micro foam RC aircraft up to 600 mm span.")
-                    .font(.system(size: 16, weight: .medium)).foregroundStyle(.secondary)
+                    .font(.system(size: 14, weight: .medium)).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                Spacer(minLength: 12)
                 Text("Choose a base model to start customising")
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(.tertiary).padding(.top, 14)
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(.tertiary).lineLimit(1)
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 20)], spacing: 20) {
+            .frame(height: Self.headerHeight)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: Self.gridSpacing)], spacing: Self.gridSpacing) {
                 ForEach(previews) { item in
-                    ModelCard(preview: item) { selected = item.kind }
+                    ModelCard(preview: item, thumbHeight: thumbHeight) { selected = item.kind }
                 }
             }
         }
-        .padding(48)
+        .padding(.horizontal, Self.pad).padding(.top, Self.topPad).padding(.bottom, Self.pad * 0.75)
         .sheet(item: $selected) { kind in
             SetupSheet(preview: previews.first { $0.kind == kind }!) { ch in
                 selected = nil
@@ -110,13 +129,14 @@ struct ModelThumbnail: View {
 
 struct ModelCard: View {
     var preview: ModelPreview
+    var thumbHeight: CGFloat = 190
     var action: () -> Void
     @State private var hover = false
 
     var body: some View {
         let kind = preview.kind
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 10) {
                 ZStack(alignment: .topLeading) {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(RadialGradient(colors: [kind.tint.opacity(hover ? 0.32 : 0.2), .clear], center: .center, startRadius: 5, endRadius: 220))
@@ -133,7 +153,7 @@ struct ModelCard: View {
                     }
                     .padding(10)
                 }
-                .frame(height: 190)
+                .frame(height: thumbHeight)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
