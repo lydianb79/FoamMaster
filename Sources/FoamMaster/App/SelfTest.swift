@@ -120,7 +120,7 @@ enum SelfTest {
             }
         }
         // Close-ups of the motor area for visual checks.
-        for (name, kind, dual) in [("trainer", AircraftKind.trainer, false), ("wing", .flyingWing, false), ("dualtrainer", .trainer, true), ("twin", .twinBoom, false), ("nutball", .nutBall, false), ("jet", .jet, false), ("delta", .delta, false)] {
+        for (name, kind, dual) in [("trainer", AircraftKind.trainer, false), ("wing", .flyingWing, false), ("dualtrainer", .trainer, true), ("twin", .twinBoom, false), ("nutball", .nutBall, false), ("jet", .jet, false), ("delta", .delta, false), ("dualdelta", .delta, true), ("dualwing", .flyingWing, true)] {
             var c = kind.defaults; if dual { c.motorLayout = .dualTractor }
             c = Project.balanced(c)
             let d = DesignBuilder.build(c); let a = Analysis(design: d)
@@ -138,7 +138,7 @@ enum SelfTest {
             for dual in [false, true] where !dual || kind.allowsDualMotors {
                 var c = kind.defaults; if dual { c.motorLayout = .dualTractor }
                 let a = Analysis(design: DesignBuilder.build(Project.balanced(c)))
-                print("   prop \(kind.title)\(dual ? " dual" : ""): \(c.propRecommendation), firewall \(String(format: "%.1f", c.firewallZ)), plane \(String(format: "%.1f", c.propPlaneZ))\(kind.isJet ? String(format: ", slot %.0f…%.0f ±%.0f", c.jetSlotFront, c.jetSlotRear, c.jetSlotHalfWidth) : ""), errors \(a.checks.filter { $0.severity == .error }.map(\.title))")
+                print("   prop \(kind.title)\(dual ? " dual" : ""): gap \(String(format: "%.1f", a.propGap)) mm, standoff \(String(format: "%.1f", c.mountStandoff)), \(c.propRecommendation), firewall \(String(format: "%.1f", c.firewallZ)), plane \(String(format: "%.1f", c.propPlaneZ))\(kind.isJet ? String(format: ", slot %.0f…%.0f ±%.0f", c.jetSlotFront, c.jetSlotRear, c.jetSlotHalfWidth) : ""), errors \(a.checks.filter { $0.severity == .error }.map(\.title))")
             }
         }
         // Wider fuselage cross and 800 mm span.

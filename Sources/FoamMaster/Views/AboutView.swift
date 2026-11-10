@@ -37,7 +37,7 @@ struct AboutView: View {
 
                 VStack(spacing: 6) {
                     Text("FoamMaster").font(.system(size: 28, weight: .heavy, design: .rounded)).foregroundStyle(Theme.accentGradient)
-                    Text("Design by TriX aka Rock FPV").font(.system(size: 15, weight: .semibold))
+                    Text("Created by TriX aka Rock FPV").font(.system(size: 15, weight: .semibold))
                 }
 
                 VStack(alignment: .leading, spacing: 10) {

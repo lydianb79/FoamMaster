@@ -23,7 +23,7 @@ enum PrintedParts {
         if c.isDual {
             // Wing-only clamp: grips the leading edge from above and below (no vertical slot).
             out.append(PrintedPart(name: "Motor mount (wing LE)", fileName: "motor_mount_\(c.motor.rawValue)_wing", quantity: 2,
-                                   mesh: motorMount(for: c), note: "\(c.motor.pattern.label) motor pattern, wing clamp for \(Int(t)) mm foam, M2 clamp bolt – leading edge at the MOTOR marks"))
+                                   mesh: motorMount(for: c), note: "\(c.motor.pattern.label) motor pattern, wing clamp for \(Int(t)) mm foam, M2 clamp bolts\(c.mountStandoff > 0 ? ", \(Int(c.mountStandoff)) mm standoff so the prop clears the swept leading edge" : "") – leading edge at the MOTOR marks"))
         } else {
             out.append(PrintedPart(name: "Motor mount", fileName: "motor_mount_\(c.motor.rawValue)", quantity: 1,
                                    mesh: motorMount(for: c),
@@ -69,7 +69,7 @@ enum PrintedParts {
     /// fuselage types → + channel for the horizontal plate and both vertical halves.
     static func motorMount(for c: AircraftConfig) -> Mesh3D {
         let t = c.material.thickness
-        if c.isDual { return motorMount(c.motor, foam: t, web: 0) }
+        if c.isDual { return motorMount(c.motor, foam: t, webTop: nil, webBottom: nil, standoff: c.mountStandoff) }
         if c.kind.isTailless { return motorMount(c.motor, foam: t, webTop: nil, webBottom: t) }
         let tw = t * Double(c.fuselageType.webLayers)
         return motorMount(c.motor, foam: t, webTop: tw, webBottom: tw)
@@ -121,7 +121,7 @@ enum PrintedParts {
     /// The firewall carries the motor's own hole pattern with counterbores so the screw heads sit flush (the foam
     /// butts against the back face). Holes that end up under a jaw get an access bore through the jaw, so the
     /// motor can be screwed on before the clamp is pushed onto the foam.
-    static func motorMount(_ m: MotorClass, foam t: Double, webTop: Double?, webBottom: Double?) -> Mesh3D {
+    static func motorMount(_ m: MotorClass, foam t: Double, webTop: Double?, webBottom: Double?, standoff: Double = 0) -> Mesh3D {
         let wingClamp = webTop == nil && webBottom == nil
         let pat = m.pattern
         let headD = pat.headDiameter + 0.4
@@ -140,7 +140,16 @@ enum PrintedParts {
         let bore = headD / 2 + 0.2
         let bores = screws.map { (x0: $0.x - bore, x1: $0.x + bore, y0: $0.y - bore, y1: $0.y + bore) }
         let gapY = t / 2 + 0.1, jaw = 3.0, rb = 1.1
-        let z0 = th, z1 = th + len, zb = th + len - 7
+        // Optional standoff: square tube (1.6 mm walls) between the firewall and the jaws.
+        if standoff > 0 {
+            let w = 1.6
+            mesh.append(block(-e, e, -e, -e + w, th, th + standoff, voids: []))
+            mesh.append(block(-e, e, e - w, e, th, th + standoff, voids: []))
+            mesh.append(block(-e, -e + w, -e + w, e - w, th, th + standoff, voids: []))
+            mesh.append(block(e - w, e, -e + w, e - w, th, th + standoff, voids: []))
+        }
+        let base = th + standoff
+        let z0 = base, z1 = base + len, zb = base + len - 7
         /// Jaw block with the bores; the clamp bolt runs through it as a square channel (strip void at zb).
         func jawBlock(_ x0: Double, _ x1: Double, _ y0: Double, _ y1: Double, boltStrip: (x0: Double, x1: Double, y0: Double, y1: Double)) -> Mesh3D {
             var j = block(x0, x1, y0, y1, z0, zb - rb, voids: bores)
@@ -163,7 +172,7 @@ enum PrintedParts {
             }
             // Gussets between plate and jaws at both sides.
             for (y0, y1) in [(gapY + jaw, e), (-e, -gapY - jaw)] {
-                let tri = y0 > 0 ? [Vec2(y0, th), Vec2(y1, th), Vec2(y0, th + len * 0.6)] : [Vec2(y0, th), Vec2(y1, th), Vec2(y1, th + len * 0.6)]
+                let tri = y0 > 0 ? [Vec2(y0, base), Vec2(y1, base), Vec2(y0, base + len * 0.6)] : [Vec2(y0, base), Vec2(y1, base), Vec2(y1, base + len * 0.6)]
                 for x0 in [-e, e - 2] { mesh.append(prism(Poly.ccw(tri), axis: 0, from: x0, to: x0 + 2)) }
             }
             return mesh

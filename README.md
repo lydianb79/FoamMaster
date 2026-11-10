@@ -2,7 +2,7 @@
 
 Native macOS app (SwiftUI + Metal) to design, check and build micro flat foam planes and wings up to **800 mm wingspan**.
 
-Design by TriX aka Rock FPV – [YouTube](https://www.youtube.com/@RockFPV) · [GitHub](https://github.com/lydianb79/FoamMaster)
+Created by TriX aka Rock FPV – [YouTube](https://www.youtube.com/@RockFPV) · [GitHub](https://github.com/lydianb79/FoamMaster)
 
 ## Build & run
 
@@ -27,7 +27,7 @@ A credits splash with the Rock FPV logo (`Assets/RockFPV_logo.png`, copied into 
 - **Control layouts** – tailed planes: ailerons + elevator, or ailerons + elevator + rudder (flat wings need ailerons); NutBall: always rudder + elevator.
 - **Component layout** – ESC (green) and receiver (cyan) sit on the visible side where the leads reach. The colour legend in the 3D view lists every colour with an explanation on hover, and hovering the model names the part under the mouse (foam part, control surface, motor, prop, mount with its bolt pattern, servo, ESC, receiver, battery, horn, carbon, CG). All models are for line-of-sight flying (no FPV gear).
 - **Linkages** – servos lie flat in the wing (only their width crosses the foam) and pass through the vertical fuselage halves, always with the shaft sideways; arm, straight pushrod and horn (holes above the hinge line) are placed so elevator and rudder pushrods never cross, and are drawn in 3D.
-- **Propeller** – recommended diameter × pitch and blade count (2-blade where diameter is free, 3-blade where it is limited by a prop slot / cutout or for 3D), drawn as a real twisted prop. Props keep 5 mm clearance to all foam (tips and blade faces); the printed firewall always sits against the end of the foam. The Sport Jet uses a 4" 3-blade in a slot from the firewall to behind the spinner (motor inside the slot).
+- **Propeller** – recommended diameter × pitch and blade count (2-blade where diameter is free, 3-blade where it is limited by a prop slot / cutout or for 3D), drawn as a real twisted prop. Props keep 5 mm clearance to all foam – a geometric check samples every foam part around the spinning prop (tips, blade faces, spinner) and reports the closest part; dual tractors on swept wings get a printed motor standoff so the inboard blades clear the leading edge; the printed firewall always sits against the end of the foam. The Sport Jet uses a 4" 3-blade in a slot from the firewall to behind the spinner (motor inside the slot).
 - **Control layout** – chosen in the setup sheet: rudder + elevator, ailerons + elevator, or all four; ailerons on one central servo (torque rods) or one per side. The app shows how many surfaces and servos result and which servo drives what (joined elevator halves, linked twin rudders).
 - **Metal 3D view** – orbit/pan/zoom, control-surface deflection preview, live CG marker with target range. Printed parts (motor mount, servo frames, battery tray) are drawn from the same meshes as the STL export, the motor as stator, bell and shaft, and ESCs and the receiver are shown in place (outside the foam) with their leads.
 - **Materials** – Depron or EPP in 3 / 5 / 6 / 10 mm, optional carbon spar.

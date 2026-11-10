@@ -26,13 +26,24 @@ extension AircraftConfig {
     /// is screwed to.
     var firewallZ: Double {
         let th = firewallThickness
-        if isDual { return sweep * dualMotorX / semiSpan - th }      // plate in front of the leading edge
+        if isDual { return sweep * dualMotorX / semiSpan - th - mountStandoff }   // plate (+ standoff) ahead of the LE
         if kind.isTailless { return rootChord - motorNotchDepth + th } // plate against the front of the TE cutout
         if kind.isTwinBoom { return rootChord + th }                  // plate against the end of the pod
         if kind.isJet { return jetPropZ - 4 - motorLength }           // prop disc exactly at jetPropZ
         return -noseLength - th
     }
     var firewallThickness: Double { PrintedParts.firewallThickness(motor) }
+    /// Printed standoff between firewall and clamp jaws. Needed for dual tractors on swept wings: the inboard
+    /// half of each prop disc sweeps ahead of the leading edge there, so the motor has to move forward until
+    /// the blades keep `propClearance` to the closest point of the leading edge.
+    var mountStandoff: Double {
+        guard isDual else { return 0 }
+        let x = dualMotorX, reach = propRadius + AircraftConfig.propClearance
+        let leAtMount = sweep * x / semiSpan
+        let leMin = sweep * max(0, x - reach) / semiSpan
+        let need = AircraftConfig.propClearance + propDepthIn + (leAtMount - leMin) - (firewallThickness + motorLength + 4)
+        return need > 0 ? (need + 1).rounded(.up) : 0
+    }
 
     // MARK: Propeller
 

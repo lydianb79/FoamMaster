@@ -44,6 +44,8 @@ struct Analysis {
     var tailVolumeH = 0.0
     var tailVolumeV = 0.0
     var requiredBatteryPosition = 0.0
+    /// Smallest gap between the propeller(s) and the foam (mm).
+    var propGap = 0.0
     var batteryLimits: ClosedRange<Double> = 0...0
     /// CG range the battery can produce when moved between its physical limits.
     var achievableCG: ClosedRange<Double> = 0...0
@@ -283,16 +285,24 @@ struct Analysis {
             let clear = c.motorNotchHalfWidth - r
             add(.ok, "Geometry", "Motor sits in the trailing-edge cutout", "\(f0(c.motorNotchHalfWidth * 2)) × \(f0(c.motorNotchDepth)) mm cutout up to the elevons, \(f1(clear)) mm prop clearance each side.")
             if c.battery.size.l > c.rootChord * 0.7 { add(.warning, "Geometry", "Battery long for the centre section", "Battery \(f0(c.battery.size.l)) mm vs root chord \(f0(c.rootChord)) mm.") }
-        } else if c.kind.isTwinBoom {
-            let w = TaperedPanel(rootChord: c.rootChord, tipChord: c.tipChord, sweep: c.sweep, semiSpan: c.semiSpan)
-            let propPlane = c.propPlaneZ
-            let maxTE = stride(from: 0.0, through: min(r + 3, c.semiSpan), by: 2).map { w.te($0) }.max() ?? 0
-            if maxTE > propPlane - c.propDepthIn - AircraftConfig.propClearance {
-                add(.error, "Geometry", "Propeller hits the trailing edge", "Swept TE reaches \(f0(maxTE)) mm within the \(f1(c.propInches))\" prop disc (plane at \(f0(propPlane)) mm). Reduce sweep or increase root chord.")
-            } else { add(.ok, "Geometry", "Propeller clearance OK", "\(f1(propPlane - maxTE)) mm to the trailing edge.") }
-            if c.kind.isTailless && c.battery.size.l > c.rootChord * 0.7 { add(.warning, "Geometry", "Battery long for the centre section", "Battery \(f0(c.battery.size.l)) mm vs root chord \(f0(c.rootChord)) mm.") }
         } else if r > c.noseLength * 1.6 {
             add(.info, "Geometry", "Large prop on a short nose", "Hand-launch carefully, keep fingers clear.")
+        }
+        if c.mountStandoff > 25 {
+            add(.info, "Geometry", "Long motor standoff (\(f0(c.mountStandoff)) mm)", "The swept leading edge needs the motors \(f0(c.mountStandoff)) mm ahead of the clamp – print the mounts with 4+ walls / 100 % infill.")
+        }
+        // Measured gap between the spinning prop (tips, blade faces, spinner) and every foam part.
+        let pc = PropClearance.evaluate(d)
+        propGap = pc.gap
+        let need = AircraftConfig.propClearance
+        if pc.gap < 1 {
+            add(.error, "Geometry", "Propeller hits the \(pc.part.lowercased())",
+                "The spinning prop reaches into the \(pc.part.lowercased()) (gap \(f1(pc.gap)) mm) and would cut it. Use a smaller prop or move the motor away from it.")
+        } else if pc.gap < need - 0.5 {
+            add(.warning, "Geometry", "Propeller close to the \(pc.part.lowercased())",
+                "Only \(f1(pc.gap)) mm between the prop and the \(pc.part.lowercased()) – \(f0(need)) mm recommended so flex and vibration never let it touch.")
+        } else {
+            add(.ok, "Geometry", "Propeller clearance \(f1(min(pc.gap, 99))) mm", "Closest foam part: \(pc.part.isEmpty ? "none nearby" : pc.part.lowercased()) (\(f0(need)) mm required).")
         }
         add(.info, "Performance", "Estimated flight time \(f0(flightTime)) min", "Stall ≈ \(f0(stallSpeed)) km/h, AUW \(f0(totalMass)) g.")
         checks.sort { $0.severity > $1.severity }

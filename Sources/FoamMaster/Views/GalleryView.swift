@@ -71,7 +71,7 @@ struct GalleryContent: View {
     /// Window size – the thumbnails shrink so that all cards fit without scrolling where possible.
     var available = CGSize(width: 1300, height: 820)
     @State private var selected: AircraftKind?
-    static let pad: CGFloat = 32, gridSpacing: CGFloat = 16, headerHeight: CGFloat = 44, topPad: CGFloat = 34
+    static let pad: CGFloat = 32, gridSpacing: CGFloat = 16, headerHeight: CGFloat = 58, topPad: CGFloat = 34
     /// Card height without the thumbnail (padding, title row, stat chips, spacing).
     static let cardChrome: CGFloat = 142
     private var thumbHeight: CGFloat {
@@ -87,8 +87,9 @@ struct GalleryContent: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            // Compact one-line header so both rows of cards fit in the window.
+        VStack(alignment: .leading, spacing: 16) {
+            // Compact header so both rows of cards fit in the window.
+            VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 14) {
                 HStack(spacing: 8) {
                     Image(systemName: "paperplane.fill")
@@ -101,9 +102,11 @@ struct GalleryContent: View {
                 Text("Design, check and build Micro Flat Foam Planes and Wings up to 800 mm Wingspan")
                     .font(.system(size: 14, weight: .medium)).foregroundStyle(.secondary)
                     .lineLimit(1).minimumScaleFactor(0.8)
-                Spacer(minLength: 12)
-                Text("Choose a base model to start customising")
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(.tertiary).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            Text("Choose a base model to start customising")
+                .font(.system(size: 12, weight: .semibold)).foregroundStyle(.tertiary).lineLimit(1)
+                .padding(.leading, 2)
             }
             .frame(height: Self.headerHeight)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: Self.gridSpacing)], spacing: Self.gridSpacing) {
