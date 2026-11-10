@@ -24,7 +24,6 @@ enum FixFinder {
         Param(label: "Root chord", unit: "mm", key: \.rootChord),
         Param(label: "Tip chord", unit: "mm", key: \.tipChord),
         Param(label: "Sweep", unit: "mm", key: \.sweep),
-        Param(label: "Dihedral", unit: "°", key: \.dihedral, applies: { $0.kind.hasFuselage }),
         Param(label: "Control surface chord", unit: "%", key: \.controlChordPct, applies: { $0.kind.isTailless || $0.hasAilerons }),
         Param(label: "Winglet / fin height", unit: "mm", key: \.wingletHeight, applies: { $0.kind.isTailless }),
         Param(label: "Nose length", unit: "mm", key: \.noseLength, applies: { !$0.kind.isTailless }),
@@ -150,6 +149,6 @@ enum FixFinder {
             let a = evaluate(c).analysis
             if !a.checks.contains(where: { $0.category == "Structure" && $0.severity >= .warning && $0.title.contains("uselage") || ($0.category == "Structure" && $0.severity >= .warning && $0.title.contains("boom")) }) { return f }
         }
-        return .laminatedTube
+        return .laminated
     }
 }

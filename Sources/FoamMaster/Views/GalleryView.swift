@@ -34,7 +34,8 @@ extension AircraftKind {
         case .flyingWing: return ["Tailless", "Pusher", "Elevons"]
         case .delta: return ["Tailless", "Pusher", "High speed"]
         case .twinBoom: return ["Twin boom", "Pusher", "FPV"]
-        case .trainer: return ["Tractor", "Dihedral", "2-ch"]
+        case .jet: return ["Jet", "Prop slot", "4-ch"]
+        case .trainer: return ["Tractor", "Flat wing", "Easy"]
         case .aerobat: return ["Tractor", "4-ch", "3D"]
         case .glider: return ["Tractor", "Long span", "Thermal"]
         }
@@ -45,6 +46,7 @@ extension AircraftKind {
         case .flyingWing: return Theme.accent
         case .delta: return Color(red: 1, green: 0.35, blue: 0.45)
         case .twinBoom: return Theme.good
+        case .jet: return Color(red: 0.45, green: 0.6, blue: 1.0)
         case .trainer: return Theme.warn
         case .aerobat: return Theme.orange
         case .glider: return Theme.violet
@@ -225,6 +227,8 @@ struct SetupSheet: View {
                 }
             }
 
+            ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
             OptionGroup(title: "Control surfaces", symbol: "slider.horizontal.below.square.filled.and.square") {
                 if kind.isTailless {
                     Text("Tailless: two elevons (combined aileron + elevator), one servo each.").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -261,6 +265,11 @@ struct SetupSheet: View {
                 }
             }
 
+            }
+            .padding(.trailing, 6)
+            }
+            .frame(maxHeight: 470)
+            Divider().opacity(0.3)
             HStack {
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)

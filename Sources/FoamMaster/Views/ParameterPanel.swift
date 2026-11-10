@@ -33,9 +33,6 @@ struct ParameterContent: View {
                         ParamSlider(label: "Root chord", unit: "mm", value: bind(\.rootChord), range: range(\.rootChord, c), step: 1)
                         ParamSlider(label: "Tip chord", unit: "mm", value: bind(\.tipChord), range: range(\.tipChord, c), step: 1)
                         ParamSlider(label: "Sweep (tip LE)", unit: "mm", value: bind(\.sweep), range: range(\.sweep, c), step: 1)
-                        if c.kind.hasFuselage {
-                            ParamSlider(label: "Dihedral", unit: "°", value: bind(\.dihedral), range: range(\.dihedral, c), step: 0.5)
-                        }
                         if c.kind.isTailless || c.hasAilerons {
                             ParamSlider(label: c.kind.isTailless ? "Elevon chord" : "Aileron chord", unit: "%",
                                         value: Binding(get: { c.controlChordPct * 100 }, set: { project.config?.controlChordPct = $0 / 100 }),

@@ -3,7 +3,7 @@ import Foundation
 let maxWingspan: Double = 600
 
 enum AircraftKind: String, CaseIterable, Identifiable, Codable {
-    case flyingWing, delta, twinBoom, trainer, aerobat, glider
+    case flyingWing, delta, twinBoom, jet, trainer, aerobat, glider
     var id: String { rawValue }
 
     var title: String {
@@ -11,8 +11,9 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         case .flyingWing: return "Flying Wing"
         case .delta: return "Delta Jet"
         case .twinBoom: return "Twin Boom Pusher"
+        case .jet: return "Sport Jet"
         case .trainer: return "Park Trainer"
-        case .aerobat: return "3D Profile"
+        case .aerobat: return "3D Plane"
         case .glider: return "Micro Glider"
         }
     }
@@ -22,7 +23,8 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         case .flyingWing: return "Swept wing · elevons · pusher"
         case .delta: return "High sweep · centre fin · pusher"
         case .twinBoom: return "Pod, carbon booms, twin fins · FPV cruiser"
-        case .trainer: return "Dihedral · rudder & elevator"
+        case .jet: return "Swept wing · prop-slot pusher"
+        case .trainer: return "Big flat wing · forgiving · ailerons"
         case .aerobat: return "Huge surfaces · 4 channels"
         case .glider: return "High aspect ratio · thermal"
         }
@@ -33,6 +35,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         case .flyingWing: return "chevron.up"
         case .delta: return "triangle"
         case .twinBoom: return "camera.fill"
+        case .jet: return "airplane"
         case .trainer: return "graduationcap"
         case .aerobat: return "arrow.triangle.2.circlepath"
         case .glider: return "wind"
@@ -41,9 +44,11 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
 
     var isTailless: Bool { self == .flyingWing || self == .delta }
     /// Default control layout for the type.
-    var defaultAilerons: Bool { self == .aerobat }
+    /// Flat (no dihedral) wings need ailerons for roll control.
+    var defaultAilerons: Bool { !isTailless }
     var defaultRudder: Bool { !isTailless }
-    var isPusher: Bool { isTailless || self == .twinBoom }
+    var isPusher: Bool { isTailless || self == .twinBoom || self == .jet }
+    var isJet: Bool { self == .jet }
     var isTwinBoom: Bool { self == .twinBoom }
     /// Tailed aircraft with a full-length fuselage (fuselage structure option applies).
     var hasFuselage: Bool { !isTailless && !isTwinBoom }
@@ -54,6 +59,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         case .glider: return 0.35
         case .trainer: return 0.55
         case .twinBoom: return 0.7
+        case .jet: return 1.0
         case .flyingWing: return 0.6
         case .delta: return 0.8
         case .aerobat: return 1.1
@@ -76,22 +82,28 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
             c.fuselageLength = 300; c.fuselageHeight = 58; c.noseLength = 120; c.tailArm = 300
             c.hStabSpan = 230; c.hStabChord = 70; c.vStabHeight = 70; c.vStabChord = 70
             c.material = .depron5; c.motor = .m1306; c.battery = .s2_450; c.servo = .g25; c.fpv = .o4Lite
+        case .jet:
+            c.wingspan = 540; c.rootChord = 230; c.tipChord = 85; c.sweep = 175; c.dihedral = 0
+            c.controlChordPct = 0.24
+            c.fuselageLength = 560; c.fuselageHeight = 72; c.noseLength = 190; c.tailArm = 330
+            c.hStabSpan = 250; c.hStabChord = 92; c.vStabHeight = 95; c.vStabChord = 105
+            c.material = .depron5; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
         case .trainer:
-            c.wingspan = 600; c.rootChord = 130; c.tipChord = 105; c.sweep = 12; c.dihedral = 6
-            c.fuselageLength = 480; c.fuselageHeight = 62; c.noseLength = 95; c.tailArm = 270
+            c.wingspan = 600; c.rootChord = 130; c.tipChord = 105; c.sweep = 12; c.dihedral = 0
+            c.fuselageLength = 480; c.fuselageHeight = 84; c.noseLength = 95; c.tailArm = 270
             c.hStabSpan = 200; c.hStabChord = 70; c.vStabHeight = 80; c.vStabChord = 75
             c.material = .depron5; c.motor = .m1104; c.battery = .s2_300; c.servo = .g25
         case .aerobat:
             c.wingspan = 560; c.rootChord = 190; c.tipChord = 150; c.sweep = 20; c.dihedral = 0
             c.controlChordPct = 0.32
-            c.fuselageLength = 560; c.fuselageHeight = 90; c.noseLength = 110; c.tailArm = 290
+            c.fuselageLength = 560; c.fuselageHeight = 135; c.noseLength = 110; c.tailArm = 290
             c.hStabSpan = 250; c.hStabChord = 110; c.vStabHeight = 120; c.vStabChord = 120
             c.material = .depron5; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
         case .glider:
-            c.wingspan = 600; c.rootChord = 85; c.tipChord = 55; c.sweep = 15; c.dihedral = 8
-            c.fuselageLength = 470; c.fuselageHeight = 56; c.noseLength = 62; c.tailArm = 280
+            c.wingspan = 600; c.rootChord = 95; c.tipChord = 60; c.sweep = 15; c.dihedral = 0
+            c.fuselageLength = 470; c.fuselageHeight = 92; c.noseLength = 62; c.tailArm = 265
             c.hStabSpan = 150; c.hStabChord = 50; c.vStabHeight = 65; c.vStabChord = 55
-            c.material = .depron3; c.motor = .m1103; c.battery = .s1_300; c.servo = .g17
+            c.material = .depron5; c.motor = .m1103; c.battery = .s1_300; c.servo = .g17
         }
         c.name = "My \(title)"
         c.batteryPosition = c.defaultBatteryPosition
@@ -158,15 +170,15 @@ struct AircraftConfig: Codable, Equatable {
     static func range(_ key: PartialKeyPath<AircraftConfig>, kind: AircraftKind) -> ClosedRange<Double> {
         switch key {
         case \AircraftConfig.wingspan: return 250...maxWingspan
-        case \AircraftConfig.rootChord: return kind == .delta ? 180...420 : 60...260
+        case \AircraftConfig.rootChord: return kind == .delta ? 180...420 : (kind.isJet ? 150...320 : 60...260)
         case \AircraftConfig.tipChord: return kind == .delta ? 30...140 : 35...240
-        case \AircraftConfig.sweep: return kind.isTailless ? 0...320 : -20...80
+        case \AircraftConfig.sweep: return kind.isTailless ? 0...320 : (kind.isJet ? 60...260 : -20...80)
         case \AircraftConfig.dihedral: return 0...12
         case \AircraftConfig.controlChordPct: return 0.12...0.4
         case \AircraftConfig.wingletHeight: return 0...140
         case \AircraftConfig.fuselageLength: return 280...600
         case \AircraftConfig.fuselageHeight: return 36...130
-        case \AircraftConfig.noseLength: return kind.isTailless ? 30...200 : 45...200
+        case \AircraftConfig.noseLength: return kind.isTailless ? 30...200 : (kind.isJet ? 100...280 : 45...200)
         case \AircraftConfig.tailArm: return 140...380
         case \AircraftConfig.hStabSpan: return 90...320
         case \AircraftConfig.hStabChord: return 35...140
@@ -188,8 +200,7 @@ struct AircraftConfig: Codable, Equatable {
         r(\.wingspan, spread: 0.2); r(\.rootChord, spread: 0.2); r(\.tipChord, spread: 0.25)
         r(\.sweep, spread: 0.3); r(\.controlChordPct, spread: 0.15)
         if !kind.isTailless {
-            r(\.dihedral, spread: 0.5)
-            r(\.fuselageHeight, spread: 0.15); r(\.noseLength, spread: 0.15); r(\.tailArm, spread: 0.15)
+                        r(\.fuselageHeight, spread: 0.15); r(\.noseLength, spread: 0.15); r(\.tailArm, spread: 0.15)
             r(\.hStabSpan, spread: 0.15); r(\.hStabChord, spread: 0.15)
             r(\.vStabHeight, spread: 0.15); r(\.vStabChord, spread: 0.15)
         } else {

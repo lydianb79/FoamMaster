@@ -153,20 +153,16 @@ enum FuselageType: String, CaseIterable, Identifiable, Codable {
     case cross
     /// RC Factory style: the vertical halves are two foam layers laminated side by side (double web).
     case laminated
-    /// Laminated web with a carbon tube embedded between the layers – best torsional stiffness.
-    case laminatedTube
     var id: String { rawValue }
-    var name: String { [.cross: "Cross", .laminated: "Laminated cross", .laminatedTube: "Laminated + tube"][self]! }
+    var name: String { [.cross: "Cross", .laminated: "Laminated cross"][self]! }
     var detail: String {
         switch self {
         case .cross: return "Plate + single-layer halves + carbon truss – light, soft in torsion"
         case .laminated: return "Halves laminated from 2 layers + carbon truss (RC Factory style)"
-        case .laminatedTube: return "Laminated halves with a carbon tube between the layers – stiffest"
         }
     }
-    var symbol: String { [.cross: "plus", .laminated: "square.stack.3d.up", .laminatedTube: "cylinder"][self]! }
+    var symbol: String { [.cross: "plus", .laminated: "square.stack.3d.up"][self]! }
     var webLayers: Int { self == .cross ? 1 : 2 }
-    var hasTube: Bool { self == .laminatedTube }
 }
 
 extension CarbonSpar {

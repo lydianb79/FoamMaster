@@ -79,8 +79,7 @@ struct Analysis {
 
         // --- Wing geometry
         let lambda = c.taper
-        let dih = c.dihedral * .pi / 180
-        wingArea = (c.rootChord + c.tipChord) * s * (c.kind.isTailless || c.dihedral < 0.5 ? 1 : cos(dih))
+        wingArea = (c.rootChord + c.tipChord) * s
         aspectRatio = c.wingspan * c.wingspan / max(wingArea, 1)
         mac = 2.0 / 3.0 * c.rootChord * (1 + lambda + lambda * lambda) / (1 + lambda)
         macY = s / 3 * (1 + 2 * lambda) / (1 + lambda)
@@ -121,7 +120,7 @@ struct Analysis {
         stallSpeed = sqrt(2 * totalMass / 1000 * 9.81 / (1.225 * sM2 * clMax)) * 3.6
         thrust = c.motor.thrust(cells: c.battery.cells)
         thrustToWeight = thrust / max(totalMass, 1)
-        let wPerKg: Double = [.glider: 70, .trainer: 100, .twinBoom: 110, .flyingWing: 120, .delta: 140, .aerobat: 170][c.kind]!
+        let wPerKg: Double = [.glider: 70, .trainer: 100, .twinBoom: 110, .jet: 150, .flyingWing: 120, .delta: 140, .aerobat: 170][c.kind]!
         let current = (wPerKg * totalMass / 1000 + c.fpv.power) / c.battery.voltage
         flightTime = c.battery.capacity * 0.8 / 1000 / max(current, 0.01) * 60
 
@@ -136,6 +135,7 @@ struct Analysis {
 
     static func batteryLimits(_ c: AircraftConfig) -> ClosedRange<Double> {
         if c.kind.isTailless { return (c.battery.size.l / 2 - 8)...(c.rootChord * 0.55) }
+        if c.kind.isJet { return (-c.noseLength + c.battery.size.l / 2 + 15)...(c.rootChord * 0.35) }
         if c.kind.isTwinBoom { return (-c.noseLength + c.battery.size.l / 2 + 5)...(c.rootChord * 0.6) }
         return (-c.noseLength + c.battery.size.l / 2 + 5)...(c.rootChord)
     }
@@ -195,6 +195,9 @@ struct Analysis {
         }
         if staticMargin < 0 { add(.warning, "Balance", "Currently tail-heavy (unstable)", "Negative static margin with the current battery position.") }
 
+        if !c.kind.isTailless && !c.hasAilerons {
+            add(.warning, "Controls", "No ailerons on a flat wing", "Without dihedral, rudder-only planes roll very slowly. Choose a layout with ailerons.")
+        }
         // Tail
         if !c.kind.isTailless {
             if tailVolumeH < 0.3 { add(.warning, "Stability", "Horizontal tail volume \(String(format: "%.2f", tailVolumeH))", "Below 0.30 – pitch will be twitchy. Bigger stab or longer tail arm.") }
@@ -232,7 +235,7 @@ struct Analysis {
         if let bend = st.tailBendDeg, let twist = st.tailTwistDeg {
             let speed = f0(st.loadSpeed)
             let twistFix = c.kind.isTwinBoom ? "Increase the boom spacing (stab span) or shorten the tail arm."
-                : (c.fuselageType == .laminatedTube ? "Increase fuselage height or shorten the tail arm." : "Choose \(c.fuselageType == .cross ? "“Laminated cross” or " : "")“Laminated + tube”, increase fuselage height or shorten the tail arm.")
+                : (c.fuselageType == .cross ? "Choose “Laminated cross”, increase fuselage height or shorten the tail arm." : "Increase fuselage height, stiffer foam or shorten the tail arm.")
             if twist >= 5 { add(.error, "Structure", "Fuselage twists too much", "\(f1(twist))° twist at full rudder, \(speed) km/h – the tail will flutter and rudder input rolls the plane. \(twistFix)") }
             else if twist >= 2 { add(.warning, "Structure", "Fuselage is soft in torsion", "\(f1(twist))° twist at full rudder, \(speed) km/h. \(twistFix)") }
             else { add(.ok, "Structure", "Torsion OK", "\(f1(twist))° twist at full rudder, \(speed) km/h (\(c.kind.isTwinBoom ? "twin booms" : c.fuselageType.name)).") }
@@ -248,7 +251,7 @@ struct Analysis {
             let clear = c.motorNotchWidth / 2 - r
             add(.ok, "Geometry", "Motor sits in the trailing-edge cutout", "\(f0(c.motorNotchWidth)) × \(f0(c.motorNotchDepth)) mm cutout, \(f1(clear)) mm prop clearance each side.")
             if c.battery.size.l > c.rootChord * 0.7 { add(.warning, "Geometry", "Battery long for the centre section", "Battery \(f0(c.battery.size.l)) mm vs root chord \(f0(c.rootChord)) mm.") }
-        } else if c.kind.isPusher {
+        } else if c.kind.isTwinBoom {
             let w = TaperedPanel(rootChord: c.rootChord, tipChord: c.tipChord, sweep: c.sweep, semiSpan: c.semiSpan)
             let propPlane = c.propPlaneZ
             let maxTE = stride(from: 0.0, through: min(r + 3, c.semiSpan), by: 2).map { w.te($0) }.max() ?? 0

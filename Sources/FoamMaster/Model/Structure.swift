@@ -62,21 +62,16 @@ struct StructureReport {
         // Cross fuselage at mid boom: vertical web (upper + plate + lower) and horizontal plate.
         let fh = c.fuselageHeight
         let tw = t * Double(c.fuselageType.webLayers)
-        let hWing = fh * 0.5 - t / 2, hBoom = max(10, fh * 0.16)
+        let hWing = fh * 0.5 - t / 2, hBoom = c.boomTopHeight
         let hu = (hWing * 0.9 + hBoom) / 2
-        let hl = (hWing + max(8, fh * 0.1)) / 2
+        let hl = (hWing + c.lowerTailHeight) / 2
         let H = hu + t + hl
-        let W = c.fuselagePlateWidth, wb = max(12, W * 0.45), wp = (W + wb) / 2
+        let W = c.fuselagePlateWidth, wb = c.plateTailWidth, wp = (W + wb) / 2
         // Bending: foam web + 4 carbon chords (top/bottom edge, both sides) + optional tube near the axis.
         let chordArm = H / 2 - 1.5
         var EIv = E * tw * H * H * H / 12 + Self.carbonE * 4 * 1.5 * chordArm * chordArm
         // Torsion: open thin-walled section Σ b·t³/3 (laminated layers act as one thick web).
         var GJ = G * ((hu + hl) * tw * tw * tw / 3 + wp * t * t * t / 3)
-        if c.fuselageType.hasTube {
-            let D = CarbonSpar.tube4.widthMM, d = D - 1
-            EIv += Self.carbonE * Double.pi / 64 * (pow(D, 4) - pow(d, 4))
-            GJ += Self.carbonTubeG * Double.pi / 32 * (pow(D, 4) - pow(d, 4))
-        }
         bendingStiffness = EIv
         torsionStiffness = GJ
         tailBendDeg = Fh * boom * boom / (2 * EIv) * 180 / .pi

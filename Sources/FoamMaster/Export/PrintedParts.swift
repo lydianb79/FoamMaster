@@ -46,10 +46,6 @@ enum PrintedParts {
                                    quantity: g.count, mesh: servoFrame(cutout: g.size, foam: t), note: "press-fit into servo cutout"))
         }
 
-        if c.kind.hasFuselage && c.dihedral >= 0.5 {
-            out.append(PrintedPart(name: "Dihedral joiner \(Int(c.dihedral))°", fileName: "dihedral_joiner_\(Int(c.dihedral))deg", quantity: 1,
-                                   mesh: dihedralJoiner(angle: c.dihedral, chord: c.rootChord, foam: t), note: "glued under the wing/plate joint, sets the dihedral"))
-        }
         out.append(PrintedPart(name: "Battery tray", fileName: "battery_tray_\(c.battery.rawValue)", quantity: 1,
                                mesh: batteryTray(c.battery), note: "velcro base with side rails"))
         return out
