@@ -2,6 +2,8 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject var project: Project
+    /// Changing the theme rebuilds the whole view tree with the new colours.
+    @AppStorage(ThemePalette.storageKey) private var theme = ThemePalette.defaultName
     var body: some View {
         ZStack {
             Theme.background
@@ -28,6 +30,7 @@ struct RootView: View {
                     .zIndex(10)
             }
         }
+        .id(theme)
         .ignoresSafeArea(.container, edges: .top)
         .animation(.easeInOut(duration: 0.3), value: project.config == nil)
         .animation(.spring(duration: 0.35), value: project.statusMessage)
@@ -280,7 +283,11 @@ struct SetupSheet: View {
                     Text("Tailless: two elevons (combined aileron + elevator), one servo each.").font(.system(size: 11)).foregroundStyle(.secondary)
                     OptionTiles(selection: $fins, options: TaillessFins.allCases, title: \.name, detail: \.detail, tint: kind.tint)
                 } else {
-                    OptionTiles(selection: $layout, options: [.aileronElevator, .full], title: \.title, detail: \.detail, tint: kind.tint)
+                    if kind.isTwinBoom {
+                        Text("Twin boom: ailerons + elevator, fixed twin fins (no rudder).").font(.system(size: 11)).foregroundStyle(.secondary)
+                    } else {
+                        OptionTiles(selection: $layout, options: [.aileronElevator, .full], title: \.title, detail: \.detail, tint: kind.tint)
+                    }
                     OptionTiles(selection: $winglets, options: [false, true], title: { $0 ? "Winglets" : "Plain tips" },
                                 detail: { $0 ? "Side-mounted winglets at both wing tips" : "Straight wing tips" }, tint: kind.tint)
                     if layout.ailerons && kind.allowsSingleAileronServo {

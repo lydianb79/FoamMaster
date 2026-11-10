@@ -1,10 +1,40 @@
 import SwiftUI
 
+/// A colour theme: background gradient and the two accent colours (status colours stay the same in all themes).
+struct ThemePalette: Identifiable {
+    var name: String
+    var bgTop: Color
+    var bgBottom: Color
+    var accent: Color
+    var violet: Color
+    var id: String { name }
+
+    static let all: [ThemePalette] = [
+        ThemePalette(name: "Midnight", bgTop: Color(red: 0.035, green: 0.045, blue: 0.09), bgBottom: Color(red: 0.09, green: 0.06, blue: 0.17),
+                     accent: Color(red: 0.25, green: 0.78, blue: 1.0), violet: Color(red: 0.58, green: 0.42, blue: 1.0)),
+        ThemePalette(name: "Ocean", bgTop: Color(red: 0.02, green: 0.07, blue: 0.09), bgBottom: Color(red: 0.02, green: 0.13, blue: 0.17),
+                     accent: Color(red: 0.2, green: 0.9, blue: 0.82), violet: Color(red: 0.3, green: 0.55, blue: 1.0)),
+        ThemePalette(name: "Sunset", bgTop: Color(red: 0.09, green: 0.03, blue: 0.06), bgBottom: Color(red: 0.19, green: 0.06, blue: 0.09),
+                     accent: Color(red: 1.0, green: 0.66, blue: 0.25), violet: Color(red: 1.0, green: 0.36, blue: 0.56)),
+        ThemePalette(name: "Forest", bgTop: Color(red: 0.03, green: 0.07, blue: 0.05), bgBottom: Color(red: 0.05, green: 0.12, blue: 0.08),
+                     accent: Color(red: 0.56, green: 0.94, blue: 0.4), violet: Color(red: 0.2, green: 0.78, blue: 0.64)),
+        ThemePalette(name: "Graphite", bgTop: Color(red: 0.07, green: 0.07, blue: 0.08), bgBottom: Color(red: 0.13, green: 0.13, blue: 0.15),
+                     accent: Color(red: 0.78, green: 0.84, blue: 0.95), violet: Color(red: 0.55, green: 0.6, blue: 0.72)),
+    ]
+    static let storageKey = "theme"
+    static let defaultName = "Midnight"
+}
+
 enum Theme {
-    static let bgTop = Color(red: 0.035, green: 0.045, blue: 0.09)
-    static let bgBottom = Color(red: 0.09, green: 0.06, blue: 0.17)
-    static let accent = Color(red: 0.25, green: 0.78, blue: 1.0)
-    static let violet = Color(red: 0.58, green: 0.42, blue: 1.0)
+    /// Selected theme (View ▸ Theme), stored in the user defaults.
+    static var palette: ThemePalette {
+        let name = UserDefaults.standard.string(forKey: ThemePalette.storageKey) ?? ThemePalette.defaultName
+        return ThemePalette.all.first { $0.name == name } ?? ThemePalette.all[0]
+    }
+    static var bgTop: Color { palette.bgTop }
+    static var bgBottom: Color { palette.bgBottom }
+    static var accent: Color { palette.accent }
+    static var violet: Color { palette.violet }
     static let orange = Color(red: 1.0, green: 0.52, blue: 0.2)
     static let good = Color(red: 0.25, green: 0.9, blue: 0.55)
     static let warn = Color(red: 1.0, green: 0.75, blue: 0.2)
@@ -19,7 +49,7 @@ enum Theme {
         .ignoresSafeArea()
     }
 
-    static let accentGradient = LinearGradient(colors: [accent, violet], startPoint: .leading, endPoint: .trailing)
+    static var accentGradient: LinearGradient { LinearGradient(colors: [accent, violet], startPoint: .leading, endPoint: .trailing) }
 
     static func color(_ s: Severity) -> Color {
         switch s { case .ok: return good; case .info: return accent; case .warning: return warn; case .error: return bad }

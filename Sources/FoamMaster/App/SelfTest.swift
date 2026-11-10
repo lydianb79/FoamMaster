@@ -240,6 +240,28 @@ enum SelfTest {
                 print("   channels \(kind.title): " + d.channelPlan.map { "CH\($0.channel) \($0.function)" }.joined(separator: ", "))
             }
         }
+        // Horn slots must sit 6 mm behind their hinge (the horn's hole is 6 mm ahead of the slot centre).
+        for kind in AircraftKind.allCases {
+            for one in [false, true] where !one || kind.allowsSingleAileronServo {
+                var c = kind.defaults; if one { c.aileronServos = 1 }
+                let d = DesignBuilder.build(c)
+                var offsets: [Double] = []
+                for part in d.parts {
+                    let hinges: [(Vec2, Vec2)] = part.features.compactMap { if case let .hinge(a, b) = $0 { return (a, b) }; return nil }
+                    for h in part.holes where h.kind == .hornSlot {
+                        let cpt = Poly.centroid(h.polygon)
+                        // hinge u at the slot's station (v), from the hinge segment covering it
+                        let cands = hinges.compactMap { (a, b) -> Double? in
+                            let lo = min(a.y, b.y) - 0.5, hi = max(a.y, b.y) + 0.5
+                            guard cpt.y >= lo && cpt.y <= hi, abs(b.y - a.y) > 1e-6 else { return nil }
+                            return a.x + (b.x - a.x) * (cpt.y - a.y) / (b.y - a.y)
+                        }
+                        if let u = cands.min(by: { abs(cpt.x - $0 - 6) < abs(cpt.x - $1 - 6) }) { offsets.append(cpt.x - u) }
+                    }
+                }
+                print("   horns \(kind.title)\(one ? " 1-servo" : ""): \(offsets.count) slots, slot − hinge = " + offsets.map { String(format: "%.2f", $0) }.joined(separator: ", "))
+            }
+        }
         // Tail close-ups from the side with the elevator up: the rudder cut-out must clear it.
         for kind in [AircraftKind.trainer, .jet, .nutBall] {
             let c = Project.balanced(kind.defaults)

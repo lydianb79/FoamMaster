@@ -258,19 +258,21 @@ enum PrintedParts {
 
     /// Control horn: base flange glued on the surface, a tab below it for the 10 × 1.6 mm horn slot (depth = foam
     /// thickness − 0.5 mm, so it never pokes out the other side), and a triangular horn plate rising to a round boss
-    /// with the pushrod hole right above the hinge line (the slot sits 6 mm behind the hinge).
+    /// with the pushrod hole exactly above the hinge line (every horn slot sits 6 mm behind its hinge).
     /// Mesh frame: x along the chord (+x aft), z up from the surface, plate in the x–z plane.
     static let hornHoleHeight = 10.0
     static func controlHorn(foam t: Double) -> Mesh3D {
         let flangeT = 1.2, plateT = 1.6, H = hornHoleHeight, r = 3.0
-        var mesh = Mesh3D.box(min: [-9.5, -3, 0], max: [9.5, 3, flangeT])
+        // The slot centre is 6 mm behind the hinge: the hole (x = −6) is exactly over the hinge line, while flange
+        // and plate start 0.5 mm behind it – nothing touches the fixed surface, the boss overhangs in the air.
+        let cx = -6.0, front = cx + 0.5
+        var mesh = Mesh3D.box(min: [front, -3, 0], max: [9.5, 3, flangeT])
         mesh.append(.box(min: [-4.8, -0.7, -(t - 0.5)], max: [4.8, 0.7, 0]))     // tab in the slot
-        let cx = -6.0                                                           // hole above the hinge line
-        let arc: [Vec2] = (0...14).map { k in
-            let a = (70.0 + 130.0 * Double(k) / 14) * .pi / 180
+        let arc: [Vec2] = (0...16).map { k in
+            let a = (65.0 + 150.0 * Double(k) / 16) * .pi / 180
             return Vec2(cx + r * cos(a), H + r * sin(a))
         }
-        let profile = Poly.ccw([Vec2(9.5, 0), Vec2(9.5, flangeT + 0.8)] + arc + [Vec2(cx - r * 1.05, 0)])
+        let profile = Poly.ccw([Vec2(9.5, 0), Vec2(9.5, flangeT + 0.8)] + arc + [Vec2(front, flangeT)])
         let hole = [Poly.circle(Vec2(cx, H), 0.95, segments: 16)]                // Ø1.9 for Z-bend / clevis / EZ connector
         let plate = Mesh3D.extrude(profile, holes: hole, z0: -plateT / 2, z1: plateT / 2)
             .transformed { p in SIMD3<Double>(p.x, p.z, p.y) }                   // profile (x, z), thickness along y

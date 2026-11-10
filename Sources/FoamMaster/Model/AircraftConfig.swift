@@ -225,8 +225,9 @@ struct AircraftConfig: Codable, Equatable {
     var motorCount: Int { isDual ? 2 : 1 }
     /// Effective pusher configuration (dual layouts are always tractors).
     var isPusher: Bool { kind.isPusher && !isDual }
-    /// The NutBall always has its rudder (it turns with it); tailed planes may leave it out.
-    var hasRudder: Bool { kind.isNutBall || (kind.hasTail && rudder) }
+    /// The NutBall always has its rudder (it turns with it); the twin boom never has one (fixed twin fins);
+    /// the other tailed planes may leave it out.
+    var hasRudder: Bool { kind.isNutBall || (kind.hasTail && !kind.isTwinBoom && rudder) }
 
     init(kind: AircraftKind) {
         self.kind = kind

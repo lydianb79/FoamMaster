@@ -39,7 +39,6 @@ enum BuildDocs {
         if c.kind.isTwinBoom {
             let len = c.tailArm + c.hStabChord * 0.55 - c.rootChord * 0.15
             items.append(BOMItem(category: "Carbon", item: CarbonSpar.tube4.name, spec: "Tail booms, \(Int(ceil(len / 10) * 10)) mm each, glued into grooves under wing and stabiliser", quantity: "2×"))
-            items.append(BOMItem(category: "Carbon", item: "Carbon rod Ø1 mm", spec: "Rudder link wire across the stab", quantity: "1×"))
         }
         if c.isDual {
             items.append(BOMItem(category: "Carbon", item: "Carbon flat strip 3 × 0.5 mm", spec: "Leading-edge reinforcement between the motors, \(Int(c.dualMotorX * 2 + 40)) mm", quantity: "1×"))
@@ -96,7 +95,7 @@ enum BuildDocs {
             s.append(BuildStep(title: "Mid-mounted motor", text: "Push the + shaped motor mount onto the rear end of the front fuselage halves so the prop sits in the middle of the slot. Check the prop clears the slot edges all round.", symbol: "fanblades"))
         }
         if c.kind.isTwinBoom {
-            s.append(BuildStep(title: "Pod, booms & twin fins", text: "Key the pod nose plate into the wing leading edge, then glue the pod top and bottom halves on with their tabs. Groove the wing and stabiliser undersides along the boom lines, glue in both Ø4 mm carbon booms parallel to the pod. Push the fin tabs through the stabiliser slots. Link both rudders with a wire across the stab.", symbol: "rectangle.split.3x1"))
+            s.append(BuildStep(title: "Pod, booms & twin fins", text: "Key the pod nose plate into the wing leading edge, then glue the pod top and bottom halves on with their tabs. Groove the wing and stabiliser undersides along the boom lines, glue in both Ø4 mm carbon booms parallel to the pod. Push the fin tabs through the stabiliser slots.", symbol: "rectangle.split.3x1"))
             s.append(BuildStep(title: "Mount the pusher motor", text: "Slide the printed mount over the pod tail and glue. Prop clearance to the booms is checked by FoamMaster – verify it turns freely.", symbol: "fanblades"))
         } else if c.kind.isNutBall {
             s.append(BuildStep(title: "Spine, fin & keel", text: "Press the tabs of the spine (with the fin) into the centre-line slots on top of the disc and the keel from below. Check both are exactly 90° to the disc – the + section keeps the disc flat and carries the motor mount.", symbol: "plus"))
@@ -121,7 +120,7 @@ enum BuildDocs {
         s.append(BuildStep(title: "Set throws & first flight", text: c.kind.isTailless
             ? "Elevon throws: ±8 mm pitch, ±6 mm roll, 30 % expo. Trim elevons 1–2 mm up. Hand-launch firmly level at ~70 % throttle."
             : c.kind.isNutBall ? "Throws: elevator ±12 mm, rudder ±20 mm, 40 % expo – a NutBall needs big throws and flies very slowly. Hand-launch level at ~50 % throttle."
-            : "Throws: elevator ±8 mm, rudder ±12 mm\(c.hasAilerons ? ", ailerons ±10 mm" : ""), 30 % expo. Hand-launch level at ~60 % throttle into the wind.", symbol: "paperplane"))
+            : "Throws: elevator ±8 mm\(c.hasRudder ? ", rudder ±12 mm" : "")\(c.hasAilerons ? ", ailerons ±10 mm" : ""), 30 % expo. Hand-launch level at ~60 % throttle into the wind.", symbol: "paperplane"))
         return s
     }
 }

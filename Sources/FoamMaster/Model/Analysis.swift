@@ -265,10 +265,11 @@ struct Analysis {
             let speed = f0(st.loadSpeed)
             let twistFix = c.kind.isTwinBoom ? "Increase the boom spacing (stab span) or shorten the tail arm."
                 : "Increase fuselage height, use thicker/stiffer foam or shorten the tail arm."
-            // Worst case: full rudder at twice the stall speed.
-            if twist >= 6 { add(.error, "Structure", "Fuselage twists too much", "\(f1(twist))° twist at full rudder, \(speed) km/h – the tail will flutter and rudder input rolls the plane. \(twistFix)") }
-            else if twist >= 3 { add(.warning, "Structure", "Fuselage is soft in torsion", "\(f1(twist))° twist at full rudder, \(speed) km/h. \(twistFix)") }
-            else { add(.ok, "Structure", "Torsion OK", "\(f1(twist))° twist at full rudder, \(speed) km/h (\(c.kind.isTwinBoom ? "twin booms" : c.fuselageType.name)).") }
+            // Worst case: full rudder (or, without a rudder, an equally strong side gust on the fin) at twice the stall speed.
+            let load = c.hasRudder ? "full rudder" : "a strong side gust"
+            if twist >= 6 { add(.error, "Structure", "Fuselage twists too much", "\(f1(twist))° twist at \(load), \(speed) km/h – the tail will flutter\(c.hasRudder ? " and rudder input rolls the plane" : ""). \(twistFix)") }
+            else if twist >= 3 { add(.warning, "Structure", "Fuselage is soft in torsion", "\(f1(twist))° twist at \(load), \(speed) km/h. \(twistFix)") }
+            else { add(.ok, "Structure", "Torsion OK", "\(f1(twist))° twist at \(load), \(speed) km/h (\(c.kind.isTwinBoom ? "twin booms" : c.fuselageType.name)).") }
             let bendFix = c.kind.isTwinBoom ? "Shorten the tail arm or use a smaller stabiliser." : "Increase fuselage height or shorten the tail arm."
             if bend >= 3 { add(.error, "Structure", "Tail boom bends too much", "\(f1(bend))° tail deflection at full elevator. \(bendFix)") }
             else if bend >= 1 { add(.warning, "Structure", "Tail boom flexes", "\(f1(bend))° tail deflection at full elevator. \(bendFix)") }

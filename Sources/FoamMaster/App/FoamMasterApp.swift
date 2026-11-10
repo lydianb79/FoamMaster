@@ -5,6 +5,7 @@ import AppKit
 struct FoamMasterApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var project = Project()
+    @AppStorage(ThemePalette.storageKey) private var theme = ThemePalette.defaultName
 
     init() {
         let args = CommandLine.arguments
@@ -30,6 +31,13 @@ struct FoamMasterApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New Model…") { project.config = nil }.keyboardShortcut("n")
             }
+            CommandMenu("Theme") {
+                Picker("Theme", selection: $theme) {
+                    ForEach(ThemePalette.all) { Text($0.name + ($0.name == ThemePalette.defaultName ? " (default)" : "")).tag($0.name) }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
             CommandMenu("Model") {
                 Button("Randomize") { project.randomize() }.keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(project.config == nil)
@@ -45,6 +53,10 @@ struct FoamMasterApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// No window tabs – removes "Show Tab Bar" / "Show All Tabs" from the View menu.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"), let icon = NSImage(contentsOf: url) {

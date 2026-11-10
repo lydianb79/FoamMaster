@@ -129,7 +129,7 @@ struct ParameterContent: View {
                                 ParamSlider(label: "Winglet height", unit: "mm", value: bind(\.wingletHeight), range: range(\.wingletHeight, c), step: 1)
                             }
                         }
-                        if c.kind.hasTail {
+                        if c.kind.hasTail && !c.kind.isTwinBoom {
                             Picker("", selection: Binding(get: { ControlLayout(ailerons: true, rudder: c.rudder) },
                                                           set: { project.config?.ailerons = $0.ailerons; project.config?.rudder = $0.rudder })) {
                                 Text("A + E").tag(ControlLayout.aileronElevator)
