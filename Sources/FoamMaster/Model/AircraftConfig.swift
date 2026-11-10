@@ -45,7 +45,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         case .twinBoom: return "Pod, carbon booms, twin fins"
         case .jet: return "Swept wing · prop-slot pusher"
         case .trainer: return "Big flat wing · forgiving · ailerons"
-        case .aerobat: return "Huge surfaces · 4 channels"
+        case .aerobat: return "Huge surfaces · full 3D control"
         case .glider: return "High aspect ratio · thermal"
         case .nutBall: return "Round flat wing · rudder + elevator"
         }
@@ -95,6 +95,8 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
     }
 
     var isTwinBoom: Bool { self == .twinBoom }
+    /// One central aileron servo is only offered where the wing halves meet a fuselage (not twin boom / jet).
+    var allowsSingleAileronServo: Bool { hasFuselage && !isJet }
     /// Tailed aircraft with a full-length fuselage (fuselage structure option applies).
     var hasFuselage: Bool { hasTail && !isTwinBoom }
 
@@ -198,7 +200,7 @@ struct AircraftConfig: Codable, Equatable {
     /// Battery centre position measured aft of the root leading edge (mm, negative = forward).
     var batteryPosition: Double = 0
     var fuselageType: FuselageType = .cross
-    /// 1 = one central servo driving both ailerons via torque rods, 2 = one servo per aileron.
+    /// 1 = one central servo driving both ailerons with a double arm and two pushrods, 2 = one servo per aileron.
     var aileronServos: Int = 2
     /// Control layout (tailed aircraft). Tailless aircraft always use two elevons.
     var ailerons: Bool = false

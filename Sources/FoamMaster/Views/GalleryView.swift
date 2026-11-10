@@ -39,14 +39,16 @@ extension AircraftKind {
         switch self {
         case .flyingWing: return ["Tailless", "Pusher", "Elevons"]
         case .delta: return ["Tailless", "Pusher", "High speed"]
-        case .twinBoom: return ["Twin boom", "Pusher / dual", "4-ch"]
-        case .jet: return ["Jet", "Prop slot", "4-ch"]
+        case .twinBoom: return ["Twin boom", "Pusher / dual", "\(Self.defaultChannels[self]!)-ch"]
+        case .jet: return ["Jet", "Prop slot", "\(Self.defaultChannels[self]!)-ch"]
         case .trainer: return ["Tractor", "Flat wing", "Easy"]
-        case .aerobat: return ["Tractor", "4-ch", "3D"]
+        case .aerobat: return ["Tractor", "\(Self.defaultChannels[self]!)-ch", "3D"]
         case .glider: return ["Tractor", "Long span", "Thermal"]
         case .nutBall: return ["Tractor", "Round wing", "Slow & easy"]
         }
     }
+    /// Receiver channels of each default design (servos + throttle).
+    static let defaultChannels: [AircraftKind: Int] = Dictionary(uniqueKeysWithValues: AircraftKind.allCases.map { ($0, DesignBuilder.build($0.defaults).channels) })
     /// One accent colour for every type – the shapes and tags tell them apart.
     var tint: Color { Theme.accent }
 }
@@ -206,7 +208,7 @@ struct SetupChoice {
 enum ControlLayout: String, CaseIterable, Hashable {
     case rudderElevator, aileronElevator, full
     var title: String { [.rudderElevator: "Rudder + elevator", .aileronElevator: "Ailerons + elevator", .full: "Ailerons + elevator + rudder"][self]! }
-    var detail: String { [.rudderElevator: "2 channels – easy, stable", .aileronElevator: "3 channels – no rudder", .full: "4 channels – full aerobatics"][self]! }
+    var detail: String { [.rudderElevator: "Easy, stable", .aileronElevator: "No rudder – simpler, lighter", .full: "Full control – aerobatics"][self]! }
     var ailerons: Bool { self != .rudderElevator }
     var rudder: Bool { self != .aileronElevator }
     init(ailerons: Bool, rudder: Bool) { self = ailerons ? (rudder ? .full : .aileronElevator) : .rudderElevator }
@@ -240,7 +242,7 @@ struct SetupSheet: View {
         c.taillessFins = fins; c.motorLayout = motors
         if preview.kind.hasTail { c.tailWinglets = winglets; c.ailerons = layout.ailerons }
         c.rudder = layout.rudder
-        c.aileronServos = preview.kind.isTwinBoom ? 2 : servos
+        c.aileronServos = preview.kind.allowsSingleAileronServo ? servos : 2
         return c
     }
 
@@ -273,7 +275,7 @@ struct SetupSheet: View {
             VStack(alignment: .leading, spacing: 16) {
             OptionGroup(title: "Control surfaces", symbol: "slider.horizontal.below.square.filled.and.square") {
                 if kind.isNutBall {
-                    Text("NutBall: rudder + elevator (2 channels). One-piece elevator across the trailing edge, rudder on the centre fin with a cut-out at its bottom so the elevator moves freely – the round wing turns with the rudder.").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text("NutBall: rudder + elevator – 3 channels with the throttle. One-piece elevator across the trailing edge, rudder on the centre fin with a cut-out at its bottom so the elevator moves freely – the round wing turns with the rudder.").font(.system(size: 11)).foregroundStyle(.secondary)
                 } else if kind.isTailless {
                     Text("Tailless: two elevons (combined aileron + elevator), one servo each.").font(.system(size: 11)).foregroundStyle(.secondary)
                     OptionTiles(selection: $fins, options: TaillessFins.allCases, title: \.name, detail: \.detail, tint: kind.tint)
@@ -281,17 +283,17 @@ struct SetupSheet: View {
                     OptionTiles(selection: $layout, options: [.aileronElevator, .full], title: \.title, detail: \.detail, tint: kind.tint)
                     OptionTiles(selection: $winglets, options: [false, true], title: { $0 ? "Winglets" : "Plain tips" },
                                 detail: { $0 ? "Side-mounted winglets at both wing tips" : "Straight wing tips" }, tint: kind.tint)
-                    if layout.ailerons && !kind.isTwinBoom {
+                    if layout.ailerons && kind.allowsSingleAileronServo {
                         OptionTiles(selection: $servos, options: [1, 2], title: { $0 == 1 ? "1 aileron servo" : "2 aileron servos" },
-                                    detail: { $0 == 1 ? "Central servo, torque rods to both ailerons" : "One servo in each wing half" }, tint: kind.tint)
+                                    detail: { $0 == 1 ? "Central servo with a double arm, pushrods to both ailerons" : "One servo in each wing half" }, tint: kind.tint)
                     }
                 }
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle.fill").foregroundStyle(kind.tint)
-                    Text("\(design.controls.surfaceCount) control surfaces · \(servoGroups.count) servos: " +
+                    Text("\(design.controls.surfaceCount) control surfaces · \(servoGroups.count) servos · \(design.channels) channels incl. throttle: " +
                          servoGroups.keys.sorted().map { key -> String in
                              let n = servoGroups[key]!.surfaceCount
-                             return n > 1 ? "\(key) → \(n) surfaces\(key.contains("torque") ? "" : ", linked")" : (key == "Elevator" ? "Elevator (one piece)" : key)
+                             return n > 1 ? "\(key) → \(n) surfaces\(key.contains("double arm") ? "" : ", linked")" : (key == "Elevator" ? "Elevator (one piece)" : key)
                          }.joined(separator: " · "))
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }

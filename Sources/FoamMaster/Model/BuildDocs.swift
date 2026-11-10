@@ -44,8 +44,8 @@ enum BuildDocs {
         if c.isDual {
             items.append(BOMItem(category: "Carbon", item: "Carbon flat strip 3 × 0.5 mm", spec: "Leading-edge reinforcement between the motors, \(Int(c.dualMotorX * 2 + 40)) mm", quantity: "1×"))
         }
-        if c.hasAilerons && c.aileronServos == 1 {
-            items.append(BOMItem(category: "Hardware", item: "Steel wire Ø1 mm torque rods", spec: "2 × 70 mm, L-bent into the aileron leading edges, brass tube bearings 2 × 15 mm", quantity: "2×"))
+        if c.hasAilerons && c.aileronServos == 1 && c.kind.allowsSingleAileronServo {
+            items.append(BOMItem(category: "Hardware", item: "Double-ended servo arm", spec: "Comes with the servo – one pushrod from each end to the horn on each aileron", quantity: "1×"))
         }
         if d.trussLength > 0 {
             items.append(BOMItem(category: "Carbon", item: "Carbon flat strip 3 × 0.5 mm", spec: "Zig-zag truss on both sides of the fuselage halves, total \(Int(ceil(d.trussLength / 10) * 10)) mm", quantity: "\(Int(ceil(d.trussLength / 1000)))× 1 m"))
@@ -66,7 +66,7 @@ enum BuildDocs {
                              spec: "\(c.kind.propBladeReason) · for the \(c.motor.name) on \(c.battery.cells)S – balance before use", quantity: "2× (spare)"))
         items.append(BOMItem(category: "Electronics", item: c.battery.name, spec: "\(c.battery.mass) g", quantity: "1×"))
         items.append(BOMItem(category: "Electronics", item: c.servo.name, spec: "\(c.servo.torque) kg·cm", quantity: "\(servoCount)×"))
-        items.append(BOMItem(category: "Electronics", item: "Receiver", spec: "\(max(4, servoCount + 1))+ channels, micro", quantity: "1×"))
+        items.append(BOMItem(category: "Electronics", item: "Receiver", spec: "\(d.channels)+ channels (\(servoCount) servo\(servoCount == 1 ? "" : "s") + throttle), micro", quantity: "1×"))
         if c.hasAilerons && c.aileronServos == 2 { items.append(BOMItem(category: "Electronics", item: "Servo extension", spec: "100 mm (aileron servos)", quantity: "2×")) }
         for p in PrintedParts.generate(d) {
             items.append(BOMItem(category: "3D printed", item: p.name, spec: "PETG/PLA, \(String(format: "%.1f", p.mass)) g, \(p.note)", quantity: "\(p.quantity)×"))
@@ -107,8 +107,8 @@ enum BuildDocs {
         } else {
             s.append(BuildStep(title: "Mount the motor", text: "Screw the motor onto the printed firewall (\(pat.label), heads sit flush in the counterbores) and push its + shaped clamp over the nose so it grips the plate and both fuselage halves. 1–2° right thrust can be shimmed with a washer.", symbol: "fanblades"))
         }
-        if c.hasAilerons && c.aileronServos == 1 {
-            s.append(BuildStep(title: "Aileron torque rods", text: "Bend two 1 mm wires into L-shapes, slide them through short brass tubes glued into the wing at the hinge line next to the fuselage and press the long legs into the aileron leading edges. The single aileron servo below the wing drives both rods with one pushrod each.", symbol: "arrow.triangle.branch"))
+        if c.hasAilerons && c.aileronServos == 1 && c.kind.allowsSingleAileronServo {
+            s.append(BuildStep(title: "Single aileron servo", text: "Stand the aileron servo upright in its cut-out in the fuselage plate (shaft up) – the cut-out in the bottom of the upper fuselage half leaves room for the servo and its arm. Fit a double-ended arm across the fuselage, centre it, and run one pushrod from each arm end aft to the horn at the inner end of each aileron. Check the arm swings freely at full throw without touching the fuselage.", symbol: "arrow.triangle.branch"))
         }
         if c.isDual {
             // Replace the single-motor step(s) with the twin-motor installation.

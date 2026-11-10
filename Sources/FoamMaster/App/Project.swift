@@ -41,7 +41,7 @@ final class Project: ObservableObject {
         var c = kind.defaults
         if let ailerons { c.ailerons = ailerons && kind.hasTail }
         if let rudder { c.rudder = rudder }
-        c.aileronServos = kind.isTwinBoom ? 2 : aileronServos
+        c.aileronServos = kind.allowsSingleAileronServo ? aileronServos : 2
         if let fins { c.taillessFins = fins }
         c.motorLayout = kind.allowsDualMotors ? motors : .single
         c.tailWinglets = winglets && kind.hasTail

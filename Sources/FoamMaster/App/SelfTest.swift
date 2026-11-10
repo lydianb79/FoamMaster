@@ -99,7 +99,7 @@ enum SelfTest {
                 r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: true), resetCamera: true)
                 if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("dual_\(kind.rawValue)_3d.png")) }
             }
-            for part in PrintedParts.generate(d) where part.fileName.contains("motor_mount") {
+            for part in PrintedParts.generate(d) where part.fileName.contains("motor_mount") || part.fileName.contains("nose_protector") {
                 try? part.mesh.stlData(name: part.name).write(to: dir.appendingPathComponent("dual_\(kind.rawValue)_\(part.fileName).stl"))
             }
         }
@@ -167,6 +167,21 @@ enum SelfTest {
                 if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("jet_side.png")) }
             }
             print("   jet window: fuselage \(Int(d.config.fuselageHeight)) mm (min \(Int(c.minFuselageHeight))), window ±\(Int(c.jetWindowHeight)) mm, prop gap \(String(format: "%.1f", a.propGap)) mm, feasible \(a.feasible)" + a.checks.filter { $0.severity >= .warning }.map { " [\($0.title)]" }.joined())
+        }
+        // Single aileron servo: standing servo + double arm, seen from above-behind.
+        for kind in [AircraftKind.trainer, .aerobat, .glider] {
+            var c = kind.defaults; c.aileronServos = 1
+            c = Project.balanced(c)
+            let d = DesignBuilder.build(c); let a = Analysis(design: d)
+            print("   1-servo \(kind.title): \(d.controls.surfaceCount) surfaces, \(Set(d.controls.map(\.servoID)).count) servos, \(d.channels) ch, feasible \(a.feasible)" + d.geometryIssues.map { " [\($0)]" }.joined())
+            if kind == .trainer {
+                let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+                if let r = Renderer(view: view) {
+                    r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
+                    r.target = SIMD3<Float>(0, 10, 30); r.zoom = 0.16; r.yaw = 0.5; r.pitch = 0.75
+                    if let img = r.snapshot(width: 1000, height: 700) { savePNG(img, dir.appendingPathComponent("aileron_single.png")) }
+                }
+            }
         }
         // Tail close-ups from the side with the elevator up: the rudder cut-out must clear it.
         for kind in [AircraftKind.trainer, .jet, .nutBall] {

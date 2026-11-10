@@ -177,7 +177,7 @@ enum SceneBuilder {
                 scene.addLine(p, [c.motorXs.min(by: { abs($0 - p.x) < abs($1 - p.x) }) ?? 0, 0, c.motorZ], color: SIMD4(0.9, 0.3, 0.3, 0.8))
             case "Radio" where item.name.hasPrefix("Receiver"):
                 let size: SIMD3<Double> = c.kind.isTailless ? [10, 3, 14] : [3, 10, 14]
-                scene.label = "Receiver – micro, \(max(4, Set(d.controls.map(\.servoID)).count + 1))+ channels"
+                scene.label = "Receiver – micro, \(d.channels)+ channels (servos + throttle)"
                 scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.receiver)
             case "Printed" where item.name.hasPrefix("Motor mount"):
                 // The real clamp mount: plate on the firewall, jaws over the structure (aft for tractors, forward for pushers).
@@ -185,6 +185,10 @@ enum SceneBuilder {
                 let placed = c.isPusher ? mesh.transformed { q in SIMD3<Double>(-q.x, q.y, -q.z) } : mesh
                 scene.label = "Motor mount (printed) – \(c.motor.pattern.label), clamp for \(Int(t)) mm foam"
                 scene.addMesh(placed.translated([p.x, 0, c.firewallZ]), color: Palette.printed)
+            case "Printed" where item.name.hasPrefix("Nose protector"):
+                let z0 = c.kind.isTailless ? 0 : -c.noseLength
+                scene.label = c.kind.isTailless ? "Nose protector (printed) – apex guard" : "Nose protector (printed) – + clamp with bumper"
+                scene.addMesh(PrintedParts.noseProtector(for: c).translated([0, 0, z0]), color: Palette.printed)
             case "Printed":
                 continue   // horns are drawn with their linkages
             case "Hardware" where item.name.hasPrefix("Tail booms"):
@@ -197,12 +201,14 @@ enum SceneBuilder {
                 if item.name.hasPrefix("Servo") {
                     let s = c.servo.size
                     // H sideways (shaft axis), W vertical, L fore-aft – see DesignBuilder.armTip.
-                    let size: SIMD3<Double> = [s.h, s.w, s.l]
+                    // The single central aileron servo stands upright in the plate (shaft up): W sideways, H vertical.
+                    let standing = item.name.contains("double arm")
+                    let size: SIMD3<Double> = standing ? [s.w, s.h, s.l] : [s.h, s.w, s.l]
                     scene.label = "\(item.name) – \(c.servo.name)"
                     scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.servo)
                     // Printed servo frame flange around the cutout.
-                    let inWing = abs(p.y) < 0.5
-                    let cut = inWing ? Vec2(s.l + 0.4, s.h + 0.4) : Vec2(s.l + 0.4, s.w + 0.4)
+                    let inWing = abs(p.y) < 0.5 || standing
+                    let cut = standing ? Vec2(s.l + 0.4, s.w + 0.4) : (inWing ? Vec2(s.l + 0.4, s.h + 0.4) : Vec2(s.l + 0.4, s.w + 0.4))
                     let ring = Mesh3D.extrude(Poly.rect(center: .zero, size: cut + Vec2(5, 5)), holes: [Poly.rect(center: .zero, size: cut)], z0: 0, z1: 1.2)
                     let placed = inWing ? ring.transformed { q in SIMD3<Double>(p.x + q.y, t / 2 + q.z, p.z + q.x) }
                                         : ring.transformed { q in SIMD3<Double>(tw / 2 + q.z, p.y + q.y, p.z + q.x) }
@@ -214,9 +220,18 @@ enum SceneBuilder {
         // Linkages: servo arm (white), pushrod, and the printed horn standing out of the surface.
         for ctrl in d.controls {
             let arm = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition
-            let shaft = arm - [0, 10, 0]
-            scene.label = "Servo arm – \(ctrl.name)"
-            scene.addMesh(.box(min: simd_min(shaft, arm) - [0.8, 0, 2], max: simd_max(shaft, arm) + [0.8, 0, 2]), color: Palette.linkage)
+            if ctrl.servoID.contains("double arm") {
+                // Double-ended arm on the standing servo: hub on the shaft, one half towards each aileron pushrod.
+                let hub = SIMD3<Double>(0, arm.y, arm.z)
+                scene.label = "Double servo arm – both ailerons"
+                scene.addMesh(.box(min: simd_min(hub, arm) - [0, 0.8, 2], max: simd_max(hub, arm) + [0, 0.8, 2]), color: Palette.linkage)
+                scene.addMesh(cylinder(center: hub - [0, 1.5, 0], radius: 2.6, length: 3).transformed { q in
+                    SIMD3<Double>(q.x, hub.y - 1.5 + (q.z - (hub.z)), hub.z + (q.y - (hub.y - 1.5))) }, color: Palette.linkage)
+            } else {
+                let shaft = arm - [0, 10, 0]
+                scene.label = "Servo arm – \(ctrl.name)"
+                scene.addMesh(.box(min: simd_min(shaft, arm) - [0.8, 0, 2], max: simd_max(shaft, arm) + [0.8, 0, 2]), color: Palette.linkage)
+            }
             scene.addLine(arm, ctrl.hornPosition, color: SIMD4(0.9, 0.9, 0.95, 0.9))
             let a = ctrl.hornAxis
             let base = ctrl.hornPosition - a * 9

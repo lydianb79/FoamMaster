@@ -120,7 +120,7 @@ struct ParameterContent: View {
                             .pickerStyle(.segmented).labelsHidden()
                             .help("Control layout: rudder, ailerons, elevator")
                         }
-                        if c.hasAilerons && !c.kind.isTwinBoom {
+                        if c.hasAilerons && c.kind.allowsSingleAileronServo {
                             Picker("", selection: bind(\.aileronServos)) {
                                 Text("1 aileron servo").tag(1)
                                 Text("2 aileron servos").tag(2)

@@ -337,7 +337,7 @@ struct ControlsCard: View {
     }
 
     func linkNote(_ servo: String, _ n: Int) -> String {
-        if servo.contains("torque") { return " · one servo, torque rods" }
+        if servo.contains("double arm") { return " · one servo, double arm + 2 pushrods" }
         if servo == "Rudders" { return " · twin rudders linked by a wire" }
         if servo == "Elevator" { return " · one-piece elevator" }
         return ""

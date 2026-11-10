@@ -29,6 +29,12 @@ enum PrintedParts {
                                    mesh: motorMount(for: c),
                                    note: "\(c.motor.pattern.label) motor pattern, + clamp for \(Int(t)) mm foam, M2 clamp bolt – " + (c.kind.isTailless ? "front of the trailing-edge cutout" : (c.kind.isTwinBoom ? "pod tail" : (c.kind.isJet ? "front of the prop slot" : (c.kind.isNutBall ? "nose of the disc" : "fuselage nose"))))))
         }
+        if c.isDual {
+            out.append(PrintedPart(name: "Nose protector", fileName: "nose_protector_\(c.kind.isTailless ? "apex" : "cross_\(Int(t))mm")", quantity: 1,
+                                   mesh: noseProtector(for: c),
+                                   note: c.kind.isTailless ? "glue-on apex guard following the swept leading edge – protects the nose on landings"
+                                                           : "+ clamp for \(Int(t)) mm foam with a bumper pad – protects the nose on landings (no motor in the nose)"))
+        }
         if !d.controls.isEmpty {
             out.append(PrintedPart(name: "Control horn", fileName: "control_horn_\(Int(t))mm", quantity: d.controls.count,
                                    mesh: controlHorn(foam: t), note: "tab fits a 10 × 1.6 mm slot"))
@@ -121,21 +127,24 @@ enum PrintedParts {
     /// The firewall carries the motor's own hole pattern with counterbores so the screw heads sit flush (the foam
     /// butts against the back face). Holes that end up under a jaw get an access bore through the jaw, so the
     /// motor can be screwed on before the clamp is pushed onto the foam.
-    static func motorMount(_ m: MotorClass, foam t: Double, webTop: Double?, webBottom: Double?, standoff: Double = 0) -> Mesh3D {
+    /// `blank`: solid front plate without the motor holes – used for the nose protector of dual-motor layouts.
+    static func motorMount(_ m: MotorClass, foam t: Double, webTop: Double?, webBottom: Double?, standoff: Double = 0, blank: Bool = false) -> Mesh3D {
         let wingClamp = webTop == nil && webBottom == nil
         let pat = m.pattern
         let headD = pat.headDiameter + 0.4
-        let th = firewallThickness(m), len = mountJaw
+        let th = blank ? mountPlate : firewallThickness(m), len = mountJaw
         let plate = motorMountPlate(m, foam: t)
         let e = plate / 2
-        let screws = pat.positions
+        let screws = blank ? [] : pat.positions
         let shaft = Poly.circle(.zero, m.shaftClearance, segments: 32)
         // Firewall: clearance holes through, counterbores for the heads on the back face.
         let cb = th - pat.headHeight
-        var mesh = Mesh3D.extrude(Poly.rect(center: .zero, size: Vec2(plate, plate)),
+        var mesh = blank ? Mesh3D.extrude(Poly.rect(center: .zero, size: Vec2(plate, plate)), z0: 0, z1: th) : Mesh3D.extrude(Poly.rect(center: .zero, size: Vec2(plate, plate)),
                                   holes: [shaft] + screws.map { Poly.circle($0, pat.clearance / 2, segments: 16) }, z0: 0, z1: cb)
-        mesh.append(.extrude(Poly.rect(center: .zero, size: Vec2(plate, plate)),
-                             holes: [shaft] + screws.map { Poly.circle($0, headD / 2, segments: 20) }, z0: cb, z1: th))
+        if !blank {
+            mesh.append(.extrude(Poly.rect(center: .zero, size: Vec2(plate, plate)),
+                                 holes: [shaft] + screws.map { Poly.circle($0, headD / 2, segments: 20) }, z0: cb, z1: th))
+        }
         // Access bores (square, head size + clearance) through any jaw that covers a screw.
         let bore = headD / 2 + 0.2
         let bores = screws.map { (x0: $0.x - bore, x1: $0.x + bore, y0: $0.y - bore, y1: $0.y + bore) }
@@ -203,6 +212,31 @@ enum PrintedParts {
             mesh.append(block(-gapX, -gapX + 0.3, y0, y1, z1 - 2, z1, voids: bores))
         }
         return mesh
+    }
+
+    /// Nose protector for dual-motor layouts (nothing sits on the nose any more): tailed planes get the + clamp of
+    /// the motor mount with a solid plate and a 4 mm bumper pad in front; tailless wings a glue-on apex guard that
+    /// follows the swept leading edge (lip in front, jaw under the wing – the top stays free for the battery).
+    /// Mesh frame: z = 0 at the foam nose / apex, +z aft, y up.
+    static func noseProtector(for c: AircraftConfig) -> Mesh3D {
+        let t = c.material.thickness
+        if c.kind.isTailless {
+            let k = c.sweep / max(c.semiSpan, 1), xg = 18.0
+            let gapY = t / 2 + 0.1
+            // Lip: 2 mm chevron strip just ahead of the leading edge, full foam height + jaw.
+            let lip = Poly.ccw([Vec2(-xg, k * xg - 2.2), Vec2(0, -2.2), Vec2(xg, k * xg - 2.2), Vec2(xg, k * xg - 0.2), Vec2(0, -0.2), Vec2(-xg, k * xg - 0.2)])
+            var mesh = prism(lip, axis: 1, from: -gapY - 1.6, to: gapY)
+            // Jaw under the wing, 7 mm deep (stops ahead of the keel).
+            let jaw = Poly.ccw([Vec2(-xg, k * xg - 2.2), Vec2(0, -2.2), Vec2(xg, k * xg - 2.2), Vec2(xg, k * xg + 7), Vec2(0, 7), Vec2(-xg, k * xg + 7)])
+            mesh.append(prism(jaw, axis: 1, from: -gapY - 1.6, to: -gapY))
+            return mesh
+        }
+        let tw = t * Double(c.fuselageType.webLayers)
+        var mesh = motorMount(c.motor, foam: t, webTop: tw, webBottom: tw, blank: true)
+        let e = motorMountPlate(c.motor, foam: t) / 2, ch = e * 0.45
+        let pad = [Vec2(-e + ch, -e), Vec2(e - ch, -e), Vec2(e, -e + ch), Vec2(e, e - ch), Vec2(e - ch, e), Vec2(-e + ch, e), Vec2(-e, e - ch), Vec2(-e, -e + ch)]
+        mesh.append(Mesh3D.extrude(pad, z0: -4, z1: 0))
+        return mesh.translated([0, 0, -mountPlate])   // plate sits in front of the nose, jaws start at z = 0
     }
 
     static func controlHorn(foam t: Double) -> Mesh3D {
