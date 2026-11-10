@@ -135,9 +135,7 @@ struct ComponentLegend: View {
 
     var body: some View {
         var items: [(String, SIMD4<Float>)] = [("Motor", Palette.motor), ("Propeller", Palette.prop), ("Battery", Palette.battery), ("Servo", Palette.servo)]
-        if !config.aio { items += [("ESC", Palette.esc), ("Receiver", Palette.receiver)] }
-        if config.fpv != .none { items += [("FPV camera", Palette.carbon), ("VTX + antenna", Palette.vtx)] }
-        if config.aio { items.append(("AIO board", Palette.aio)) }
+        items += [("ESC", Palette.esc), ("Receiver", Palette.receiver)]
         items += [("Printed parts", Palette.printed), ("Control surface", Palette.control), ("Carbon", Palette.carbon)]
         return VStack(alignment: .leading, spacing: 4) {
             ForEach(items, id: \.0) { item in

@@ -49,11 +49,9 @@ enum Palette {
     static let battery = SIMD4<Float>(0.62, 0.42, 0.95, 1)
     static let servo = SIMD4<Float>(0.2, 0.45, 0.95, 1)
     static let printed = SIMD4<Float>(0.07, 0.07, 0.08, 1)
-    static let vtx = SIMD4<Float>(0.2, 0.75, 0.45, 1)
     static let prop = SIMD4<Float>(1.0, 0.82, 0.1, 1)
     static let esc = SIMD4<Float>(0.15, 0.6, 0.68, 1)
     static let receiver = SIMD4<Float>(0.55, 0.6, 0.7, 1)
-    static let aio = SIMD4<Float>(0.1, 0.45, 0.25, 1)
     static let cg = SIMD4<Float>(1.0, 0.2, 0.6, 1)
     static let edge = SIMD4<Float>(0.1, 0.12, 0.18, 0.55)
     static let grid = SIMD4<Float>(0.4, 0.7, 1.0, 0.12)
@@ -112,7 +110,7 @@ enum SceneBuilder {
                 let s = c.battery.size
                 // Printed tray between foam and battery, battery sits on it.
                 if c.kind.isTailless {
-                    let down: Double = c.batteryUnderWing ? -1 : 1
+                    let down: Double = 1
                     let tray = Mesh3D.box(min: [-s.w / 2 - 1.2, -0.6, -s.l / 2 - 2], max: [s.w / 2 + 1.2, 0.6, s.l / 2 + 2])
                     scene.addMesh(tray.translated([p.x, down * (t / 2 + 0.6), p.z]), color: Palette.printed)
                     let q = p + [0, down * 1.2, 0]
@@ -152,43 +150,13 @@ enum SceneBuilder {
             case "Radio" where item.name.hasPrefix("Receiver"):
                 let size: SIMD3<Double> = c.kind.isTailless ? [10, 3, 14] : [3, 10, 14]
                 scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.receiver)
-            case "FPV":
-                if item.name.hasPrefix("FPV camera") {
-                    let w = c.fpv.cameraWidth
-                    // Printed mount (clamp on planes, flat foot on wings) under the camera.
-                    let mount = PrintedParts.cameraMount(width: w, tilt: c.kind.cameraTilt, saddleWeb: c.kind.isTailless ? nil : tw)
-                    let placed = mount.transformed { q in SIMD3<Double>(q.x, q.z, q.y) }
-                    scene.addMesh(placed.translated([0, p.y - w / 2 - 1.2, p.z]), color: Palette.printed)
-                    // Camera body + lens, tilted up like the mount.
-                    let tilt = c.kind.cameraTilt * .pi / 180
-                    var cam = Mesh3D.box(min: [-w / 2, -w / 2, -w / 2], max: [w / 2, w / 2, w / 2])
-                    cam.append(cylinder(center: [0, 0, -w / 2 - 2], radius: w * 0.3, length: 4))
-                    scene.addMesh(cam.rotated(tilt, axis: [1, 0, 0]).translated(p + [0, 1, 0]), color: Palette.carbon)
-                } else {
-                    let v = c.fpv.vtxSize
-                    let size: SIMD3<Double> = c.kind.isTailless ? [v.w, v.h, v.l] : [v.h, v.w, v.l]
-                    scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.vtx)
-                    let ant: SIMD3<Double> = c.kind.isTailless ? [0, -30, 6] : [0, 30, 6]
-                    scene.addLine(p, p + ant, color: SIMD4(0.3, 0.95, 0.55, 1))
-                }
             case "Printed" where item.name.hasPrefix("Motor mount"):
                 // The real clamp mount: plate on the firewall, jaws over the structure (aft for tractors, forward for pushers).
                 let mesh = PrintedParts.motorMount(for: c)
                 let placed = c.isPusher ? mesh.transformed { q in SIMD3<Double>(-q.x, q.y, -q.z) } : mesh
                 scene.addMesh(placed.translated([p.x, 0, c.firewallZ]), color: Palette.printed)
             case "Printed":
-                continue   // horns are drawn with their linkages, camera mount with the camera
-            case "Radio" where item.name.hasPrefix("AIO"):
-                let b = AIOController.boardSize
-                // Printed 26 × 26 mm standoff mount on the foam, board on the standoffs.
-                let mount = PrintedParts.aioMount()
-                if c.kind.isTailless {
-                    scene.addMesh(mount.transformed { q in SIMD3<Double>(q.x, -q.z, q.y) }.translated([p.x, -t / 2, p.z]), color: Palette.printed)
-                    scene.addMesh(.box(min: p - [b / 2, 0.8, b / 2], max: p + [b / 2, 0.8, b / 2]), color: Palette.aio)
-                } else {
-                    scene.addMesh(mount.transformed { q in SIMD3<Double>(-q.z, q.y, q.x) }.translated([-tw / 2, p.y, p.z]), color: Palette.printed)
-                    scene.addMesh(.box(min: p - [0.8, b / 2, b / 2], max: p + [0.8, b / 2, b / 2]), color: Palette.aio)
-                }
+                continue   // horns are drawn with their linkages
             case "Hardware" where item.name.hasPrefix("Tail booms"):
                 let len = c.tailArm + c.hStabChord * 0.55 - c.rootChord * 0.15
                 for x in [-c.boomX, c.boomX] {

@@ -66,12 +66,25 @@ enum SelfTest {
         print("fixes for broken trainer (\(String(format: "%.2f", Date().timeIntervalSince(t0))) s):")
         for f in fixes { print("   \(f.solvesAll ? "✓" : "~") \(f.title) – \(f.detail)") }
         for m in MotorClass.allCases {
-            let plate = max(m.boltCircle + m.screwHole * 2 + 6, m.bellDiameter * 0.75)
-            var holes: [[Vec2]] = [Poly.circle(.zero, max(2.5, m.boltCircle * 0.28), segments: 32)]
-            for k in 0..<4 { let a = Double(k) * .pi / 2 + .pi / 4; holes.append(Poly.circle(Vec2(cos(a), sin(a)) * m.boltCircle / 2, m.screwHole / 2, segments: 16)) }
-            let tri = Poly.triangulate(outer: Poly.rect(center: .zero, size: Vec2(plate, plate)), holes: holes)
-            let expected = 4 + holes.reduce(0) { $0 + $1.count } + 2 * holes.count - 2
-            print("   tri \(m.rawValue): \(tri.triangles.count / 3) of \(expected)")
+            let pat = m.pattern
+            let mesh = PrintedParts.motorMount(m, foam: 6, webTop: 6, webBottom: 6)
+            let wing = PrintedParts.motorMount(m, foam: 6, webTop: nil, webBottom: nil)
+            let tl = PrintedParts.motorMount(m, foam: 6, webTop: nil, webBottom: 6)
+            print("   mount \(m.rawValue): \(pat.label), shaft Ø\(String(format: "%.1f", m.shaftClearance * 2)), plate \(String(format: "%.1f", PrintedParts.motorMountPlate(m, foam: 6))) mm, tris cross \(mesh.triangles.count) wing \(wing.triangles.count) tailless \(tl.triangles.count), holes \(pat.positions.map { String(format: "(%.1f,%.1f)", $0.x, $0.y) }.joined())")
+            try? mesh.stlData(name: "mount").write(to: dir.appendingPathComponent("mount_\(m.rawValue)_cross.stl"))
+            try? wing.stlData(name: "mount").write(to: dir.appendingPathComponent("mount_\(m.rawValue)_wing.stl"))
+            // Render the cross mount alone, looking at the back of the firewall through the jaws, and at the motor face.
+            for (tag, yaw) in [("back", Float(2.6)), ("front", Float(0.5))] {
+                var sc = SceneData()
+                sc.addMesh(mesh, color: SIMD4(0.55, 0.57, 0.62, 1))
+                sc.center = [0, 0, 13]; sc.radius = 24
+                let view = MTKView(frame: CGRect(x: 0, y: 0, width: 600, height: 600), device: MTLCreateSystemDefaultDevice())
+                if let r = Renderer(view: view) {
+                    r.setScene(sc, resetCamera: true)
+                    r.yaw = yaw; r.pitch = 0.3
+                    if let img = r.snapshot(width: 600, height: 600) { savePNG(img, dir.appendingPathComponent("mount_\(m.rawValue)_\(tag).png")) }
+                }
+            }
         }
         for kind in AircraftKind.allCases where kind.allowsDualMotors {
             var c = kind.defaults
@@ -92,11 +105,11 @@ enum SelfTest {
         }
         for kind in AircraftKind.allCases {
             var c = kind.defaults
-            c.tailWinglets = true; c.wingletHeight = 45; c.aio = true
+            c.tailWinglets = kind.hasTail; c.wingletHeight = 45
             c = Project.balanced(c)
             let d = DesignBuilder.build(c)
             let a = Analysis(design: d)
-            print("   wl+aio \(kind.title): AUW \(Int(a.totalMass)) g, winglets \(d.parts.contains { $0.role == .winglet }), ESCs \(d.components.filter { $0.name.hasPrefix("ESC") }.count), feasible \(a.feasible)")
+            print("   wl \(kind.title): AUW \(Int(a.totalMass)) g, winglets \(d.parts.contains { $0.role == .winglet }), ESCs \(d.components.filter { $0.name.hasPrefix("ESC") }.count), feasible \(a.feasible)")
             for ch in a.checks where ch.severity >= .warning { print("      [\(ch.severity)] \(ch.title): \(ch.detail)") }
             if kind == .trainer || kind == .jet {
                 let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
@@ -105,34 +118,10 @@ enum SelfTest {
                     if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("wl_\(kind.rawValue)_3d.png")) }
                 }
             }
-            for part in PrintedParts.generate(d) where part.fileName.contains("aio") {
-                try? part.mesh.stlData(name: part.name).write(to: dir.appendingPathComponent("\(kind.rawValue)_\(part.fileName).stl"))
-            }
-        }
-        for kind in [AircraftKind.flyingWing, .delta] {
-            for fpv in [FPVSystem.analog, .o4Lite] {
-                var c = kind.defaults; c.fpv = fpv
-                c = Project.balanced(c)
-                let d = DesignBuilder.build(c); let a = Analysis(design: d)
-                let batFront = c.batteryPosition - c.battery.size.l / 2
-                print("   fpv \(kind.title) \(fpv.name): camera z \(Int(c.fpvCameraZ)), battery front \(Int(batFront)) (\(c.battery.name)), clear \(batFront > c.fpvCameraZ + 9), feasible \(a.feasible), score \(a.score)")
-                for ch in a.checks where ch.severity >= .warning { print("      [\(ch.severity)] \(ch.title): \(ch.detail)") }
-                if fpv == .o4Lite && kind == .flyingWing {
-                    let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
-                    if let r = Renderer(view: view) {
-                        r.setScene(SceneBuilder.aircraft(d, a, deflection: 0.4, showCG: false), resetCamera: true)
-                        r.pitch = -0.35
-                        if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("fpv_wing_under.png")) }
-                        r.pitch = 0.6
-                        if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("fpv_wing_top.png")) }
-                    }
-                }
-            }
         }
         // Close-ups of the motor area for visual checks.
-        for (name, kind, dual) in [("trainer", AircraftKind.trainer, false), ("wing", .flyingWing, false), ("dualtrainer", .trainer, true), ("twin", .twinBoom, false)] {
+        for (name, kind, dual) in [("trainer", AircraftKind.trainer, false), ("wing", .flyingWing, false), ("dualtrainer", .trainer, true), ("twin", .twinBoom, false), ("nutball", .nutBall, false)] {
             var c = kind.defaults; if dual { c.motorLayout = .dualTractor }
-            if name == "wing" { c.fpv = .o4Lite; c.aio = true }
             c = Project.balanced(c)
             let d = DesignBuilder.build(c); let a = Analysis(design: d)
             let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())

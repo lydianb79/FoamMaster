@@ -30,7 +30,8 @@ struct StructureReport {
 
         // Wing half as a cantilever plate + carbon strips top and bottom, uniform 3 g load.
         let L = c.semiSpan
-        var EI = E * c.rootChord * t * t * t / 12
+        // NutBall: the disc's mean chord over the half span (π/4 of its length) carries the bending.
+        var EI = E * c.rootChord * (c.kind.isNutBall ? .pi / 4 : 1) * t * t * t / 12
         if c.sparEnabled {
             let sp = c.sparSpec
             let d = t / 2 - sp.heightMM / 2
@@ -40,7 +41,7 @@ struct StructureReport {
         wingTipDeflection = F * L * L * L / (8 * EI)
         wingDeflectionRatio = wingTipDeflection / L
 
-        guard !c.kind.isTailless else { return }
+        guard c.kind.hasTail else { return }
         let Sh = c.hStabSpan * c.hStabChord, Sv = c.vStabHeight * c.vStabChord * (c.kind.isTwinBoom ? 2 : 1)
         let Fh = 0.7 * q * Sh, Fv = 0.7 * q * Sv
         let boom = c.tailArm + 0.25 * c.hStabChord - c.rootChord

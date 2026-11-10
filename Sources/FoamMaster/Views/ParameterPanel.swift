@@ -37,10 +37,16 @@ struct ParameterContent: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         SectionHeader(title: "Wing", symbol: "airplane")
-                        ParamSlider(label: "Wingspan", unit: "mm", value: bind(\.wingspan), range: range(\.wingspan, c), step: 5)
-                        ParamSlider(label: "Root chord", unit: "mm", value: bind(\.rootChord), range: range(\.rootChord, c), step: 1)
-                        ParamSlider(label: "Tip chord", unit: "mm", value: bind(\.tipChord), range: range(\.tipChord, c), step: 1)
-                        ParamSlider(label: "Sweep (tip LE)", unit: "mm", value: bind(\.sweep), range: range(\.sweep, c), step: 1)
+                        ParamSlider(label: c.kind.isNutBall ? "Width (span)" : "Wingspan", unit: "mm", value: bind(\.wingspan), range: range(\.wingspan, c), step: 5)
+                        ParamSlider(label: c.kind.isNutBall ? "Length" : "Root chord", unit: "mm", value: bind(\.rootChord), range: range(\.rootChord, c), step: 1)
+                        if c.kind.isNutBall {
+                            ParamSlider(label: "Elevator depth", unit: "%",
+                                        value: Binding(get: { c.controlChordPct * 100 }, set: { project.config?.controlChordPct = $0 / 100 }),
+                                        range: 12...40, step: 1)
+                        } else {
+                            ParamSlider(label: "Tip chord", unit: "mm", value: bind(\.tipChord), range: range(\.tipChord, c), step: 1)
+                            ParamSlider(label: "Sweep (tip LE)", unit: "mm", value: bind(\.sweep), range: range(\.sweep, c), step: 1)
+                        }
                         if c.kind.isTailless || c.hasAilerons {
                             ParamSlider(label: c.kind.isTailless ? "Elevon chord" : "Aileron chord", unit: "%",
                                         value: Binding(get: { c.controlChordPct * 100 }, set: { project.config?.controlChordPct = $0 / 100 }),
@@ -69,15 +75,17 @@ struct ParameterContent: View {
                             }
                             .pickerStyle(.segmented).labelsHidden()
                         }
-                        if !c.kind.isTailless {
+                        if c.kind.hasTail {
                             Toggle(isOn: bind(\.tailWinglets)) { Text("Winglets").font(.system(size: 12, weight: .semibold)) }
                                 .toggleStyle(.switch).tint(Theme.accent)
                             if c.tailWinglets {
                                 ParamSlider(label: "Winglet height", unit: "mm", value: bind(\.wingletHeight), range: range(\.wingletHeight, c), step: 1)
                             }
                         }
-                        PickerRow(label: "FPV", selection: bind(\.fpv), options: FPVSystem.allCases) { $0 == .none ? $0.name : "\($0.name) · \(Int($0.mass.rounded())) g" }
-                        if !c.kind.isTailless {
+                        if c.kind.isNutBall {
+                            Toggle(isOn: bind(\.rudder)) { Text("Rudder").font(.system(size: 12, weight: .semibold)) }
+                                .toggleStyle(.switch).tint(Theme.accent)
+                        } else if !c.kind.isTailless {
                             Picker("", selection: Binding(get: { ControlLayout(ailerons: c.ailerons, rudder: c.rudder) },
                                                           set: { project.config?.ailerons = $0.ailerons; project.config?.rudder = $0.rudder })) {
                                 Text("R + E").tag(ControlLayout.rudderElevator)
@@ -101,6 +109,10 @@ struct ParameterContent: View {
                         SectionHeader(title: "Electronics", symbol: "bolt.fill")
                         PickerRow(label: "Motor", selection: bind(\.motor), options: MotorClass.allCases) { $0.name }
                         HStack(spacing: 6) {
+                            Image(systemName: "circle.grid.cross.fill").font(.system(size: 10)).foregroundStyle(Theme.accent)
+                            Text("Mount pattern \(c.motor.pattern.label)").font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
+                        }.padding(.leading, 62)
+                        HStack(spacing: 6) {
                             Image(systemName: "fanblades.fill").font(.system(size: 10)).foregroundStyle(Theme.accent)
                             Text("Prop \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.isPusher, blades: c.kind.propBlades, pair: c.isDual))")
                                 .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
@@ -108,20 +120,19 @@ struct ParameterContent: View {
                         Text(c.kind.propBladeReason).font(.system(size: 9.5)).foregroundStyle(.tertiary).padding(.leading, 78)
                         PickerRow(label: "Battery", selection: bind(\.battery), options: BatteryPack.allCases) { "\($0.name) · \(Int($0.mass)) g" }
                         PickerRow(label: "Servos", selection: bind(\.servo), options: ServoClass.allCases) { $0.name }
-                        HStack {
-                            Text("Control").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary).frame(width: 58, alignment: .leading)
-                            Picker("", selection: bind(\.aio)) {
-                                Text(c.isDual ? "ESCs + RX" : "ESC + RX").tag(false)
-                                Text("AIO FC").tag(true)
-                            }
-                            .pickerStyle(.segmented).labelsHidden()
-                        }
-                        Text(c.aio ? "FC + receiver + ESCs on one 26 × 26 mm board – printed mount included" : "Separate ESC\(c.isDual ? "s" : "") and receiver")
-                            .font(.system(size: 10)).foregroundStyle(.secondary).padding(.leading, 62)
                     }
                     .glass()
 
-                    if !c.kind.isTailless {
+                    if c.kind.isNutBall {
+                        VStack(alignment: .leading, spacing: 10) {
+                            SectionHeader(title: "Spine & fin", symbol: "arrow.left.and.right")
+                            ParamSlider(label: "Motor ahead of the disc", unit: "mm", value: bind(\.noseLength), range: range(\.noseLength, c), step: 1)
+                            ParamSlider(label: "Spine + keel height", unit: "mm", value: bind(\.fuselageHeight), range: range(\.fuselageHeight, c), step: 1)
+                            ParamSlider(label: "Fin height", unit: "mm", value: bind(\.vStabHeight), range: range(\.vStabHeight, c), step: 1)
+                            ParamSlider(label: "Fin chord", unit: "mm", value: bind(\.vStabChord), range: range(\.vStabChord, c), step: 1)
+                        }
+                        .glass()
+                    } else if !c.kind.isTailless {
                         VStack(alignment: .leading, spacing: 10) {
                             SectionHeader(title: c.kind.isTwinBoom ? "Pod, booms & tail" : "Fuselage & Tail", symbol: "arrow.left.and.right")
                             ParamSlider(label: c.kind.isTwinBoom ? "Pod nose length" : "Nose length", unit: "mm", value: bind(\.noseLength), range: range(\.noseLength, c), step: 1)

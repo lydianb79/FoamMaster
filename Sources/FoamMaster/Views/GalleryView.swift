@@ -33,11 +33,12 @@ extension AircraftKind {
         switch self {
         case .flyingWing: return ["Tailless", "Pusher", "Elevons"]
         case .delta: return ["Tailless", "Pusher", "High speed"]
-        case .twinBoom: return ["Twin boom", "Pusher / dual", "FPV"]
+        case .twinBoom: return ["Twin boom", "Pusher / dual", "4-ch"]
         case .jet: return ["Jet", "Prop slot", "4-ch"]
         case .trainer: return ["Tractor", "Flat wing", "Easy"]
         case .aerobat: return ["Tractor", "4-ch", "3D"]
         case .glider: return ["Tractor", "Long span", "Thermal"]
+        case .nutBall: return ["Tractor", "Round wing", "Slow & easy"]
         }
     }
     /// One accent colour for every type – the shapes and tags tell them apart.
@@ -166,13 +167,11 @@ struct ModelCard: View {
 
 /// Everything picked in the setup sheet.
 struct SetupChoice {
-    var fpv: FPVSystem
     var fins: TaillessFins
     var layout: ControlLayout
     var servos: Int
     var motors: MotorLayout
     var winglets: Bool
-    var aio: Bool
 }
 
 enum ControlLayout: String, CaseIterable, Hashable {
@@ -189,31 +188,29 @@ struct SetupSheet: View {
     var preview: ModelPreview
     var start: (SetupChoice) -> Void
     var cancel: () -> Void
-    @State private var fpv: FPVSystem
     @State private var fins: TaillessFins
     @State private var layout: ControlLayout
     @State private var servos = 2
 
     @State private var motors: MotorLayout = .single
     @State private var winglets = false
-    @State private var aio = false
 
     init(preview: ModelPreview, start: @escaping (SetupChoice) -> Void, cancel: @escaping () -> Void) {
         self.preview = preview
         self.start = start
         self.cancel = cancel
         let d = preview.kind.defaults
-        _fpv = State(initialValue: d.fpv)
         _layout = State(initialValue: ControlLayout(ailerons: d.ailerons, rudder: d.rudder))
         _fins = State(initialValue: d.taillessFins)
     }
 
-    private var optionKey: String { "\(preview.kind.rawValue)-\(fpv.rawValue)-\(fins.rawValue)-\(layout.rawValue)-\(servos)-\(motors.rawValue)-\(winglets)-\(aio)" }
+    private var optionKey: String { "\(preview.kind.rawValue)-\(fins.rawValue)-\(layout.rawValue)-\(servos)-\(motors.rawValue)-\(winglets)" }
 
     private var candidate: AircraftConfig {
         var c = preview.kind.defaults
-        c.fpv = fpv; c.taillessFins = fins; c.motorLayout = motors; c.tailWinglets = winglets; c.aio = aio
-        c.ailerons = layout.ailerons; c.rudder = layout.rudder
+        c.taillessFins = fins; c.motorLayout = motors
+        if preview.kind.hasTail { c.tailWinglets = winglets; c.ailerons = layout.ailerons }
+        c.rudder = layout.rudder
         c.aileronServos = preview.kind.isTwinBoom ? 2 : servos
         return c
     }
@@ -224,7 +221,7 @@ struct SetupSheet: View {
         let servoGroups = Dictionary(grouping: design.controls, by: \.servoID)
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 14) {
-                // Live render of exactly what is selected below (FPV gear, fins, control surfaces, servos).
+                // Live render of exactly what is selected below (fins, control surfaces, servos, motors).
                 Group {
                     if let img = Thumbnailer.image(for: DesignBuilder.build(Project.balanced(candidate)), key: optionKey) {
                         Image(nsImage: img).resizable().aspectRatio(contentMode: .fit)
@@ -246,7 +243,11 @@ struct SetupSheet: View {
             ScrollView {
             VStack(alignment: .leading, spacing: 16) {
             OptionGroup(title: "Control surfaces", symbol: "slider.horizontal.below.square.filled.and.square") {
-                if kind.isTailless {
+                if kind.isNutBall {
+                    Text("NutBall: elevator across the trailing edge, rudder on the centre fin – the round wing turns with the rudder.").font(.system(size: 11)).foregroundStyle(.secondary)
+                    OptionTiles(selection: $layout, options: [.rudderElevator, .aileronElevator], title: { $0 == .rudderElevator ? "Rudder + elevator" : "Elevator only" },
+                                detail: { $0 == .rudderElevator ? "2 channels – the classic NutBall" : "No rudder – not recommended" }, tint: kind.tint)
+                } else if kind.isTailless {
                     Text("Tailless: two elevons (combined aileron + elevator), one servo each.").font(.system(size: 11)).foregroundStyle(.secondary)
                     OptionTiles(selection: $fins, options: TaillessFins.allCases, title: \.name, detail: \.detail, tint: kind.tint)
                 } else {
@@ -276,14 +277,6 @@ struct SetupSheet: View {
                 }
             }
 
-            OptionGroup(title: "Electronics", symbol: "cpu") {
-                OptionTiles(selection: $aio, options: [false, true], title: { $0 ? "AIO flight controller" : "ESC + receiver" },
-                            detail: { $0 ? "FC, receiver and ESCs on one 26 × 26 mm board – printed mount included" : "Separate ESC\(motors == .dualTractor ? "s" : "") and receiver" }, tint: kind.tint)
-            }
-
-            OptionGroup(title: "FPV system", symbol: "video.fill") {
-                OptionTiles(selection: $fpv, options: FPVSystem.allCases, title: \.name, detail: { $0 == .none ? $0.detail : "\(String(format: "%.0f", $0.mass)) g · \(String(format: "%.1f", $0.power)) W" }, tint: kind.tint)
-            }
             }
             .padding(.trailing, 6)
             }
@@ -292,7 +285,7 @@ struct SetupSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
-                PillButton(title: "Start building", symbol: "arrow.right.circle.fill", prominent: true) { start(SetupChoice(fpv: fpv, fins: fins, layout: layout, servos: servos, motors: motors, winglets: winglets, aio: aio)) }
+                PillButton(title: "Start building", symbol: "arrow.right.circle.fill", prominent: true) { start(SetupChoice(fins: fins, layout: layout, servos: servos, motors: motors, winglets: winglets)) }
                     .keyboardShortcut(.defaultAction)
             }
         }

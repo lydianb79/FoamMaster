@@ -19,7 +19,7 @@ extension AircraftConfig {
         if wingspan > 500 || material.family == .epp { return material.thickness >= 6 ? .flat5x05 : .flat3x05 }
         return .flat3x05
     }
-    var sparLength: Double { (wingspan * 0.9) / cos(atan2(sweep, semiSpan)) }
+    var sparLength: Double { kind.isNutBall ? wingspan * 0.8 : (wingspan * 0.9) / cos(atan2(sweep, semiSpan)) }
 }
 
 /// Mass, balance, aerodynamic and feasibility analysis of a design.
@@ -79,17 +79,26 @@ struct Analysis {
 
         // --- Wing geometry
         let lambda = c.taper
-        wingArea = (c.rootChord + c.tipChord) * s
+        if c.kind.isNutBall {
+            // Elliptic disc (length L = root chord): MAC = 8/(3π)·L centred on the disc, at 4/(3π) of the half span.
+            wingArea = .pi / 4 * c.rootChord * c.wingspan
+            mac = 8 / (3 * .pi) * c.rootChord
+            macY = 4 * s / (3 * .pi)
+            macLE = c.rootChord / 2 - mac / 2
+        } else {
+            wingArea = (c.rootChord + c.tipChord) * s
+            mac = 2.0 / 3.0 * c.rootChord * (1 + lambda + lambda * lambda) / (1 + lambda)
+            macY = s / 3 * (1 + 2 * lambda) / (1 + lambda)
+            macLE = c.sweep * macY / s
+        }
         aspectRatio = c.wingspan * c.wingspan / max(wingArea, 1)
-        mac = 2.0 / 3.0 * c.rootChord * (1 + lambda + lambda * lambda) / (1 + lambda)
-        macY = s / 3 * (1 + 2 * lambda) / (1 + lambda)
-        macLE = c.sweep * macY / s
         let xacW = macLE + 0.25 * mac
         let aw = 2 * .pi * aspectRatio / (2 + sqrt(aspectRatio * aspectRatio + 4))
 
         // --- Neutral point & recommended CG
         var targetSM = 0.08, smRange = 0.04...0.14
-        if c.kind.isTailless {
+        if !c.kind.hasTail {
+            // Tailless and NutBall: the wing (with its trailing-edge elevator / elevons) is the whole lifting surface.
             neutralPoint = xacW
         } else {
             targetSM = 0.12; smRange = 0.05...0.2
@@ -116,12 +125,12 @@ struct Analysis {
         // --- Performance
         let sM2 = wingArea * 1e-6
         wingLoading = totalMass / (wingArea * 1e-4)
-        let clMax = c.kind.isTailless ? 0.65 : 0.8
+        let clMax = c.kind.isTailless ? 0.65 : (c.kind.isNutBall ? 0.95 : 0.8)
         stallSpeed = sqrt(2 * totalMass / 1000 * 9.81 / (1.225 * sM2 * clMax)) * 3.6
         thrust = c.motor.thrust(cells: c.battery.cells) * Double(c.motorCount)
         thrustToWeight = thrust / max(totalMass, 1)
-        let wPerKg: Double = [.glider: 70, .trainer: 100, .twinBoom: 110, .jet: 150, .flyingWing: 120, .delta: 140, .aerobat: 170][c.kind]!
-        let current = (wPerKg * totalMass / 1000 + c.fpv.power) / c.battery.voltage
+        let wPerKg: Double = [.glider: 70, .trainer: 100, .twinBoom: 110, .jet: 150, .flyingWing: 120, .delta: 140, .aerobat: 170, .nutBall: 110][c.kind]!
+        let current = wPerKg * totalMass / 1000 / c.battery.voltage
         flightTime = c.battery.capacity * 0.8 / 1000 / max(current, 0.01) * 60
 
         batteryLimits = Analysis.batteryLimits(c)
@@ -135,10 +144,10 @@ struct Analysis {
 
     static func batteryLimits(_ c: AircraftConfig) -> ClosedRange<Double> {
         if c.kind.isTailless {
-            // With FPV the battery sits under the apex (camera on top) and must stay ahead of the keel/VTX area.
             let front = c.battery.size.l / 2 - 8
-            return front...max(front, c.rootChord * (c.batteryUnderWing ? 0.3 : 0.55))
+            return front...max(front, c.rootChord * 0.55)
         }
+        if c.kind.isNutBall { return (-c.noseLength + c.battery.size.l / 2 + 8)...(c.rootChord * 0.45) }
         if c.kind.isJet { return (-c.noseLength + c.battery.size.l / 2 + 15)...(c.rootChord * 0.35) }
         if c.kind.isTwinBoom { return (-c.noseLength + c.battery.size.l / 2 + 5)...(c.rootChord * 0.6) }
         return (-c.noseLength + c.battery.size.l / 2 + 5)...(c.rootChord)
@@ -157,12 +166,12 @@ struct Analysis {
         if c.wingspan > maxWingspan + 0.5 { add(.error, "Geometry", "Wingspan exceeds 600 mm", "FoamMaster designs micro models up to \(Int(maxWingspan)) mm span.") }
         for issue in d.geometryIssues { add(.error, "Geometry", "Geometry conflict", issue) }
         for p in d.parts where !Poly.isSimple(p.outline) { add(.error, "Geometry", "\(p.name) outline is self-intersecting", "Reduce sweep or adjust chord lengths.") }
-        if c.tipChord < 25 { add(.error, "Geometry", "Tip chord too small", "\(f0(c.tipChord)) mm – minimum 25 mm to keep the tip buildable.") }
-        if c.taper < 0.2 && c.kind != .delta { add(.warning, "Aero", "Strong taper (λ = \(String(format: "%.2f", c.taper)))", "Tapers below 0.2 tend to tip-stall on flat foam wings.") }
-        let arRange: ClosedRange<Double> = c.kind == .delta ? 1.2...4 : (c.kind.isTailless ? 2.5...8 : 3...11)
+        if c.tipChord < 25 && !c.kind.isNutBall { add(.error, "Geometry", "Tip chord too small", "\(f0(c.tipChord)) mm – minimum 25 mm to keep the tip buildable.") }
+        if c.taper < 0.2 && c.kind != .delta && !c.kind.isNutBall { add(.warning, "Aero", "Strong taper (λ = \(String(format: "%.2f", c.taper)))", "Tapers below 0.2 tend to tip-stall on flat foam wings.") }
+        let arRange: ClosedRange<Double> = c.kind.isNutBall ? 0.9...2.2 : (c.kind == .delta ? 1.2...4 : (c.kind.isTailless ? 2.5...8 : 3...11))
         if !arRange.contains(aspectRatio) { add(.warning, "Aero", "Aspect ratio \(f1(aspectRatio)) unusual", "Typical range for a \(c.kind.title): \(f1(arRange.lowerBound))–\(f1(arRange.upperBound)).") }
         else { add(.ok, "Aero", "Aspect ratio \(f1(aspectRatio))", "Within the typical range for a \(c.kind.title).") }
-        if c.controlChordPct * c.tipChord < 10 && (c.kind.isTailless || c.hasAilerons) { add(.warning, "Geometry", "Control surfaces very narrow at the tip", "Less than 10 mm chord – hard to hinge cleanly.") }
+        if c.controlChordPct * c.tipChord < 10 && (c.kind.isTailless || c.hasAilerons) && !c.kind.isNutBall { add(.warning, "Geometry", "Control surfaces very narrow at the tip", "Less than 10 mm chord – hard to hinge cleanly.") }
 
         // Loading & power
         switch wingLoading {
@@ -194,7 +203,7 @@ struct Analysis {
             add(.error, "Balance", "CG cannot be reached with the battery",
                 "Battery would have to sit at \(f0(requiredBatteryPosition)) mm (allowed \(f0(batLimits.lowerBound))…\(f0(batLimits.upperBound))). " +
                 (requiredBatteryPosition < batLimits.lowerBound
-                    ? (c.kind.isTailless ? "Use “Fix with bigger battery”, reduce sweep or add FPV gear at the nose." : "Use “Fix with bigger battery”, lengthen the nose or shorten the tail.")
+                    ? (c.kind.isTailless ? "Use “Fix with bigger battery” or reduce sweep." : "Use “Fix with bigger battery”, lengthen the nose or shorten the tail.")
                     : "Use a lighter battery, shorten the nose or move mass aft."))
         }
         if staticMargin < 0 { add(.warning, "Balance", "Currently tail-heavy (unstable)", "Negative static margin with the current battery position.") }
@@ -204,11 +213,17 @@ struct Analysis {
             if sweepRatio < 0.35 { add(.warning, "Stability", "No fins and little sweep", "Without winglets or a fin the wing needs more sweep for yaw stability (sweep ≥ 35 % of the half span).") }
             else { add(.info, "Stability", "Finless wing", "Yaw stability comes from the sweep only – expect some wag in turbulence.") }
         }
-        if !c.kind.isTailless && !c.hasAilerons {
+        if c.kind.isNutBall {
+            if !c.hasRudder { add(.warning, "Controls", "No rudder", "A NutBall turns with the rudder – elevator only gives no roll or yaw control.") }
+            let finArea = c.vStabHeight * c.vStabChord * 0.75
+            let vv = finArea * (c.rootChord * (1 - c.controlChordPct) - 0.4 * c.vStabChord - cgRange.upperBound) / (wingArea * c.wingspan)
+            if vv < 0.012 { add(.warning, "Stability", "Small fin for the disc", "Fin volume \(String(format: "%.3f", vv)) – the NutBall will wander in yaw. Make the fin taller or longer.") }
+            else { add(.ok, "Stability", "Fin size OK", "Fin volume \(String(format: "%.3f", vv)) – rudder turns the disc through its natural roll coupling.") }
+        } else if !c.kind.isTailless && !c.hasAilerons {
             add(.warning, "Controls", "No ailerons on a flat wing", "Without dihedral, rudder-only planes roll very slowly. Choose a layout with ailerons.")
         }
         // Tail
-        if !c.kind.isTailless {
+        if c.kind.hasTail {
             if tailVolumeH < 0.3 { add(.warning, "Stability", "Horizontal tail volume \(String(format: "%.2f", tailVolumeH))", "Below 0.30 – pitch will be twitchy. Bigger stab or longer tail arm.") }
             else if tailVolumeH > 0.9 { add(.warning, "Stability", "Horizontal tail volume \(String(format: "%.2f", tailVolumeH))", "Very large – heavy tail, sluggish pitch.") }
             else { add(.ok, "Stability", "Horizontal tail volume \(String(format: "%.2f", tailVolumeH))", "Good pitch stability.") }
@@ -260,7 +275,7 @@ struct Analysis {
         if c.isDual {
             let clear = c.dualMotorX - r - c.dualBodyHalfWidth
             if clear < 3 { add(.error, "Geometry", "Props hit the fuselage", "Dual motors at ±\(f0(c.dualMotorX)) mm leave \(f1(clear)) mm prop clearance – use smaller props.") }
-            else { add(.ok, "Geometry", "Dual tractor layout", "Motors at ±\(f0(c.dualMotorX)) mm (\(f0(c.dualMotorX * 2)) mm apart) – as far inboard as the \(f1(clear)) mm prop clearance allows\(c.fpv != .none ? ", props outside the camera's 150° view" : ""), counter-rotating.") }
+            else { add(.ok, "Geometry", "Dual tractor layout", "Motors at ±\(f0(c.dualMotorX)) mm (\(f0(c.dualMotorX * 2)) mm apart) – as far inboard as the \(f1(clear)) mm prop clearance allows, counter-rotating.") }
         } else if c.kind.isTailless {
             let clear = c.motorNotchHalfWidth - r
             add(.ok, "Geometry", "Motor sits in the trailing-edge cutout", "\(f0(c.motorNotchHalfWidth * 2)) × \(f0(c.motorNotchDepth)) mm cutout up to the elevons, \(f1(clear)) mm prop clearance each side.")
@@ -275,21 +290,6 @@ struct Analysis {
             if c.kind.isTailless && c.battery.size.l > c.rootChord * 0.7 { add(.warning, "Geometry", "Battery long for the centre section", "Battery \(f0(c.battery.size.l)) mm vs root chord \(f0(c.rootChord)) mm.") }
         } else if r > c.noseLength * 1.6 {
             add(.info, "Geometry", "Large prop on a short nose", "Hand-launch carefully, keep fingers clear.")
-        }
-        if c.aio {
-            let need = c.motor.maxCurrent
-            if !AIOController.cells.contains(c.battery.cells) {
-                add(.error, "Power", "AIO does not support \(c.battery.cells)S", "The AIO board is rated \(AIOController.cells.lowerBound)–\(AIOController.cells.upperBound)S.")
-            } else if need > AIOController.amps * 1.3 {
-                add(.error, "Power", "AIO ESC overloaded", "\(c.motor.name) draws ≈\(f0(need)) A, the AIO ESC is rated \(f0(AIOController.amps)) A per motor – use separate ESCs or a smaller motor.")
-            } else if need > AIOController.amps {
-                add(.warning, "Power", "AIO ESC at its limit", "≈\(f0(need)) A per motor vs \(f0(AIOController.amps)) A rating – limit throttle or use a smaller prop.")
-            } else {
-                add(.ok, "Power", "AIO flight controller", "Integrated ESC handles ≈\(f0(need)) A per motor (\(f0(AIOController.amps)) A rated); no separate ESC or receiver needed.")
-            }
-        }
-        if c.fpv != .none {
-            add(.info, "FPV", "\(c.fpv.name) on board", "\(f1(c.fpv.mass)) g and ≈\(f1(c.fpv.power)) W drawn from the flight pack – included in weight, CG and flight time.")
         }
         add(.info, "Performance", "Estimated flight time \(f0(flightTime)) min", "Stall ≈ \(f0(stallSpeed)) km/h, AUW \(f0(totalMass)) g.")
         checks.sort { $0.severity > $1.severity }

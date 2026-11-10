@@ -22,7 +22,7 @@ enum TaillessFins: String, CaseIterable, Identifiable, Codable {
 }
 
 enum AircraftKind: String, CaseIterable, Identifiable, Codable {
-    case flyingWing, delta, twinBoom, jet, trainer, aerobat, glider
+    case flyingWing, delta, twinBoom, jet, trainer, aerobat, glider, nutBall
     var id: String { rawValue }
 
     var title: String {
@@ -34,6 +34,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         case .trainer: return "Park Trainer"
         case .aerobat: return "3D Plane"
         case .glider: return "Micro Glider"
+        case .nutBall: return "NutBall"
         }
     }
 
@@ -46,6 +47,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         case .trainer: return "Big flat wing · forgiving · ailerons"
         case .aerobat: return "Huge surfaces · 4 channels"
         case .glider: return "High aspect ratio · thermal"
+        case .nutBall: return "Round flat wing · rudder + elevator"
         }
     }
 
@@ -53,52 +55,48 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .flyingWing: return "chevron.up"
         case .delta: return "triangle"
-        case .twinBoom: return "camera.fill"
+        case .twinBoom: return "equal"
         case .jet: return "airplane"
         case .trainer: return "graduationcap"
         case .aerobat: return "arrow.triangle.2.circlepath"
         case .glider: return "wind"
+        case .nutBall: return "circle"
         }
     }
 
     var isTailless: Bool { self == .flyingWing || self == .delta }
+    /// Round flat wing (nutball): elevator across the trailing edge, centre fin with rudder, tractor motor.
+    var isNutBall: Bool { self == .nutBall }
+    /// Separate horizontal + vertical tail on a boom / fuselage.
+    var hasTail: Bool { !isTailless && !isNutBall }
     /// Default control layout for the type.
     /// Flat (no dihedral) wings need ailerons for roll control.
-    var defaultAilerons: Bool { !isTailless }
+    var defaultAilerons: Bool { hasTail }
     var defaultRudder: Bool { !isTailless }
     var isPusher: Bool { isTailless || self == .twinBoom || self == .jet }
     var isJet: Bool { self == .jet }
     /// The jet's single prop spins in a slot in the middle – no twin motor option there.
-    var allowsDualMotors: Bool { !isJet }
+    var allowsDualMotors: Bool { !isJet && !isNutBall }
     /// Recommended number of prop blades: 2 for efficiency where the diameter is free; 3 where the diameter
     /// is limited (prop slot / trailing-edge cutout) or for strong, smooth thrust in 3D flying.
     var propBlades: Int {
         switch self {
-        case .trainer, .glider, .twinBoom: return 2
+        case .trainer, .glider, .twinBoom, .nutBall: return 2
         case .aerobat, .jet, .flyingWing, .delta: return 3
         }
     }
     var propBladeReason: String {
         switch self {
-        case .trainer, .glider, .twinBoom: return "2-blade – most efficient, longest flight time"
+        case .trainer, .glider, .twinBoom, .nutBall: return "2-blade – most efficient, longest flight time"
         case .aerobat: return "3-blade – more thrust and smoother response for 3D"
         case .jet: return "3-blade – diameter is limited by the prop slot"
         case .flyingWing, .delta: return "3-blade – diameter is limited by the trailing-edge cutout"
         }
     }
 
-    /// FPV camera up-tilt: faster types fly flatter and need more tilt to look at the horizon.
-    var cameraTilt: Double {
-        switch self {
-        case .trainer, .glider: return 10
-        case .aerobat, .twinBoom: return 15
-        case .flyingWing: return 20
-        case .delta, .jet: return 25
-        }
-    }
     var isTwinBoom: Bool { self == .twinBoom }
     /// Tailed aircraft with a full-length fuselage (fuselage structure option applies).
-    var hasFuselage: Bool { !isTailless && !isTwinBoom }
+    var hasFuselage: Bool { hasTail && !isTwinBoom }
 
     /// Minimum sensible thrust/weight ratio for the category.
     var minThrustToWeight: Double {
@@ -110,6 +108,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         case .flyingWing: return 0.6
         case .delta: return 0.8
         case .aerobat: return 1.1
+        case .nutBall: return 0.6
         }
     }
 
@@ -128,7 +127,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
             c.wingspan = 580; c.rootChord = 150; c.tipChord = 120; c.sweep = 8; c.dihedral = 0
             c.fuselageLength = 300; c.fuselageHeight = 58; c.noseLength = 120; c.tailArm = 300
             c.hStabSpan = 230; c.hStabChord = 70; c.vStabHeight = 70; c.vStabChord = 70
-            c.material = .depron5; c.motor = .m1306; c.battery = .s2_450; c.servo = .g25; c.fpv = .o4Lite
+            c.material = .depron5; c.motor = .m1306; c.battery = .s2_450; c.servo = .g25
         case .jet:
             c.wingspan = 540; c.rootChord = 230; c.tipChord = 85; c.sweep = 175; c.dihedral = 0
             c.controlChordPct = 0.24
@@ -151,6 +150,12 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
             c.fuselageLength = 470; c.fuselageHeight = 92; c.noseLength = 62; c.tailArm = 265
             c.hStabSpan = 150; c.hStabChord = 50; c.vStabHeight = 65; c.vStabChord = 55
             c.material = .depron5; c.motor = .m1103; c.battery = .s1_300; c.servo = .g17
+        case .nutBall:
+            // Width × length of the disc; elevator depth as fraction of the length; motor 45 mm ahead of the disc.
+            c.wingspan = 500; c.rootChord = 460; c.tipChord = 60; c.sweep = 0; c.dihedral = 0
+            c.controlChordPct = 0.17
+            c.noseLength = 45; c.fuselageHeight = 60; c.vStabHeight = 95; c.vStabChord = 120
+            c.material = .depron5; c.motor = .m1104; c.battery = .s2_300; c.servo = .g37
         }
         c.name = "My \(title)"
         c.batteryPosition = c.defaultBatteryPosition
@@ -189,7 +194,6 @@ struct AircraftConfig: Codable, Equatable {
     var servo: ServoClass = .g25
     /// Battery centre position measured aft of the root leading edge (mm, negative = forward).
     var batteryPosition: Double = 0
-    var fpv: FPVSystem = .none
     var fuselageType: FuselageType = .cross
     /// 1 = one central servo driving both ailerons via torque rods, 2 = one servo per aileron.
     var aileronServos: Int = 2
@@ -197,9 +201,6 @@ struct AircraftConfig: Codable, Equatable {
     var ailerons: Bool = false
     var rudder: Bool = true
     var hasAilerons: Bool { !kind.isTailless && ailerons }
-    /// Tailless with FPV: the camera owns the top of the apex, so the battery goes UNDER the wing at the apex
-    /// (ahead of the keel) – the only place heavy enough to balance the wing.
-    var batteryUnderWing: Bool { kind.isTailless && fpv != .none }
     /// Tailless only: winglets or a centre fin, and the centre fin's leading-edge position (mm aft of the root LE).
     var taillessFins: TaillessFins = .winglets
     var finPosition: Double = 40
@@ -207,8 +208,6 @@ struct AircraftConfig: Codable, Equatable {
     /// Winglets on tailed aircraft (tailless types choose winglets / centre fin via `taillessFins`).
     var tailWinglets: Bool = false
     var hasWinglets: Bool { kind.isTailless ? taillessFins == .winglets : tailWinglets }
-    /// All-in-one flight controller (receiver + ESCs on one 26 × 26 mm board) instead of separate ESC(s) and receiver.
-    var aio: Bool = false
     var isDual: Bool { motorLayout == .dualTractor && kind.allowsDualMotors }
     var motorCount: Int { isDual ? 2 : 1 }
     /// Effective pusher configuration (dual layouts are always tractors).
@@ -227,13 +226,16 @@ struct AircraftConfig: Codable, Equatable {
     var taper: Double { tipChord / max(rootChord, 1) }
 
     var defaultBatteryPosition: Double {
-        kind.isTailless ? battery.size.l / 2 : -noseLength * 0.45
+        kind.isTailless ? battery.size.l / 2 : (kind.isNutBall ? rootChord * 0.12 : -noseLength * 0.45)
     }
 
     /// Ranges used both by the UI sliders and the randomiser.
     static func range(_ key: PartialKeyPath<AircraftConfig>, kind: AircraftKind) -> ClosedRange<Double> {
         switch key {
         case \AircraftConfig.wingspan: return 250...maxWingspan
+        case \AircraftConfig.rootChord where kind.isNutBall: return 250...600
+        case \AircraftConfig.noseLength where kind.isNutBall: return 10...120
+        case \AircraftConfig.fuselageHeight where kind.isNutBall: return 36...110
         case \AircraftConfig.rootChord: return kind == .delta ? 180...420 : (kind.isJet ? 150...320 : 60...260)
         case \AircraftConfig.tipChord: return kind == .delta ? 30...140 : 35...240
         case \AircraftConfig.sweep: return kind.isTailless ? 0...320 : (kind.isJet ? 60...260 : -20...80)
@@ -264,7 +266,10 @@ struct AircraftConfig: Codable, Equatable {
         }
         r(\.wingspan, spread: 0.2); r(\.rootChord, spread: 0.2); r(\.tipChord, spread: 0.25)
         r(\.sweep, spread: 0.3); r(\.controlChordPct, spread: 0.15)
-        if !kind.isTailless {
+        if kind.isNutBall {
+            c.sweep = 0; r(\.noseLength, spread: 0.3); r(\.vStabHeight, spread: 0.15); r(\.vStabChord, spread: 0.15)
+            c.rootChord = min(max(c.rootChord, 250), 600)
+        } else if !kind.isTailless {
                         r(\.fuselageHeight, spread: 0.15); r(\.noseLength, spread: 0.15); r(\.tailArm, spread: 0.15)
             r(\.hStabSpan, spread: 0.15); r(\.hStabChord, spread: 0.15)
             r(\.vStabHeight, spread: 0.15); r(\.vStabChord, spread: 0.15)

@@ -15,30 +15,11 @@ extension AircraftConfig {
     /// pusher = structure in front, motor and prop behind; tractor = structure behind, motor and prop in front.
     /// Lateral position of the two motors of a dual-tractor layout: props clear the fuselage/pod and each other.
     /// As far inboard as possible (less roll inertia and less yaw if one motor quits) while the props clear the
-    /// fuselage/pod/centre fin by 4 mm and – with FPV – stay outside a 150° camera field of view.
-    var dualMotorX: Double {
-        let r = motor.propInches * 25.4 / 2
-        var x = r + dualBodyHalfWidth + 4
-        if fpv != .none {
-            let halfFOV = 75.0 * .pi / 180
-            for _ in 0..<4 {
-                let propZ = sweep * x / semiSpan - 2 - motorLength - 4
-                let ahead = fpvCameraZ - propZ          // > 0: the prop disc is in front of the camera
-                if ahead > 0 { x = max(x, r + ahead * tan(halfFOV)) }
-            }
-        }
-        return x
-    }
+    /// fuselage/pod/centre fin by 4 mm.
+    var dualMotorX: Double { motor.propInches * 25.4 / 2 + dualBodyHalfWidth + 4 }
     /// Half width of whatever sits between the two props (centre fin / keel, or fuselage plate / pod).
     var dualBodyHalfWidth: Double {
         kind.isTailless ? (taillessFins == .centreFin ? material.thickness / 2 + 2 : 4) : fuselagePlateWidth / 2 + 2
-    }
-    /// Longitudinal position of the FPV camera lens.
-    var fpvCameraZ: Double {
-        if kind.isTailless { return 4 }
-        if kind.isTwinBoom { return -noseLength + 10 }
-        if kind.isJet { return -0.45 * noseLength }
-        return -noseLength + 14
     }
     var firewallZ: Double {
         if isDual { return sweep * dualMotorX / semiSpan - 2 }   // just ahead of the leading edge at the motor station
@@ -93,19 +74,11 @@ enum DesignBuilder {
         var controls: [ControlSurface] = []
         var servoCutouts: [(part: String, rect: [Vec2])] = []
         var issues: [String] = []
-        var fpvCamera = SIMD3<Double>.zero
-        var fpvVTX = SIMD3<Double>.zero
         var batteryPos = SIMD3<Double>.zero
         /// Total length of carbon truss strips (mm) for the BOM.
         var trussLength = 0.0
 
         var t: Double { c.material.thickness }
-        /// AIO board centre, sitting on the 5.4 mm standoffs of its printed mount.
-        /// Tailless: under the wing left of the keel; others: on the left side of the upper fuselage over the wing.
-        var aioPosition: SIMD3<Double> {
-            c.kind.isTailless ? [-(t / 2 + AIOController.boardSize / 2 + 1), -t / 2 - 6.2, c.rootChord * 0.42]
-                              : [-(t / 2 + 6.2), t / 2 + AIOController.boardSize / 2 + 2, c.rootChord * 0.3]
-        }
         /// ESC size (l × w × h) – bigger motors need bigger ESCs.
         var escSize: SIMD3<Double> { c.motor.escMass > 4 ? [24, 13, 5] : [18, 10, 4] }
         /// ESC position for the motor at lateral position x: taped where the motor leads reach it.
@@ -121,6 +94,7 @@ enum DesignBuilder {
         /// Receiver on the left side of the upper fuselage behind the servos (under the wing on tailless).
         var receiverPosition: SIMD3<Double> {
             if c.kind.isTailless { return [t / 2 + 7, -t / 2 - 2, c.rootChord * 0.2] }
+            if c.kind.isNutBall { return [-(t / 2 + 2), t / 2 + 12, c.rootChord * 0.32] }
             return [-(t / 2 + 2), t / 2 + 12, c.rootChord * (c.kind.isJet ? 0.45 : 0.72)]
         }
         var s: Double { c.semiSpan }
@@ -134,6 +108,7 @@ enum DesignBuilder {
             if c.kind.isTailless { buildTailless() }
             else if c.kind.isTwinBoom { buildTwinBoom() }
             else if c.kind.isJet { buildJet() }
+            else if c.kind.isNutBall { buildNutBall() }
             else { buildConventional() }
             addElectronics()
         }
@@ -323,7 +298,7 @@ enum DesignBuilder {
             }
 
             // Centre keel under the wing (reinforcement strip, stays within the chord) – carries the motor mount clamp.
-            let k0 = c.batteryUnderWing ? max(10, c.batteryPosition + c.battery.size.l / 2 + 3) : 10.0
+            let k0 = 10.0
             let k1 = single ? w.te(0) - nd + 2 : w.te(0) - 12
             let hk = max(12, min(20, c.rootChord * 0.08))
             if k1 - k0 > 40 {
@@ -337,20 +312,9 @@ enum DesignBuilder {
             }
 
             let b = c.battery.size
-            features.append(.zone(Poly.rect(center: Vec2(c.batteryPosition, 0), size: Vec2(b.l, b.w)), c.batteryUnderWing ? "Battery (under)" : "Battery"))
-            batteryPos = [0, c.batteryUnderWing ? -t / 2 - b.h / 2 : t / 2 + b.h / 2, c.batteryPosition]
-            // Camera on the apex, battery behind it (never on top of each other); VTX under the wing,
-            // right of the keel, so the top surface stays free.
-            fpvCamera = [0, t / 2 + 1.2 + c.fpv.cameraWidth / 2, c.fpvCameraZ]
-            let v = c.fpv.vtxSize
-            fpvVTX = [t / 2 + v.w / 2 + 1, -t / 2 - v.h / 2, c.rootChord * 0.42]
-            if c.fpv != .none {
-                features.append(.zone(Poly.rect(center: Vec2(c.fpvCameraZ + 2, 0), size: Vec2(18, 18)), "CAM"))
-                features.append(.zone(Poly.rect(center: Vec2(c.rootChord * 0.42, fpvVTX.x), size: Vec2(v.l, v.w)), "VTX (under)"))
-            }
-            if c.aio {
-                features.append(.zone(Poly.rect(center: Vec2(c.rootChord * 0.42, aioPosition.x), size: Vec2(AIOController.boardSize, AIOController.boardSize)), "AIO (under)"))
-            }
+            features.append(.zone(Poly.rect(center: Vec2(c.batteryPosition, 0), size: Vec2(b.l, b.w)), "Battery"))
+            batteryPos = [0, t / 2 + b.h / 2, c.batteryPosition]
+
             parts.insert(Part(name: "Wing", role: .wing, outline: outline, holes: holes, features: features,
                               regions: [Region(polygon: mainRegion, isControl: false)] + out.controls.map { Region(polygon: $0, isControl: true) },
                               instances: [.horizontal(at: .zero)], material: c.material), at: 0)
@@ -558,11 +522,6 @@ enum DesignBuilder {
             }
 
             batteryPos = [tw / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
-            // Camera clamp sits on the top edge of the nose: interpolate the outline height at the camera station.
-            let camTop = hNose * 0.65 + hNose * 0.35 * min(1, 14 / (0.35 * c.noseLength))
-            fpvCamera = [0, t / 2 + camTop + 1.2 + c.fpv.cameraWidth / 2, uN + 14]
-            // VTX flat on the right side of the upper fuselage behind the servos (AIO sits on the left).
-            fpvVTX = [tw / 2 + c.fpv.vtxSize.h / 2 + 0.5, t / 2 + hWing * 0.5, c.rootChord * 0.6]
         }
 
         // MARK: Sport jet (Ares style) – swept wing, prop spinning in a slot through the wing centre
@@ -728,8 +687,6 @@ enum DesignBuilder {
                                                armPosition: armTip(rBody, side: -1), hornAxis: [-1, 0, 0]))
             }
             batteryPos = [tw / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
-            fpvCamera = [0, t / 2 + hCanopy * 0.58 + 1.2 + c.fpv.cameraWidth / 2, -0.45 * c.noseLength]
-            fpvVTX = [tw / 2 + c.fpv.vtxSize.h / 2 + 0.5, t / 2 + hMid * 0.5, c.rootChord * 0.4]
         }
 
         // MARK: Twin boom pusher
@@ -858,9 +815,110 @@ enum DesignBuilder {
                                            armPosition: armTip([0, t / 2 + s2.y, s2.x], side: -1), hornAxis: [1, 0, 0])) }
 
             batteryPos = [t / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
-            let camTop = hp * 0.5 + hp * 0.4 * min(1, 10 / (0.35 * c.noseLength))
-            fpvCamera = [0, t / 2 + camTop + 1.2 + c.fpv.cameraWidth / 2, uN + 10]
-            fpvVTX = [t / 2 + c.fpv.vtxSize.h / 2 + 0.5, t / 2 + hp * 0.45, c.rootChord * 0.55]
+        }
+
+        // MARK: NutBall – round flat wing, elevator across the trailing edge, centre spine + fin, tractor motor
+
+        mutating func buildNutBall() {
+            let L = c.rootChord, S = s, f = c.controlChordPct
+            let fh = c.fuselageHeight, vsc = c.vStabChord
+            let uN = -c.noseLength
+            // Elliptic disc, parameter θ: u = L/2·(1 − cos θ), v = S·sin θ (θ = 0 nose, π tail).
+            func pt(_ th: Double) -> Vec2 { Vec2(L / 2 * (1 - cos(th)), S * sin(th)) }
+            func arc(_ a: Double, _ b: Double) -> [Vec2] {
+                let n = max(4, Int((b - a) / (.pi / 60)))
+                return (0...n).map { pt(a + (b - a) * Double($0) / Double(n)) }
+            }
+            func mirrored(_ r: [Vec2]) -> [Vec2] { r.reversed().map { Vec2($0.x, -$0.y) } }
+            let uH = L * (1 - f)                                  // elevator hinge line
+            let thH = acos(min(1, max(-1, 1 - 2 * uH / L)))
+            let rudderChord = max(0.4 * vsc, 18.0)
+            let a = t / 2 + 1                                     // elevator inner edge at the hinge
+            let nTe = max(a + 4, rudderChord * 0.55)              // V-cut at the elevator TE for rudder travel
+            let thT = .pi - asin(min(1, nTe / S))
+            // Nose tongue in front of the disc carries the + clamp of the motor mount.
+            let mountHalf = PrintedParts.motorMountPlate(c.motor, foam: t) / 2
+            let nw = max(mountHalf, 10.0)
+            let thN = asin(min(1, nw / S))
+            let tongue = c.noseLength > 1 ? [Vec2(uN, nw)] : []
+            let rOutline = tongue + arc(thN, thT) + [Vec2(uH, a)]
+            let rMain = tongue + arc(thN, thH) + [Vec2(uH, a)]
+            let outline = Poly.ccw(rOutline + mirrored(rOutline))
+            let mainRegion = Poly.ccw(rMain + mirrored(rMain))
+            let elevR = Poly.ccw([Vec2(uH, a)] + arc(thH, thT))
+            let elevL = Poly.ccw(mirrored([Vec2(uH, a)] + arc(thH, thT)))
+            if !Poly.isSimple(outline) { issues.append("Disc outline intersects itself – increase the width or reduce the elevator depth.") }
+
+            // --- Spine (with fin + rudder) on top, keel below – the + section the motor mount clamps onto.
+            let hs = fh * 0.5 - t / 2, hk = fh * 0.5 - t / 2
+            let finTop = max(c.vStabHeight, hs + 15)
+            let finLE = uH - vsc
+            if finLE < L * 0.35 { issues.append("Fin chord is too long – the fin would reach the servos. Reduce the fin chord or the elevator depth.") }
+            let noseFront = min(hs, max(mountHalf - t / 2 - 0.5, 4))
+            let rg = c.hasRudder ? TaperedPanel.endGap : 0
+            let uR = uH + rudderChord
+            let upper: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0)] + (rg > 0 ? [Vec2(uH, rg)] : []) +
+                [Vec2(c.hasRudder ? uR : uH + 2, rg), Vec2(c.hasRudder ? uR : uH + 2, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs),
+                 Vec2(uN + 15, hs), Vec2(uN, noseFront)]
+            var upperMain: [Vec2] = c.hasRudder
+                ? [Vec2(uN, 0), Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs), Vec2(uN + 15, hs), Vec2(uN, noseFront)]
+                : upper
+            let rudder = [Vec2(uH, rg), Vec2(uR, rg), Vec2(uR, finTop), Vec2(uH, finTop)]
+            let upTabs = [L * 0.06, L * 0.4, finLE + vsc * 0.35].filter { $0 + 6 < uH && $0 - 6 > uN }
+            var upperOut = upper
+            for tu in upTabs {
+                upperOut = Poly.insertTab(upperOut, at: Vec2(tu, 0), width: 10, height: t)
+                upperMain = Poly.insertTab(upperMain, at: Vec2(tu, 0), width: 10, height: t)
+            }
+            let noseFrontLow = min(hk, max(mountHalf - t / 2 - 0.5, 4))
+            let kEnd = L * 0.62
+            let lower: [Vec2] = [Vec2(uN, 0), Vec2(uN, -noseFrontLow), Vec2(uN + 20, -hk), Vec2(L * 0.45, -hk), Vec2(kEnd, 0)]
+            let loTabs = [L * 0.12, L * 0.36].filter { $0 + 6 < kEnd }
+            var lowerOut = lower
+            for tu in loTabs { lowerOut = Poly.insertTab(lowerOut, at: Vec2(tu, 0), width: 10, height: t) }
+
+            var discHoles = centreSlots(upTabs + loTabs)
+            let eHornV = max(armOffset, a + (nTe - a) * 0.45 + 2.5)
+            discHoles.append(hornSlot(at: Vec2(uH + 6, eHornV)))
+
+            // Servos in the spine just ahead of the CG.
+            let sv = c.servo.size
+            let s1 = Vec2(L * 0.12 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
+            var upperHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: upperMain)]
+            if c.hasRudder {
+                upperHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upperMain))
+                upperHoles.append(hornSlot(at: Vec2(uH + 6, 10)))
+            }
+
+            let us = L * 0.3
+            let vs = S * sin(acos(min(1, max(-1, 1 - 2 * us / L)))) * 0.88
+            var features: [Feature] = [.hinge(Vec2(uH, a), pt(thH)), .hinge(Vec2(uH, -a), Vec2(uH, -pt(thH).y)),
+                                       .cut(Vec2(uH, a), pt(thT)), .cut(Vec2(uH, -a), Vec2(pt(thT).x, -nTe)),
+                                       .label("NUTBALL", Vec2(L * 0.55, S * 0.35))]
+            if c.sparEnabled { features.append(.spar(Vec2(us, -vs), Vec2(us, vs), c.sparSpec.widthMM)) }
+            parts.append(Part(name: "Disc wing", role: .wing, outline: outline, holes: discHoles, features: features,
+                              regions: [Region(polygon: mainRegion, isControl: false), Region(polygon: elevR, isControl: true), Region(polygon: elevL, isControl: true)],
+                              instances: [.horizontal(at: .zero)], material: c.material))
+            parts.append(Part(name: "Spine & fin", role: .fuselage, outline: upperOut, holes: upperHoles,
+                              features: (c.hasRudder ? [.hinge(Vec2(uH, 0), Vec2(uH, finTop))] : []) + [.label("SPINE", Vec2(L * 0.3, hs * 0.5))],
+                              regions: c.hasRudder ? [Region(polygon: upperMain, isControl: false), Region(polygon: rudder, isControl: true)] : [],
+                              instances: [.vertical(at: [0, t / 2, 0])], material: c.material))
+            parts.append(Part(name: "Keel", role: .fuselage, outline: lowerOut,
+                              features: [.label("KEEL", Vec2(L * 0.3, -hk * 0.5)),
+                                         .zone(Poly.rect(center: Vec2(c.batteryPosition, -c.battery.size.w / 2 - 1), size: Vec2(c.battery.size.l, c.battery.size.w)), "Battery")],
+                              instances: [.vertical(at: [0, -t / 2, 0])], material: c.material))
+
+            let eBody: SIMD3<Double> = [0, t / 2 + s1.y, s1.x]
+            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [eHornV, t / 2 + 9, uH + 2],
+                                           servoPosition: eBody, area: Poly.area(elevR) * 2, chord: f * L * 0.7, servoID: "Elevator",
+                                           armPosition: armTip(eBody, side: 1)))
+            if c.hasRudder {
+                let rBody: SIMD3<Double> = [0, t / 2 + s2.y, s2.x]
+                controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [-(t / 2 + 8), t / 2 + 10, uH + 2],
+                                               servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
+                                               armPosition: armTip(rBody, side: -1), hornAxis: [-1, 0, 0]))
+            }
+            batteryPos = [t / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
         }
 
         // MARK: Electronics & hardware
@@ -873,7 +931,7 @@ enum DesignBuilder {
                 components.append(MassItem(name: c.motor.name + tag, mass: c.motor.mass, position: [x, 0, motorZ], category: "Power"))
                 components.append(MassItem(name: "Propeller\(tag)", mass: c.motor.propInches * 0.35, position: [x, 0, c.propPlaneZ], category: "Power"))
                 components.append(MassItem(name: "Motor mount (printed)\(tag)", mass: 1.5 + c.motor.mass * 0.12, position: [x, 0, c.firewallZ], category: "Printed"))
-                if !c.aio { components.append(MassItem(name: "ESC\(tag)", mass: c.motor.escMass, position: escPosition(motorX: x), category: "Power")) }
+                components.append(MassItem(name: "ESC\(tag)", mass: c.motor.escMass, position: escPosition(motorX: x), category: "Power"))
             }
             if c.isDual {
                 // Mark both motor stations on the wing plan (mount plate + clamp, prop clearance).
@@ -888,19 +946,9 @@ enum DesignBuilder {
                 }
                 if c.dualMotorX + propRadius > s - 5 { issues.append("The motors are too far out – props would overhang the wing tips. Use smaller props or more span.") }
             }
-            if c.aio {
-                components.append(MassItem(name: "AIO flight controller", mass: AIOController.mass + 1.2, position: aioPosition, category: "Radio"))
-            } else {
-                components.append(MassItem(name: "Receiver", mass: 2.5, position: receiverPosition, category: "Radio"))
-            }
+            components.append(MassItem(name: "Receiver", mass: 2.5, position: receiverPosition, category: "Radio"))
             components.append(MassItem(name: "Wiring & connectors", mass: c.isDual ? 4.5 : 3, position: [0, 0, c.rootChord * 0.15], category: "Radio"))
             components.append(MassItem(name: c.battery.name, mass: c.battery.mass, position: batteryPos, category: "Battery"))
-
-            if c.fpv != .none {
-                components.append(MassItem(name: "FPV camera (\(c.fpv.name))", mass: c.fpv.cameraMass, position: fpvCamera, category: "FPV"))
-                components.append(MassItem(name: "FPV transmitter + antenna", mass: c.fpv.vtxMass, position: fpvVTX, category: "FPV"))
-                components.append(MassItem(name: "Camera mount (printed)", mass: 0.8, position: fpvCamera - [0, 5, 0], category: "Printed"))
-            }
 
             var seenServos = Set<String>()
             for ctrl in controls {

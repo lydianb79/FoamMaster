@@ -27,23 +27,21 @@ final class Project: ObservableObject {
     @Published var balanceNote: String?
 
     func start(_ kind: AircraftKind, choice ch: SetupChoice) {
-        start(kind, fpv: ch.fpv, fins: ch.fins, ailerons: ch.layout.ailerons, rudder: ch.layout.rudder,
-              aileronServos: ch.servos, motors: ch.motors, winglets: ch.winglets, aio: ch.aio)
+        start(kind, fins: ch.fins, ailerons: ch.layout.ailerons, rudder: ch.layout.rudder,
+              aileronServos: ch.servos, motors: ch.motors, winglets: ch.winglets)
     }
 
-    func start(_ kind: AircraftKind, fpv: FPVSystem? = nil, fins: TaillessFins? = nil,
+    func start(_ kind: AircraftKind, fins: TaillessFins? = nil,
                ailerons: Bool? = nil, rudder: Bool? = nil, aileronServos: Int = 2, motors: MotorLayout = .single,
-               winglets: Bool = false, aio: Bool = false) {
+               winglets: Bool = false) {
         var c = kind.defaults
-        if let fpv { c.fpv = fpv }
-        if let ailerons { c.ailerons = ailerons }
+        if let ailerons { c.ailerons = ailerons && kind.hasTail }
         if let rudder { c.rudder = rudder }
         c.aileronServos = kind.isTwinBoom ? 2 : aileronServos
         if let fins { c.taillessFins = fins }
         c.motorLayout = kind.allowsDualMotors ? motors : .single
-        c.tailWinglets = winglets
-        c.aio = aio
-        if winglets && !kind.isTailless { c.wingletHeight = 45 }
+        c.tailWinglets = winglets && kind.hasTail
+        if winglets && kind.hasTail { c.wingletHeight = 45 }
         config = Project.balanced(c)
         inspectorTab = .analysis
     }
@@ -119,7 +117,7 @@ final class Project: ObservableObject {
             note = reachable ? "Battery changed to \(fixed.battery.name) and moved to the balance point."
                              : "Changed to \(fixed.battery.name) – still not enough. Adjust the geometry."
         } else if !reachable {
-            note = "\(c.battery.name) is already the biggest pack this motor supports (\(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S). Reduce sweep, add FPV gear at the nose or choose a motor that takes bigger packs."
+            note = "\(c.battery.name) is already the biggest pack this motor supports (\(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S). Reduce sweep, move mass forward or choose a motor that takes bigger packs."
         } else {
             note = "Battery moved to the balance point."
         }
@@ -150,7 +148,6 @@ final class Project: ObservableObject {
         var bestScore = -1
         for _ in 0..<120 {
             var c = AircraftConfig.random(kind: kind)
-            c.fpv = current.fpv
             c.fuselageType = current.fuselageType
             c.aileronServos = current.aileronServos
             c.ailerons = current.ailerons
@@ -158,7 +155,6 @@ final class Project: ObservableObject {
             c.taillessFins = current.taillessFins
             c.motorLayout = current.motorLayout
             c.tailWinglets = current.tailWinglets
-            c.aio = current.aio
             c = Project.balanced(c)
             let a = Analysis(design: DesignBuilder.build(c))
             if a.feasible && a.score > bestScore { best = c; bestScore = a.score }

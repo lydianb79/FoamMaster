@@ -78,10 +78,25 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
     /// Typical maximum current per motor at full throttle (A).
     var maxCurrent: Double { [.m0802: 3, .m1103: 5, .m1104: 6, .m1306: 10, .m1806: 14, .m2204: 18][self]! }
     var propInches: Double { [.m0802: 2.5, .m1103: 3, .m1104: 4, .m1306: 5, .m1806: 6, .m2204: 6][self]! }
-    /// Motor bolt circle diameter (mm) and screw clearance diameter.
-    var boltCircle: Double { [.m0802: 6.6, .m1103: 8.5, .m1104: 9, .m1306: 12, .m1806: 16, .m2204: 16][self]! }
-    var screwHole: Double { [.m0802: 1.3, .m1103: 1.6, .m1104: 1.8, .m1306: 2.2, .m1806: 2.2, .m2204: 3.2][self]! }
-    var screw: String { [.m0802: "M1.2", .m1103: "M1.4", .m1104: "M1.6", .m1306: "M2", .m1806: "M2", .m2204: "M3"][self]! }
+    /// Mounting pattern of the motor base (typical values of common motors of each size):
+    /// 0802 3 × M1.4 on Ø6.6 · 1103 4 × M1.6 on Ø8.5 · 1104 4 × M2 9 × 9 · 1306 4 × M2 12 × 12 ·
+    /// 1806 4 × M2 12 × 16 · 2204 4 × M3 16 × 19 (cross patterns give the distances between opposite holes).
+    var pattern: MountPattern {
+        switch self {
+        case .m0802: return MountPattern(holes: 3, a: 6.6, b: 6.6, thread: 1.4)
+        case .m1103: return MountPattern(holes: 4, a: 8.5, b: 8.5, thread: 1.6)
+        case .m1104: return MountPattern(holes: 4, a: 9, b: 9, thread: 2)
+        case .m1306: return MountPattern(holes: 4, a: 12, b: 12, thread: 2)
+        case .m1806: return MountPattern(holes: 4, a: 12, b: 16, thread: 2)
+        case .m2204: return MountPattern(holes: 4, a: 16, b: 19, thread: 3)
+        }
+    }
+    /// Largest hole-to-hole distance of the pattern (sizes the firewall plate).
+    var boltCircle: Double { max(pattern.a, pattern.b) }
+    var screwHole: Double { pattern.clearance }
+    var screw: String { pattern.screw }
+    /// Shaft / circlip clearance hole in the middle of the firewall.
+    var shaftClearance: Double { min(max(2.5, boltCircle * 0.28), min(pattern.a, pattern.b) / 2 - (pattern.headDiameter + 0.4) / 2 - 0.5) }
     var bellDiameter: Double { [.m0802: 10, .m1103: 14, .m1104: 14, .m1306: 18, .m1806: 23, .m2204: 28][self]! }
 }
 
@@ -124,58 +139,31 @@ struct CarbonSpar {
     static let rod2 = CarbonSpar(name: "Carbon rod Ø2 mm", widthMM: 2, heightMM: 2, gramsPerMeter: 5.0)
 }
 
-// MARK: - All-in-one flight controller
-
-/// Whoop/micro style AIO board: flight controller + receiver + 4-in-1 ESC on a 26 × 26 mm hole pattern.
-enum AIOController {
-    static let name = "AIO flight controller (FC + ELRS receiver + 4-in-1 ESC)"
-    static let holeSpacing = 26.0
-    static let boardSize = 32.0
-    static let mass = 5.5
-    static let amps = 12.0            // per motor, continuous
-    static let cells: ClosedRange<Int> = 1...4
-}
-
-// MARK: - FPV
-
-enum FPVSystem: String, CaseIterable, Identifiable, Codable {
-    case none, analog, o4Lite, walksnail
-    var id: String { rawValue }
-
-    var name: String {
-        switch self {
-        case .none: return "No FPV"
-        case .analog: return "Analog"
-        case .o4Lite: return "DJI O4 Lite"
-        case .walksnail: return "Walksnail"
+/// Motor base hole pattern. 3-hole patterns sit on a circle of diameter `a`; 4-hole patterns form a cross with
+/// `a` and `b` as the distances between opposite holes (a = b: square pattern).
+struct MountPattern: Equatable {
+    var holes: Int
+    var a: Double
+    var b: Double
+    var thread: Double
+    var screw: String { thread == thread.rounded() ? "M\(Int(thread))" : "M\(String(format: "%.1f", thread))" }
+    /// Clearance hole for the screw in the printed firewall.
+    var clearance: Double { thread + (thread >= 3 ? 0.3 : 0.25) }
+    /// Screw head (cap / pan head) diameter and height – the firewall is counterbored so the heads sit flush.
+    var headDiameter: Double { thread * 1.75 + 0.2 }
+    var headHeight: Double { thread * 0.7 + 0.1 }
+    /// Hole centres relative to the motor axis (firewall plane). Holes sit on the clamp axes, i.e. in the foam
+    /// channels where possible; holes under a clamp jaw get an access bore through the jaw.
+    var positions: [Vec2] {
+        if holes == 3 {
+            return (0..<3).map { k in let t = Double(k) * 2 * .pi / 3; return Vec2(cos(t), sin(t)) * (a / 2) }
         }
+        return [Vec2(a / 2, 0), Vec2(-a / 2, 0), Vec2(0, b / 2), Vec2(0, -b / 2)]
     }
-    var detail: String {
-        switch self {
-        case .none: return "Line of sight"
-        case .analog: return "Nano camera + 25–200 mW VTX"
-        case .o4Lite: return "O4 Air Unit Lite, digital HD"
-        case .walksnail: return "Avatar HD Mini 1S Lite kit"
-        }
+    var label: String {
+        holes == 3 ? "3 × \(screw) on Ø\(fmt(a)) mm" : (a == b ? "4 × \(screw), \(fmt(a)) × \(fmt(a)) mm" : "4 × \(screw), \(fmt(a)) × \(fmt(b)) mm")
     }
-    /// Approximate flying weights (g): camera, transmitter incl. antenna.
-    var cameraMass: Double { [.none: 0, .analog: 2.5, .o4Lite: 3.5, .walksnail: 3.2][self]! }
-    var vtxMass: Double { [.none: 0, .analog: 3.5, .o4Lite: 5.5, .walksnail: 5.0][self]! }
-    var mass: Double { cameraMass + vtxMass }
-    /// Average power draw (W) while flying.
-    var power: Double { [.none: 0, .analog: 2.5, .o4Lite: 5.5, .walksnail: 4.5][self]! }
-    /// Camera body width (mm) – all three use 14 mm class micro cameras here.
-    var cameraWidth: Double { [.none: 0, .analog: 14, .o4Lite: 14, .walksnail: 14][self]! }
-    /// Printed-mount fitting notes per system (camera bodies are 14 mm "nano" class for all three).
-    var mountNote: String {
-        switch self {
-        case .none: return ""
-        case .analog: return "nano 14 mm camera, M2 side screws"
-        case .o4Lite: return "O4 Lite camera 14 mm, M2 side screws – check against your unit"
-        case .walksnail: return "Avatar Mini 1S Lite camera 14 mm, M2 side screws – check against your unit"
-        }
-    }
-    var vtxSize: (l: Double, w: Double, h: Double) { [.none: (0, 0, 0), .analog: (20, 14, 5), .o4Lite: (28, 20, 7), .walksnail: (25, 20, 7)][self]! }
+    private func fmt(_ x: Double) -> String { x == x.rounded() ? String(format: "%.0f", x) : String(format: "%.1f", x) }
 }
 
 // MARK: - Fuselage structure
