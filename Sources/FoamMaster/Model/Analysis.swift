@@ -134,7 +134,11 @@ struct Analysis {
     }
 
     static func batteryLimits(_ c: AircraftConfig) -> ClosedRange<Double> {
-        if c.kind.isTailless { return (c.battery.size.l / 2 - 8)...(c.rootChord * 0.55) }
+        if c.kind.isTailless {
+            // With FPV the battery sits under the apex (camera on top) and must stay ahead of the keel/VTX area.
+            let front = c.battery.size.l / 2 - 8
+            return front...max(front, c.rootChord * (c.batteryUnderWing ? 0.3 : 0.55))
+        }
         if c.kind.isJet { return (-c.noseLength + c.battery.size.l / 2 + 15)...(c.rootChord * 0.35) }
         if c.kind.isTwinBoom { return (-c.noseLength + c.battery.size.l / 2 + 5)...(c.rootChord * 0.6) }
         return (-c.noseLength + c.battery.size.l / 2 + 5)...(c.rootChord)

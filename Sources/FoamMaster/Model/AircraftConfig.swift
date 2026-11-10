@@ -197,6 +197,9 @@ struct AircraftConfig: Codable, Equatable {
     var ailerons: Bool = false
     var rudder: Bool = true
     var hasAilerons: Bool { !kind.isTailless && ailerons }
+    /// Tailless with FPV: the camera owns the top of the apex, so the battery goes UNDER the wing at the apex
+    /// (ahead of the keel) – the only place heavy enough to balance the wing.
+    var batteryUnderWing: Bool { kind.isTailless && fpv != .none }
     /// Tailless only: winglets or a centre fin, and the centre fin's leading-edge position (mm aft of the root LE).
     var taillessFins: TaillessFins = .winglets
     var finPosition: Double = 40

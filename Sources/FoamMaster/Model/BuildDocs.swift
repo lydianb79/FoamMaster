@@ -121,7 +121,7 @@ enum BuildDocs {
             s.append(BuildStep(title: "Aileron torque rods", text: "Bend two 1 mm wires into L-shapes, slide them through short brass tubes glued into the wing at the hinge line next to the fuselage and press the long legs into the aileron leading edges. The single aileron servo below the wing drives both rods with one pushrod each.", symbol: "arrow.triangle.branch"))
         }
         if c.fpv != .none {
-            s.append(BuildStep(title: "Install the FPV system", text: "Mount the \(c.fpv.name) camera in the printed camera mount at the marked nose position (≈15° up-tilt). Fix the transmitter with double-sided tape, keep the antenna clear of carbon and the prop, and power it from the flight pack.", symbol: "video"))
+            s.append(BuildStep(title: "Install the FPV system", text: "Mount the \(c.fpv.name) camera in the printed camera mount at the marked nose position.\(c.batteryUnderWing ? " The battery goes under the wing at the apex (marked) – never under or on the camera." : "") Fix the transmitter with double-sided tape, keep the antenna clear of carbon and the prop, and power it from the flight pack.", symbol: "video"))
         }
         if c.isDual {
             // Replace the single-motor step(s) with the twin-motor installation.

@@ -109,6 +109,26 @@ enum SelfTest {
                 try? part.mesh.stlData(name: part.name).write(to: dir.appendingPathComponent("\(kind.rawValue)_\(part.fileName).stl"))
             }
         }
+        for kind in [AircraftKind.flyingWing, .delta] {
+            for fpv in [FPVSystem.analog, .o4Lite] {
+                var c = kind.defaults; c.fpv = fpv
+                c = Project.balanced(c)
+                let d = DesignBuilder.build(c); let a = Analysis(design: d)
+                let batFront = c.batteryPosition - c.battery.size.l / 2
+                print("   fpv \(kind.title) \(fpv.name): camera z \(Int(c.fpvCameraZ)), battery front \(Int(batFront)) (\(c.battery.name)), clear \(batFront > c.fpvCameraZ + 9), feasible \(a.feasible), score \(a.score)")
+                for ch in a.checks where ch.severity >= .warning { print("      [\(ch.severity)] \(ch.title): \(ch.detail)") }
+                if fpv == .o4Lite && kind == .flyingWing {
+                    let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+                    if let r = Renderer(view: view) {
+                        r.setScene(SceneBuilder.aircraft(d, a, deflection: 0.4, showCG: false), resetCamera: true)
+                        r.pitch = -0.35
+                        if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("fpv_wing_under.png")) }
+                        r.pitch = 0.6
+                        if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("fpv_wing_top.png")) }
+                    }
+                }
+            }
+        }
         var feasible = 0
         for _ in 0..<20 {
             let c = AircraftConfig.random(kind: AircraftKind.allCases.randomElement()!)

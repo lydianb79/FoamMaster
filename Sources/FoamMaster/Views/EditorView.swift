@@ -40,6 +40,11 @@ struct ViewportView: View {
                 bottomBar
             }
             .padding(16)
+            if let c = project.config {
+                VStack { HStack { Spacer(); ComponentLegend(config: c) }; Spacer() }
+                    .padding(.top, 84).padding(.trailing, 20)
+                    .allowsHitTesting(false)
+            }
         }
     }
 
@@ -118,5 +123,31 @@ struct FeasibilityBadge: View {
         .background(Theme.color(sev).opacity(0.14), in: Capsule())
         .overlay(Capsule().strokeBorder(Theme.color(sev).opacity(0.35)))
         .animation(.easeInOut, value: analysis.score)
+    }
+}
+
+
+/// Colour key for the 3D view – shows only what the current design contains.
+struct ComponentLegend: View {
+    var config: AircraftConfig
+
+    private func swatch(_ c: SIMD4<Float>) -> Color { Color(red: Double(c.x), green: Double(c.y), blue: Double(c.z)) }
+
+    var body: some View {
+        var items: [(String, SIMD4<Float>)] = [("Motor", Palette.motor), ("Propeller", Palette.prop), ("Battery", Palette.battery), ("Servo", Palette.servo)]
+        if config.fpv != .none { items += [("FPV camera", Palette.carbon), ("VTX + antenna", Palette.vtx)] }
+        if config.aio { items.append(("AIO board", SIMD4(0.1, 0.45, 0.25, 1))) }
+        items += [("Printed parts", Palette.printed), ("Control surface", Palette.control), ("Carbon", Palette.carbon)]
+        return VStack(alignment: .leading, spacing: 4) {
+            ForEach(items, id: \.0) { item in
+                HStack(spacing: 6) {
+                    RoundedRectangle(cornerRadius: 2).fill(swatch(item.1)).frame(width: 10, height: 10)
+                        .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(.white.opacity(0.35), lineWidth: 0.5))
+                    Text(item.0).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(10)
+        .background(.ultraThinMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
     }
 }

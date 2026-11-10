@@ -67,7 +67,8 @@ enum SceneBuilder {
             let mainOutline = part.regions.isEmpty ? part.outline : outlineWithNotches(part, main: mainRegion)
             for inst in part.instances {
                 for r in regions {
-                    let poly = r.isControl ? r.polygon : mainOutline
+                    // Control surfaces are drawn slightly inset so the hinge and side gaps are visible.
+                    let poly = r.isControl ? Poly.inset(r.polygon, by: 0.6) : mainOutline
                     let holes = part.holes.map(\.polygon).filter { Poly.contains(r.polygon, Poly.centroid($0)) }
                     var transform: (SIMD3<Double>) -> SIMD3<Double> = { $0 }
                     if r.isControl, deflection != 0, let axis = hingeAxis(part, r.polygon) {
@@ -133,7 +134,10 @@ enum SceneBuilder {
                     let v = c.fpv.vtxSize
                     let size: SIMD3<Double> = c.kind.isTailless ? [v.w, v.h, v.l] : [v.h, v.w, v.l]
                     scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.vtx)
-                    scene.addLine(p, p + [0, 30, 6], color: SIMD4(0.9, 0.9, 0.95, 0.9))
+                    // Antenna points away from the airframe (down when the VTX sits under a wing).
+                    let ant: SIMD3<Double> = c.kind.isTailless ? [0, -30, 6] : [0, 30, 6]
+                    scene.addMesh(cylinder(center: p + ant * 0.5, radius: 0.6, length: 1).transformed { $0 }, color: Palette.vtx)
+                    scene.addLine(p, p + ant, color: SIMD4(0.3, 0.95, 0.55, 1))
                 }
             case "Printed" where item.name.hasPrefix("Motor mount"):
                 // The real clamp mount: plate on the firewall, jaws over the structure (aft for tractors, forward for pushers).

@@ -17,6 +17,28 @@ enum Poly {
 
     static func area(_ p: [Vec2]) -> Double { abs(signedArea(p)) }
 
+    /// Shrinks a convex polygon by `d` on every edge (used to show hinge/side gaps in 3D).
+    static func inset(_ poly: [Vec2], by d: Double) -> [Vec2] {
+        let p = ccw(poly)
+        let n = p.count
+        guard n >= 3 else { return poly }
+        var lines: [(Vec2, Vec2)] = []
+        for i in 0..<n {
+            let a = p[i], b = p[(i + 1) % n]
+            let len = simd_distance(a, b)
+            guard len > 1e-9 else { continue }
+            let dir = (b - a) / len
+            lines.append((a + Vec2(-dir.y, dir.x) * d, dir))
+        }
+        var out: [Vec2] = []
+        for i in 0..<lines.count {
+            let (p1, d1) = lines[(i + lines.count - 1) % lines.count], (p2, d2) = lines[i]
+            let den = cross(d1, d2)
+            out.append(abs(den) < 1e-9 ? p2 : p1 + d1 * (cross(p2 - p1, d2) / den))
+        }
+        return out
+    }
+
     /// Removes duplicate points and zero-width spikes (a vertex where the outline doubles back on itself).
     static func cleaned(_ poly: [Vec2], eps: Double = 1e-6) -> [Vec2] {
         var p = poly

@@ -3,6 +3,8 @@ import Foundation
 /// Straight-tapered, swept lifting panel described in plan coordinates
 /// (u = chordwise aft, v = spanwise).
 struct TaperedPanel {
+    /// Spanwise clearance between a control surface and the fixed structure next to it (mm).
+    static let endGap = 1.5
     var rootLE: Double = 0
     var rootChord: Double
     var tipChord: Double
@@ -30,19 +32,24 @@ struct TaperedPanel {
         let s = semiSpan
         func h(_ v: Double) -> Double { te(v) - fraction * chord(v) }
 
+        // Each surface gets a clearance slot (`Self.endGap` wide, hinge → trailing edge) at both ends so it can
+        // move freely next to the fixed wing; the slots are cut out of the outline.
+        let g = Self.endGap
         var chain: [Vec2] = [Vec2(te(0), 0)]
+        var outChain: [Vec2] = [Vec2(te(0), 0)]
         var features: [Feature] = []
         var controls: [[Vec2]] = []
         for r in surfaces.sorted(by: { $0.lowerBound < $1.lowerBound }) {
             let a = r.lowerBound, b = r.upperBound
             chain += [Vec2(te(a), a), Vec2(h(a), a), Vec2(h(b), b), Vec2(te(b), b)]
-            controls.append([Vec2(h(a), a), Vec2(te(a), a), Vec2(te(b), b), Vec2(h(b), b)])
-            features += [.hinge(Vec2(h(a), a), Vec2(h(b), b)),
-                         .cut(Vec2(h(a), a), Vec2(te(a), a)),
-                         .cut(Vec2(h(b), b), Vec2(te(b), b))]
+            outChain += [Vec2(te(a), a), Vec2(h(a), a), Vec2(h(a + g), a + g), Vec2(te(a + g), a + g),
+                         Vec2(te(b - g), b - g), Vec2(h(b - g), b - g), Vec2(h(b), b), Vec2(te(b), b)]
+            controls.append([Vec2(h(a + g), a + g), Vec2(te(a + g), a + g), Vec2(te(b - g), b - g), Vec2(h(b - g), b - g)])
+            features += [.hinge(Vec2(h(a + g), a + g), Vec2(h(b - g), b - g))]
         }
         chain.append(Vec2(te(s), s))
-        let plainChain = [Vec2(te(0), 0), Vec2(te(s), s)]
+        outChain.append(Vec2(te(s), s))
+        let plainChain = outChain
 
         func mirror(_ p: Vec2) -> Vec2 { Vec2(p.x, -p.y) }
 

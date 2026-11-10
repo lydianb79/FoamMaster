@@ -102,7 +102,9 @@ enum DesignBuilder {
         var t: Double { c.material.thickness }
         /// Tailless: flat on the wing centre; others: flat against the left side of the upper fuselage over the wing.
         var aioPosition: SIMD3<Double> {
-            c.kind.isTailless ? [0, t / 2 + 4, c.rootChord * 0.45] : [-(t / 2 + 4), t / 2 + AIOController.boardSize / 2 + 2, c.rootChord * 0.3]
+            // Tailless: under the wing on the left of the keel (top is reserved for camera + battery).
+            c.kind.isTailless ? [-(t / 2 + AIOController.boardSize / 2 + 1), -t / 2 - 1, c.rootChord * 0.42]
+                              : [-(t / 2 + 4), t / 2 + AIOController.boardSize / 2 + 2, c.rootChord * 0.3]
         }
         var s: Double { c.semiSpan }
         var propRadius: Double { c.motor.propInches * 25.4 / 2 }
@@ -322,7 +324,8 @@ enum DesignBuilder {
             }
 
             // Centre keel under the wing (reinforcement strip, stays within the chord) – carries the motor mount clamp.
-            let k0 = 10.0, k1 = single ? w.te(0) - nd + 2 : w.te(0) - 12
+            let k0 = c.batteryUnderWing ? max(10, c.batteryPosition + c.battery.size.l / 2 + 3) : 10.0
+            let k1 = single ? w.te(0) - nd + 2 : w.te(0) - 12
             let hk = max(12, min(20, c.rootChord * 0.08))
             if k1 - k0 > 40 {
                 var keel = [Vec2(k0, 0), Vec2(k0 + hk, -hk), Vec2(k1, -hk), Vec2(k1, 0)]
@@ -335,11 +338,20 @@ enum DesignBuilder {
             }
 
             let b = c.battery.size
-            features.append(.zone(Poly.rect(center: Vec2(c.batteryPosition, 0), size: Vec2(b.l, b.w)), "Battery"))
-            batteryPos = [0, t / 2 + b.h / 2, c.batteryPosition]
-            fpvCamera = [0, t / 2 + 8, 4]
-            fpvVTX = [0, t / 2 + 4, c.rootChord * 0.5]
-            if c.fpv != .none { features.append(.zone(Poly.rect(center: Vec2(8, 0), size: Vec2(14, 18)), "Cam")) }
+            features.append(.zone(Poly.rect(center: Vec2(c.batteryPosition, 0), size: Vec2(b.l, b.w)), c.batteryUnderWing ? "Battery (under)" : "Battery"))
+            batteryPos = [0, c.batteryUnderWing ? -t / 2 - b.h / 2 : t / 2 + b.h / 2, c.batteryPosition]
+            // Camera on the apex, battery behind it (never on top of each other); VTX under the wing,
+            // right of the keel, so the top surface stays free.
+            fpvCamera = [0, t / 2 + 8, c.fpvCameraZ]
+            let v = c.fpv.vtxSize
+            fpvVTX = [t / 2 + v.w / 2 + 1, -t / 2 - v.h / 2, c.rootChord * 0.42]
+            if c.fpv != .none {
+                features.append(.zone(Poly.rect(center: Vec2(c.fpvCameraZ + 2, 0), size: Vec2(18, 18)), "CAM"))
+                features.append(.zone(Poly.rect(center: Vec2(c.rootChord * 0.42, fpvVTX.x), size: Vec2(v.l, v.w)), "VTX (under)"))
+            }
+            if c.aio {
+                features.append(.zone(Poly.rect(center: Vec2(c.rootChord * 0.42, aioPosition.x), size: Vec2(AIOController.boardSize, AIOController.boardSize)), "AIO (under)"))
+            }
             parts.insert(Part(name: "Wing", role: .wing, outline: outline, holes: holes, features: features,
                               regions: [Region(polygon: mainRegion, isControl: false)] + out.controls.map { Region(polygon: $0, isControl: true) },
                               instances: [.horizontal(at: .zero)], material: c.material), at: 0)
@@ -457,11 +469,12 @@ enum DesignBuilder {
             let finTop = hBoom + c.vStabHeight
             let finLE = uH - 1.25 * vsc
             if finLE < ub + 10 { issues.append("Fin is too long for the tail arm – fin leading edge reaches the wing.") }
-            let upper: [Vec2] = [Vec2(uN, 0), Vec2(uR, 0), Vec2(uR, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
+            let rg = c.hasRudder ? TaperedPanel.endGap : 0     // rudder clears the plate / elevator by this gap
+            let upper: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0)] + (rg > 0 ? [Vec2(uH, rg)] : []) + [Vec2(uR, rg), Vec2(uR, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
                                  Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, hNose * 0.65)]
             var upperMain: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
                                      Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, hNose * 0.65)]
-            let rudder = [Vec2(uH, 0), Vec2(uR, 0), Vec2(uR, finTop), Vec2(uH, finTop)]
+            let rudder = [Vec2(uH, rg), Vec2(uR, rg), Vec2(uR, finTop), Vec2(uH, finTop)]
             let hasRudder = c.hasRudder
             if !hasRudder { upperMain = upper }
             let layers = Double(c.fuselageType.webLayers)
@@ -543,7 +556,8 @@ enum DesignBuilder {
 
             batteryPos = [tw / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
             fpvCamera = [0, t / 2 + hNose + 8, uN + 14]
-            fpvVTX = [-(tw / 2 + 3), t / 2 + hWing * 0.5, c.rootChord * 0.6]
+            // VTX flat on the right side of the upper fuselage behind the servos (AIO sits on the left).
+            fpvVTX = [tw / 2 + c.fpv.vtxSize.h / 2 + 0.5, t / 2 + hWing * 0.5, c.rootChord * 0.6]
         }
 
         // MARK: Sport jet (Ares style) – swept wing, prop spinning in a slot through the wing centre
@@ -631,9 +645,10 @@ enum DesignBuilder {
             let fw = c.firewallZ
             var upFront = [Vec2(uN + 12, 0), Vec2(fw, 0), Vec2(fw, hMid), Vec2(c.rootChord * 0.2, hCanopy),
                            Vec2(-0.3 * c.noseLength, hCanopy * 0.85), Vec2(uN + 0.45 * c.noseLength, hCanopy * 0.4), Vec2(uN + 12, 3)]
-            var upRear = [Vec2(zp + gap, 0), Vec2(uR, 0), Vec2(uR, finTop), Vec2(uH - 0.35 * vsc, finTop), Vec2(finLE, hBoom), Vec2(zp + gap + 15, hMid * 0.9), Vec2(zp + gap, hMid * 0.8)]
+            let rgJ = c.hasRudder ? TaperedPanel.endGap : 0
+            var upRear = [Vec2(zp + gap, 0), Vec2(uH, 0)] + (rgJ > 0 ? [Vec2(uH, rgJ)] : []) + [Vec2(uR, rgJ), Vec2(uR, finTop), Vec2(uH - 0.35 * vsc, finTop), Vec2(finLE, hBoom), Vec2(zp + gap + 15, hMid * 0.9), Vec2(zp + gap, hMid * 0.8)]
             var upRearMain = [Vec2(zp + gap, 0), Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.35 * vsc, finTop), Vec2(finLE, hBoom), Vec2(zp + gap + 15, hMid * 0.9), Vec2(zp + gap, hMid * 0.8)]
-            let rudder = [Vec2(uH, 0), Vec2(uR, 0), Vec2(uR, finTop), Vec2(uH, finTop)]
+            let rudder = [Vec2(uH, rgJ), Vec2(uR, rgJ), Vec2(uR, finTop), Vec2(uH, finTop)]
             if !c.hasRudder { upRearMain = upRear }
             if finLE < zp + gap + 20 { issues.append("Fin is too long for the tail arm.") }
             let hLow = fh * 0.3
@@ -712,7 +727,7 @@ enum DesignBuilder {
             }
             batteryPos = [tw / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
             fpvCamera = [0, t / 2 + hCanopy * 0.55, -0.45 * c.noseLength]
-            fpvVTX = [-(tw / 2 + 3), t / 2 + hMid * 0.5, c.rootChord * 0.3]
+            fpvVTX = [tw / 2 + c.fpv.vtxSize.h / 2 + 0.5, t / 2 + hMid * 0.5, c.rootChord * 0.4]
         }
 
         // MARK: Twin boom pusher
@@ -842,7 +857,7 @@ enum DesignBuilder {
 
             batteryPos = [t / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
             fpvCamera = [0, t / 2 + hp * 0.5 + 8, uN + 10]
-            fpvVTX = [-(t / 2 + 3), t / 2 + hp * 0.5, c.rootChord * 0.4]
+            fpvVTX = [t / 2 + c.fpv.vtxSize.h / 2 + 0.5, t / 2 + hp * 0.45, c.rootChord * 0.55]
         }
 
         // MARK: Electronics & hardware
