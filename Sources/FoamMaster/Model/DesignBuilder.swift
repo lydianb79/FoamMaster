@@ -2,20 +2,29 @@ import Foundation
 import simd
 
 extension AircraftConfig {
+    /// Depth of the trailing-edge cutout the pusher motor of a flying wing sits in.
+    var motorNotchDepth: Double { max(26, motor.bellDiameter * 1.3) }
+    var motorNotchWidth: Double { motor.propInches * 25.4 + 10 }
     /// z of the motor (aircraft frame, mm aft of the root leading edge).
     var motorZ: Double {
-        if kind.isTailless { return rootChord + 18 }
-        if kind.isTwinBoom { return podEnd + 16 }
+        if kind.isTailless { return rootChord - motorNotchDepth + 12 }
+        if kind.isTwinBoom { return rootChord + 16 }
         return -noseLength - 12
     }
     /// z of the propeller disc.
     var propPlaneZ: Double { kind.isPusher ? motorZ + 8 : motorZ - 10 }
-    var podEnd: Double { rootChord + 10 }
     /// Lateral position of the twin booms / fins.
     var boomX: Double { hStabSpan / 2 - 7 }
+    /// Width of the horizontal fuselage plate (cross fuselage) at the wing.
+    var fuselagePlateWidth: Double { min(max(fuselageHeight * 0.45, 24), 46) }
 }
 
 /// Turns an `AircraftConfig` into flat foam parts, cutouts and component positions.
+///
+/// Construction follows the multi-layer style of commercial flat-foam kits:
+/// conventional aircraft get a full-length horizontal fuselage plate (with the stabiliser as
+/// part of it) and upper/lower vertical fuselage halves glued on with tabs, wing halves keyed
+/// into the plate sides, carbon spars top + bottom and a carbon truss on the fuselage sides.
 enum DesignBuilder {
     static let slotClearance = 0.15
 
@@ -23,7 +32,7 @@ enum DesignBuilder {
         var b = Builder(c: c)
         b.run()
         return Design(config: c, parts: b.parts, components: b.components, controls: b.controls,
-                      servoCutouts: b.servoCutouts, geometryIssues: b.issues)
+                      servoCutouts: b.servoCutouts, geometryIssues: b.issues, trussLength: b.trussLength)
     }
 
     private struct Builder {
@@ -33,10 +42,11 @@ enum DesignBuilder {
         var controls: [ControlSurface] = []
         var servoCutouts: [(part: String, rect: [Vec2])] = []
         var issues: [String] = []
-        /// FPV camera / VTX mounting positions chosen by the airframe builder.
         var fpvCamera = SIMD3<Double>.zero
         var fpvVTX = SIMD3<Double>.zero
         var batteryPos = SIMD3<Double>.zero
+        /// Total length of carbon truss strips (mm) for the BOM.
+        var trussLength = 0.0
 
         var t: Double { c.material.thickness }
         var s: Double { c.semiSpan }
@@ -49,7 +59,7 @@ enum DesignBuilder {
         mutating func run() {
             if c.kind.isTailless { buildTailless() }
             else if c.kind.isTwinBoom { buildTwinBoom() }
-            else { buildTailed() }
+            else { buildConventional() }
             addElectronics()
         }
 
@@ -74,22 +84,37 @@ enum DesignBuilder {
                                                  minV: minV - slotClearance, maxV: maxV + slotClearance))
         }
 
+        /// Slots along the centre line (v = 0) for tabs of a vertical part standing on a horizontal one.
+        func centreSlots(_ us: [Double], width: Double = 10) -> [Hole] {
+            us.map { slot(minU: $0 - width / 2, maxU: $0 + width / 2, minV: -t / 2, maxV: t / 2) }
+        }
+
         func regions(_ out: TaperedPanel.Output) -> [Region] {
             [Region(polygon: out.main, isControl: false)] + out.controls.map { Region(polygon: $0, isControl: true) }
         }
 
-        func sparFeatures(full: Bool) -> [Feature] {
+        /// Carbon spar on the 30 % chord line, slit in from top and bottom.
+        func sparFeatures(_ w: TaperedPanel, from v0: Double, to v1: Double) -> [Feature] {
             guard c.sparEnabled else { return [] }
-            let w = wing
-            let tipV = s * 0.9
-            let root = Vec2(w.le(0) + 0.3 * w.chord(0), 0)
-            let tip = Vec2(w.le(tipV) + 0.3 * w.chord(tipV), tipV)
-            var f: [Feature] = [.spar(full ? Vec2(tip.x, -tipV) : root, tip, 3)]
-            if full && abs(tip.x - root.x) > 1 { f = [.spar(Vec2(tip.x, -tipV), root, 3), .spar(root, tip, 3)] }
+            return [.spar(Vec2(w.le(v0) + 0.3 * w.chord(v0), v0), Vec2(w.le(v1) + 0.3 * w.chord(v1), v1), c.sparSpec.widthMM)]
+        }
+
+        /// Zig-zag carbon truss (3 × 0.5 mm strips) between two height lines of a vertical part.
+        mutating func truss(from u0: Double, to u1: Double, low: (Double) -> Double, high: (Double) -> Double) -> [Feature] {
+            guard u1 - u0 > 30 else { return [] }
+            let n = max(2, Int((u1 - u0) / 32))
+            var f: [Feature] = []
+            var prev = Vec2(u0, low(u0))
+            for i in 1...n {
+                let u = u0 + (u1 - u0) * Double(i) / Double(n)
+                let p = Vec2(u, i % 2 == 1 ? high(u) : low(u))
+                f.append(.spar(prev, p, 3))
+                trussLength += simd_distance(prev, p) * 2   // both sides
+                prev = p
+            }
             return f
         }
 
-        /// Vertical fin with locating tabs at the bottom edge (winglets, delta fin, twin-boom fins).
         func finOutline(chord fc: Double, height h: Double, rudderFrac: Double = 0) -> (outline: [Vec2], main: [Vec2], rudder: [Vec2]?, tabs: [Double]) {
             let topLE = min(h * 0.55 + fc * 0.25, fc * 0.75 + h * 0.2)
             var fin = [Vec2(0, 0), Vec2(fc, 0), Vec2(fc + h * 0.2, h), Vec2(topLE, h)]
@@ -114,19 +139,27 @@ enum DesignBuilder {
         mutating func buildTailless() {
             let w = wing
             let f = c.controlChordPct
-            let v0 = max(s * 0.12, propRadius + 8)
+            let nw = c.motorNotchWidth, nd = c.motorNotchDepth
+            let v0 = max(s * 0.12, nw / 2 + 6)
             let v1 = s - 14
-            if v1 - v0 < 40 { issues.append("Elevons are too short: the propeller needs \(Int(propRadius + 8)) mm clearance at the centre.") }
+            if v1 - v0 < 40 { issues.append("Elevons are too short: the motor cutout needs \(Int(nw)) mm at the centre – use a smaller prop or more span.") }
             let out = w.build(full: true, surfaces: v1 > v0 + 10 ? [v0...v1] : [], fraction: f)
 
-            var outline = out.outline
-            for v in [-12.0, 12.0] {
-                outline = Poly.insertNotch(outline, at: Vec2(w.le(v), v))
-                outline = Poly.insertNotch(outline, at: Vec2(w.te(v), v))
+            // Motor sits in a cutout in the trailing edge (prop spins inside the cutout).
+            func withMotorNotch(_ poly: [Vec2]) -> [Vec2] {
+                guard let i = poly.firstIndex(where: { abs($0.y) < 1e-6 && abs($0.x - w.te(0)) < 1e-6 }) else { return poly }
+                var p = poly
+                p.replaceSubrange(i...i, with: [Vec2(w.te(-nw / 2), -nw / 2), Vec2(w.te(0) - nd, -nw / 2),
+                                                Vec2(w.te(0) - nd, nw / 2), Vec2(w.te(nw / 2), nw / 2)])
+                return p
             }
+            var outline = withMotorNotch(out.outline)
+            let mainRegion = withMotorNotch(out.main)
+            if w.te(0) - nd < c.rootChord * 0.45 { issues.append("Root chord is too short for the motor cutout.") }
+            for v in [-12.0, 12.0] { outline = Poly.insertNotch(outline, at: Vec2(w.le(v), v)) }
 
             var holes: [Hole] = []
-            var features = out.features + sparFeatures(full: true)
+            var features = out.features + sparFeatures(w, from: -s * 0.9, to: 0) + sparFeatures(w, from: 0, to: s * 0.9)
 
             let sv = c.servo.size
             for side in [-1.0, 1.0] where v1 > v0 + 10 {
@@ -134,7 +167,7 @@ enum DesignBuilder {
                 let hingeU = w.te(vs) - f * w.chord(vs)
                 let center = Vec2(hingeU - 10 - sv.l / 2, side * vs)
                 let name = side < 0 ? "Left elevon" : "Right elevon"
-                holes.append(servoCut(name, center: center, size: Vec2(sv.l, sv.w), in: out.main))
+                holes.append(servoCut(name, center: center, size: Vec2(sv.l, sv.w), in: mainRegion))
                 let horn = Vec2(hingeU + 7, side * vs)
                 holes.append(hornSlot(at: horn))
                 controls.append(ControlSurface(name: name,
@@ -143,6 +176,7 @@ enum DesignBuilder {
                                                area: Poly.area(out.controls.first ?? []), chord: f * c.rootChord * (1 + c.taper) / 2, servoID: name))
             }
 
+            // Winglets / centre fin with tabs into the wing.
             let finHeight = c.wingletHeight
             if finHeight > 5 {
                 let isDelta = c.kind == .delta
@@ -151,7 +185,7 @@ enum DesignBuilder {
                 var instances: [Placement] = []
                 let stations: [Double] = isDelta ? [0] : [-(s - 6), s - 6]
                 for v in stations {
-                    let u0 = isDelta ? c.rootChord * 0.52 : w.le(v) + 0.08 * w.chord(v)
+                    let u0 = isDelta ? c.rootChord * 0.15 : w.le(v) + 0.08 * w.chord(v)
                     instances.append(Placement(origin: [v, t / 2, u0], u: [0, 0, 1], v: [0, 1, 0]))
                     for tu in fin.tabs { holes.append(slot(minU: u0 + tu - 4, maxU: u0 + tu + 4, minV: v - t / 2, maxV: v + t / 2)) }
                 }
@@ -160,202 +194,221 @@ enum DesignBuilder {
                                   instances: instances, material: c.material))
             }
 
-            // Battery sits on top of the centre section; FPV camera at the apex, VTX behind it.
+            // Centre keel under the wing (reinforcement strip, stays within the chord) – carries the motor mount clamp.
+            let k0 = 10.0, k1 = w.te(0) - nd + 2
+            let hk = max(12, min(20, c.rootChord * 0.08))
+            if k1 - k0 > 40 {
+                var keel = [Vec2(k0, 0), Vec2(k0 + hk, -hk), Vec2(k1, -hk), Vec2(k1, 0)]
+                let tabs = [k0 + (k1 - k0) * 0.3, k0 + (k1 - k0) * 0.75]
+                for tu in tabs { keel = Poly.insertTab(keel, at: Vec2(tu, 0), width: 10, height: t) }
+                holes += centreSlots(tabs)
+                parts.append(Part(name: "Centre keel", role: .fuselage, outline: keel,
+                                  features: truss(from: k0 + hk, to: k1 - 4, low: { _ in -hk + 2 }, high: { _ in -2 }),
+                                  instances: [.vertical(at: [0, -t / 2, 0])], material: c.material))
+            }
+
             let b = c.battery.size
             features.append(.zone(Poly.rect(center: Vec2(c.batteryPosition, 0), size: Vec2(b.l, b.w)), "Battery"))
             batteryPos = [0, t / 2 + b.h / 2, c.batteryPosition]
             fpvCamera = [0, t / 2 + 8, 4]
-            fpvVTX = [0, t / 2 + 4, c.rootChord * 0.55]
-            if c.fpv != .none {
-                features.append(.zone(Poly.rect(center: Vec2(8, 0), size: Vec2(14, 18)), "Cam"))
-            }
+            fpvVTX = [0, t / 2 + 4, c.rootChord * 0.5]
+            if c.fpv != .none { features.append(.zone(Poly.rect(center: Vec2(8, 0), size: Vec2(14, 18)), "Cam")) }
             parts.insert(Part(name: "Wing", role: .wing, outline: outline, holes: holes, features: features,
-                              regions: regions(out), instances: [.horizontal(at: .zero)], material: c.material), at: 0)
+                              regions: [Region(polygon: mainRegion, isControl: false)] + out.controls.map { Region(polygon: $0, isControl: true) },
+                              instances: [.horizontal(at: .zero)], material: c.material), at: 0)
         }
 
-        // MARK: Wing for tailed aircraft (shared by conventional + twin boom)
+        // MARK: Wing halves keyed into the fuselage plate
 
-        mutating func buildTailedWing(fuselageServoRegion: inout [Vec2]?, allowDihedral: Bool, extraFeatures: [Feature] = []) -> Bool {
+        /// Builds the two wing halves that plug into the sides of a centre plate of half-width `hw`.
+        /// Returns the u-positions of the two joint tabs (the plate needs matching notches).
+        mutating func buildWingHalves(plateHalfWidth hw: Double, allowDihedral: Bool) -> [Double] {
             let w = wing
             let f = c.controlChordPct
-            let full = !allowDihedral || c.dihedral < 0.5
+            let span = s - hw
+            let half = TaperedPanel(rootLE: w.le(hw), rootChord: w.chord(hw), tipChord: c.tipChord,
+                                    sweep: c.sweep - w.le(hw), semiSpan: span)
             let central = c.kind.hasAilerons && c.aileronServos == 1
-            let a0 = central ? t / 2 + 5 : s * 0.3
-            let surfaces: [ClosedRange<Double>] = c.kind.hasAilerons ? [a0...(s - 10)] : []
-            let out = w.build(full: full, surfaces: surfaces, fraction: f)
-            var wingOutline = out.outline
-            var wingHoles: [Hole] = []
-            if full {
-                for v in [-t / 2 - 0.5, t / 2 + 0.5] {
-                    wingOutline = Poly.insertNotch(wingOutline, at: Vec2(w.le(v), v), width: 3, depth: 2)
-                    wingOutline = Poly.insertNotch(wingOutline, at: Vec2(w.te(v), v), width: 3, depth: 2)
-                }
-            } else {
-                wingOutline = Poly.insertNotch(wingOutline, at: Vec2(c.rootChord * 0.3, 0))
-                wingOutline = Poly.insertNotch(wingOutline, at: Vec2(c.rootChord * 0.75, 0))
+            let a0 = central ? 3 : max(8, s * 0.3 - hw)
+            let surfaces: [ClosedRange<Double>] = c.kind.hasAilerons ? [a0...(span - 10)] : []
+            let out = half.build(full: false, surfaces: surfaces, fraction: f)
+            let ua = half.le(0), ub = half.te(0)
+            let tabUs = [ua + (ub - ua) * 0.3, ua + (ub - ua) * 0.72]
+            var outline = out.outline, main = out.main
+            for tu in tabUs {
+                outline = Poly.insertTab(outline, at: Vec2(tu, 0), width: 10, height: 6)
+                main = Poly.insertTab(main, at: Vec2(tu, 0), width: 10, height: 6)
             }
-            var features = out.features + sparFeatures(full: full) + extraFeatures
+            var holes: [Hole] = []
+            var features = out.features + sparFeatures(half, from: 0, to: span * 0.9)
             if c.kind.hasAilerons {
                 let sv = c.servo.size
                 let area = Poly.area(out.controls.first ?? [])
                 let chord = f * c.rootChord * (1 + c.taper) / 2
                 if central {
-                    // One servo in the fuselage below the wing drives both ailerons through torque rods.
-                    let hingeRoot = w.te(0) - f * w.chord(0)
+                    let hingeRoot = half.te(0) - f * half.chord(0)
+                    features.append(.label("TORQUE ROD", Vec2(hingeRoot - 4, 12)))
                     for side in [-1.0, 1.0] {
-                        let v = side * (t / 2 + 5 + 4)
-                        features.append(.zone(Poly.rect(center: Vec2(hingeRoot - 1, v), size: Vec2(2, 8)), ""))
                         controls.append(ControlSurface(name: side < 0 ? "Left aileron" : "Right aileron",
-                                                       hingeMid: [side * s * 0.55, 0, hingeRoot], hornPosition: [side * (t / 2 + 6), -t, hingeRoot - 6],
+                                                       hingeMid: [side * (hw + span / 2), 0, hingeRoot], hornPosition: [side * (hw + 4), -t, hingeRoot - 6],
                                                        servoPosition: [0, -t / 2 - 3 - sv.h / 2, c.rootChord - 6 - sv.l / 2],
                                                        area: area, chord: chord, servoID: "Ailerons (torque rods)"))
                     }
-                    fuselageServoRegion = []   // signal: add the aileron servo below the wing slot
                 } else {
-                    let sides: [Double] = full ? [-1, 1] : [1]
-                    let vs = s * 0.3 + 14
-                    let hingeU = w.te(vs) - f * w.chord(vs)
-                    for side in sides {
-                        let center = Vec2(hingeU - 8 - sv.l / 2, side * vs)
-                        wingHoles.append(servoCut(side < 0 ? "Left aileron" : "Aileron", center: center, size: Vec2(sv.l, sv.w), in: out.main))
-                        wingHoles.append(hornSlot(at: Vec2(hingeU + 7, side * vs)))
-                    }
+                    let vs = a0 + 14
+                    let hingeU = half.te(vs) - f * half.chord(vs)
+                    let center = Vec2(hingeU - 8 - sv.l / 2, vs)
+                    holes.append(servoCut("Aileron", center: center, size: Vec2(sv.l, sv.w), in: main))
+                    holes.append(hornSlot(at: Vec2(hingeU + 7, vs)))
                     for side in [-1.0, 1.0] {
                         let name = side < 0 ? "Left aileron" : "Right aileron"
-                        controls.append(ControlSurface(name: name, hingeMid: [side * s * 0.65, 0, hingeU],
-                                                       hornPosition: [side * vs, t / 2, hingeU + 7],
-                                                       servoPosition: [side * vs, 0, hingeU - 8 - sv.l / 2],
+                        controls.append(ControlSurface(name: name, hingeMid: [side * (hw + span * 0.6), 0, hingeU],
+                                                       hornPosition: [side * (hw + vs), t / 2, hingeU + 7],
+                                                       servoPosition: [side * (hw + vs), 0, center.x],
                                                        area: area, chord: chord, servoID: name))
                     }
                 }
             }
-            let d = c.dihedral * .pi / 180
-            let wingInstances: [Placement] = full ? [.horizontal(at: .zero)] : [
-                Placement(origin: [t / 2, 0, 0], u: [0, 0, 1], v: [cos(d), sin(d), 0]),
-                Placement(origin: [-t / 2, 0, 0], u: [0, 0, 1], v: [-cos(d), sin(d), 0])
-            ]
-            parts.append(Part(name: full ? "Wing" : "Wing half", role: .wing, outline: wingOutline, holes: wingHoles,
-                              features: features, regions: regions(out),
-                              instances: wingInstances, material: c.material, mirroredPair: !full))
-            return central
+            let d = allowDihedral ? c.dihedral * .pi / 180 : 0
+            parts.append(Part(name: "Wing half", role: .wing, outline: outline, holes: holes, features: features,
+                              regions: [Region(polygon: main, isControl: false)] + out.controls.map { Region(polygon: $0, isControl: true) },
+                              instances: [Placement(origin: [hw, 0, 0], u: [0, 0, 1], v: [cos(d), sin(d), 0]),
+                                          Placement(origin: [-hw, 0, 0], u: [0, 0, 1], v: [-cos(d), sin(d), 0])],
+                              material: c.material, mirroredPair: true))
+            return tabUs
         }
 
-        // MARK: Conventional (profile fuselage, optional cross / X reinforcement)
+        // MARK: Conventional aircraft – cross fuselage
 
-        mutating func buildTailed() {
+        mutating func buildConventional() {
             let fh = c.fuselageHeight
             let uN = -c.noseLength
-            let ta = c.tailArm
-            let hsc = c.hStabChord, vsc = c.vStabChord
-            let uT = ta + hsc
-            let bh = max(20, fh * 0.32)
-            let vtb = -bh * 0.3, vtt = vtb + bh
-            let finTop = vtt + c.vStabHeight
-            let elevFrac = 0.4
-            let uH = uT - 0.4 * vsc
-            let uEh = ta + hsc * (1 - elevFrac)
-            let uE = min(uH, uEh)
+            let ta = c.tailArm, hsc = c.hStabChord, vsc = c.vStabChord
+            let W = c.fuselagePlateWidth, hw = W / 2
+            let wb = max(12, W * 0.45)
+            let sh = c.hStabSpan / 2
+            let ef = 0.4
+            let stab = TaperedPanel(rootLE: ta, rootChord: hsc, tipChord: hsc * 0.8, sweep: hsc * 0.1, semiSpan: sh)
+            func hS(_ v: Double) -> Double { stab.te(v) - ef * stab.chord(v) }
+            let w = wing
 
-            var aileronServoFlag: [Vec2]? = nil
-            let central = buildTailedWing(fuselageServoRegion: &aileronServoFlag, allowDihedral: true)
+            // Wing halves keyed into the plate.
+            let jointTabs = buildWingHalves(plateHalfWidth: hw, allowDihedral: true)
+            let ua = w.le(hw), ub = w.te(hw)
 
-            // --- Fuselage profile (with integrated fin + rudder)
-            let p0 = Vec2(uN, -fh * 0.3), p1 = Vec2(uN + 0.25 * c.noseLength, -fh * 0.5)
-            let p2 = Vec2(c.rootChord * 0.9, -fh * 0.5), pb = Vec2(ta - 15, vtb)
-            let p3 = Vec2(uE, vtb), p4 = Vec2(uE, vtt)
-            let p6 = Vec2(uT, finTop), p7 = Vec2(uT - 0.75 * vsc, finTop), p8 = Vec2(uT - 1.5 * vsc, vtt)
-            let top: [Vec2] = [Vec2(c.rootChord * 0.9, fh * 0.45), Vec2(0, fh * 0.5), Vec2(uN + 0.25 * c.noseLength, fh * 0.45), Vec2(uN, fh * 0.3)]
-            var fus = [p0, p1, p2, pb, p3, p4, Vec2(uT, vtt), p6, p7, p8] + top
-            var mainF = [p0, p1, p2, pb, p3, p4] + (uE < uH - 0.01 ? [Vec2(uH, vtt)] : []) + [Vec2(uH, finTop), p7, p8] + top
-            let rudder = [Vec2(uH, vtt), Vec2(uT, vtt), Vec2(uT, finTop), Vec2(uH, finTop)]
-            if pb.x <= p2.x + 5 { issues.append("Tail arm is too short for the wing chord – the fuselage boom would overlap the wing.") }
-            if p8.x <= top[0].x + 5 { issues.append("Fin is too long for the tail arm – fin leading edge reaches the wing.") }
-            if !Poly.isSimple(fus) { issues.append("Fuselage outline intersects itself – check tail arm, fin and nose dimensions.") }
+            // --- Horizontal fuselage plate: nose strip + wing centre + tail boom + stabiliser in one piece.
+            let rudderChord = max(0.4 * vsc, 18.0)
+            let uH = hS(0)                       // rudder & elevator hinge line at the centre
+            let uR = uH + rudderChord            // rudder trailing edge
+            let a = t / 2 + 1                    // elevator inner edge at the hinge
+            let nTe = max(a + 4, rudderChord * 0.55)   // V-cut at the elevator TE for rudder travel
+            if stab.le(wb / 2) < ub + 10 { issues.append("Tail arm is too short – the stabiliser would reach the wing.") }
 
-            let tabUs = [ta + hsc * 0.15, ta + hsc * 0.42].filter { $0 + 5 < uE }
-            for tu in tabUs { fus = Poly.insertTab(fus, at: Vec2(tu, vtb), width: 8, height: t); mainF = Poly.insertTab(mainF, at: Vec2(tu, vtb), width: 8, height: t) }
-            fus = Poly.insertNotch(fus, at: Vec2(uN + 0.6 * c.noseLength, -fh * 0.5 + 0.1))
+            func notch(_ u: Double) -> [Vec2] { [Vec2(u - 5.2, hw), Vec2(u - 5.2, hw - 6.2), Vec2(u + 5.2, hw - 6.2), Vec2(u + 5.2, hw)] }
+            let noseSide = [Vec2(uN, W * 0.3), Vec2(uN + 6, hw)]
+            let wingSide = [Vec2(ua, hw)] + notch(jointTabs[0]) + notch(jointTabs[1]) + [Vec2(ub, hw)]
+            let boomSide = [Vec2(stab.le(wb / 2), wb / 2), Vec2(stab.le(sh), sh)]
+            let fullTail = [Vec2(stab.te(sh), sh), Vec2(stab.te(nTe), nTe), Vec2(uH, a)]
+            let fixedTail = [Vec2(hS(sh), sh), Vec2(uH, a)]
+            func mirrored(_ r: [Vec2]) -> [Vec2] { r.reversed().map { Vec2($0.x, -$0.y) } }
+            let rOutline = noseSide + wingSide + boomSide + fullTail
+            let rMain = noseSide + wingSide + boomSide + fixedTail
+            let plateOutline = Poly.ccw(rOutline + mirrored(rOutline))
+            let plateMain = Poly.ccw(rMain + mirrored(rMain))
+            let elevR = [Vec2(uH, a), Vec2(hS(sh), sh), Vec2(stab.te(sh), sh), Vec2(stab.te(nTe), nTe)]
+            let elevL = elevR.reversed().map { Vec2($0.x, -$0.y) }
+            if !Poly.isSimple(plateOutline) { issues.append("Fuselage plate outline intersects itself – check tail arm, stabiliser and wing chord.") }
 
-            var fHoles: [Hole] = [slot(minU: 0, maxU: c.rootChord, minV: -t / 2, maxV: t / 2)]
-            if fh / 2 - t / 2 < 8 { issues.append("Fuselage height is too small around the wing slot.") }
+            // --- Upper fuselage half (with fin & rudder) and lower half.
+            let hWing = fh * 0.5 - t / 2
+            let hNose = fh * 0.4 - t / 2
+            let hBoom = max(10, fh * 0.16)
+            let finTop = hBoom + c.vStabHeight
+            let finLE = uH - 1.25 * vsc
+            if finLE < ub + 10 { issues.append("Fin is too long for the tail arm – fin leading edge reaches the wing.") }
+            let upper: [Vec2] = [Vec2(uN, 0), Vec2(uR, 0), Vec2(uR, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
+                                 Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, hNose * 0.65)]
+            var upperMain: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
+                                     Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, hNose * 0.65)]
+            let rudder = [Vec2(uH, 0), Vec2(uR, 0), Vec2(uR, finTop), Vec2(uH, finTop)]
+            let upTabs = [uN + max(32, c.noseLength * 0.45), c.rootChord * 0.45, (c.rootChord + finLE) / 2, finLE + vsc * 0.5].filter { $0 + 6 < uH }
+            var upperOut = upper
+            for tu in upTabs { upperOut = Poly.insertTab(upperOut, at: Vec2(tu, 0), width: 10, height: t); upperMain = Poly.insertTab(upperMain, at: Vec2(tu, 0), width: 10, height: t) }
+
+            let uL = ta + hsc * 0.35
+            let hLowWing = fh * 0.5 - t / 2
+            let lower: [Vec2] = [Vec2(uN, 0), Vec2(uN, -hLowWing * 0.55), Vec2(uN + 0.3 * c.noseLength, -hLowWing), Vec2(c.rootChord * 0.85, -hLowWing),
+                                 Vec2(uL, -max(8, fh * 0.1)), Vec2(uL, 0)]
+            let loTabs = [uN + max(44, c.noseLength * 0.6), c.rootChord * 0.75, (c.rootChord + ta) / 2 + 15].filter { $0 + 6 < uL }
+            var lowerOut = lower
+            for tu in loTabs { lowerOut = Poly.insertTab(lowerOut, at: Vec2(tu, 0), width: 10, height: t) }
+
+            // Plate slots for both halves (all on the centre line, at different stations).
+            var plateHoles = centreSlots(upTabs) + centreSlots(loTabs)
+            let eHornV = nTe + 6
+            plateHoles.append(hornSlot(at: Vec2(hS(eHornV) + 7, eHornV)))
+
+            // Servos in the upper half above the plate.
             let sv = c.servo.size
-            let vC = t / 2 + 3 + sv.h / 2
-            let wingSlot = fHoles[0].polygon
-            let s1 = Vec2(c.rootChord * 0.08 + sv.l / 2, vC), s2 = Vec2(s1.x + sv.l + 5, vC)
-            fHoles.append(servoCut("Elevator", center: s1, size: Vec2(sv.l, sv.h), in: mainF, avoid: [wingSlot]))
-            fHoles.append(servoCut("Rudder", center: s2, size: Vec2(sv.l, sv.h), in: mainF, avoid: [wingSlot]))
-            if central {
-                let sa = Vec2(c.rootChord - 6 - sv.l / 2, -t / 2 - 3 - sv.h / 2)
-                fHoles.append(servoCut("Ailerons", center: sa, size: Vec2(sv.l, sv.h), in: mainF, avoid: [wingSlot]))
+            let s1 = Vec2(c.rootChord * 0.06 + sv.l / 2, 3 + sv.h / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
+            var upperHoles = [servoCut("Elevator", center: s1, size: Vec2(sv.l, sv.h), in: upperMain),
+                              servoCut("Rudder", center: s2, size: Vec2(sv.l, sv.h), in: upperMain)]
+            upperHoles.append(hornSlot(at: Vec2(uH + 7, 8)))
+            var lowerHoles: [Hole] = []
+            if c.kind.hasAilerons && c.aileronServos == 1 {
+                lowerHoles.append(servoCut("Ailerons", center: Vec2(c.rootChord - 6 - sv.l / 2, -(3 + sv.h / 2)), size: Vec2(sv.l, sv.h), in: lower))
             }
-            let rudderHorn = Vec2(uH + 7, vtt + 8)
-            fHoles.append(hornSlot(at: rudderHorn))
-            var fFeatures: [Feature] = [
-                .hinge(Vec2(uH, vtt), Vec2(uH, finTop)), .cut(Vec2(uH, vtt), Vec2(uT, vtt)),
-                .label("FUSELAGE", Vec2(c.rootChord * 0.5, -fh * 0.3)),
-                .zone(Poly.rect(center: Vec2(c.batteryPosition, -fh * 0.22), size: Vec2(c.battery.size.l, c.battery.size.h)), "Battery")
-            ]
-            if c.fuselageType != .profile {
-                fFeatures.append(.zone(Poly.rect(minU: uN + 28, maxU: -2, minV: -0.6, maxV: 0.6), ""))
-                fFeatures.append(.zone(Poly.rect(minU: c.rootChord + 2, maxU: ta - 12, minV: -0.6, maxV: 0.6), ""))
+
+            // Carbon truss on both sides of the boom and along the lower half.
+            let rc = c.rootChord
+            let boomTop: (Double) -> Double = { u in
+                let k = (u - rc) / max(finLE - rc, 1)
+                return hWing * 0.9 + (hBoom - hWing * 0.9) * min(max(k, 0), 1) - 2.5
             }
-            parts.append(Part(name: "Fuselage", role: .fuselage, outline: fus, holes: fHoles, features: fFeatures,
-                              regions: [Region(polygon: mainF, isControl: false), Region(polygon: rudder, isControl: true)],
-                              instances: [.vertical(at: .zero)], material: c.material))
+            let upperTruss = truss(from: c.rootChord + 4, to: min(finLE + vsc * 0.6, uH - 6), low: { _ in 2.5 }, high: boomTop)
+            let lowerTruss = truss(from: c.rootChord * 0.9, to: uL - 6, low: { u in
+                let k = (u - rc * 0.85) / max(uL - rc * 0.85, 1)
+                return -(hLowWing + (max(8, fh * 0.1) - hLowWing) * min(max(k, 0), 1)) + 2.5
+            }, high: { _ in -2.5 })
 
-            addFuselageBracing(uN: uN, fh: fh, bh: bh, ta: ta)
+            parts.append(Part(name: "Fuselage plate", role: .fuselage, outline: plateOutline, holes: plateHoles,
+                              features: [.hinge(Vec2(uH, a), Vec2(hS(sh), sh)), .hinge(Vec2(uH, -a), Vec2(hS(sh), -sh)),
+                                         .cut(Vec2(uH, a), Vec2(stab.te(nTe), nTe)), .cut(Vec2(uH, -a), Vec2(stab.te(nTe), -nTe)),
+                                         .label("PLATE", Vec2(c.rootChord * 0.5, 0))] + sparFeatures(w, from: -hw, to: hw),
+                              regions: [Region(polygon: plateMain, isControl: false), Region(polygon: elevR, isControl: true), Region(polygon: elevL, isControl: true)],
+                              instances: [.horizontal(at: .zero)], material: c.material))
+            parts.append(Part(name: "Fuselage top", role: .fuselage, outline: upperOut, holes: upperHoles,
+                              features: [.hinge(Vec2(uH, 0), Vec2(uH, finTop)), .label("TOP", Vec2(c.rootChord * 0.4, hWing * 0.55))] + upperTruss,
+                              regions: [Region(polygon: upperMain, isControl: false), Region(polygon: rudder, isControl: true)],
+                              instances: [.vertical(at: [0, t / 2, 0])], material: c.material))
+            parts.append(Part(name: "Fuselage bottom", role: .fuselage, outline: lowerOut, holes: lowerHoles,
+                              features: [.label("BOTTOM", Vec2(c.rootChord * 0.3, -hLowWing * 0.5)),
+                                         .zone(Poly.rect(center: Vec2(c.batteryPosition, -c.battery.size.w / 2 - 1), size: Vec2(c.battery.size.l, c.battery.size.w)), "Battery")] + lowerTruss,
+                              instances: [.vertical(at: [0, -t / 2, 0])], material: c.material))
 
-            // --- Horizontal stabiliser (glued under the boom, located by the tabs).
-            let stab = TaperedPanel(rootLE: ta, rootChord: hsc, tipChord: hsc * 0.8, sweep: hsc * 0.1, semiSpan: c.hStabSpan / 2)
-            let so = stab.buildFullSpanSurface(fraction: elevFrac)
-            var stabOutline = Poly.insertNotch(so.outline, at: Vec2(stab.le(0) + 0.01, 3), width: 3, depth: 2)
-            stabOutline = Poly.insertNotch(stabOutline, at: Vec2(stab.te(0), 0), width: 3, depth: 2)
-            var sHoles = tabUs.map { slot(minU: $0 - 4, maxU: $0 + 4, minV: -t / 2, maxV: t / 2) }
-            let eHorn = Vec2(stab.te(t / 2 + 7) - elevFrac * stab.chord(t / 2 + 7) + 7, t / 2 + 7)
-            sHoles.append(hornSlot(at: eHorn))
-            parts.append(Part(name: "Stabiliser", role: .stabilizer, outline: stabOutline, holes: sHoles, features: so.features,
-                              regions: [Region(polygon: so.main, isControl: false)] + so.controls.map { Region(polygon: $0, isControl: true) },
-                              instances: [.horizontal(at: [0, vtb - t / 2, 0])], material: c.material))
+            if c.fuselageType == .laminated {
+                let d0 = uN + 2
+                let upD = [Vec2(d0, 0), Vec2(c.rootChord * 0.9, 0), Vec2(c.rootChord * 0.9, hWing * 0.75), Vec2(uN + 0.35 * c.noseLength, hNose * 0.85), Vec2(d0, hNose * 0.6)]
+                let loD = [Vec2(d0, 0), Vec2(d0, -hLowWing * 0.5), Vec2(uN + 0.3 * c.noseLength, -hLowWing * 0.85), Vec2(c.rootChord * 0.75, -hLowWing * 0.85), Vec2(c.rootChord * 0.75, 0)]
+                parts.append(Part(name: "Doubler – top", role: .fuselage, outline: Poly.ccw(upD), features: [.label("DOUBLER", Vec2(0, hWing * 0.35))],
+                                  instances: [Placement(origin: [t, t / 2, 0], u: [0, 0, 1], v: [0, 1, 0]), Placement(origin: [-t, t / 2, 0], u: [0, 0, 1], v: [0, 1, 0])],
+                                  material: c.material, mirroredPair: true))
+                parts.append(Part(name: "Doubler – bottom", role: .fuselage, outline: Poly.ccw(loD), features: [.label("DOUBLER", Vec2(0, -hLowWing * 0.4))],
+                                  instances: [Placement(origin: [t, -t / 2, 0], u: [0, 0, 1], v: [0, 1, 0]), Placement(origin: [-t, -t / 2, 0], u: [0, 0, 1], v: [0, 1, 0])],
+                                  material: c.material, mirroredPair: true))
+            }
 
-            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, vtb - t / 2, uEh], hornPosition: [eHorn.y, vtb - t, eHorn.x],
-                                           servoPosition: [0, s1.y, s1.x], area: Poly.area(so.controls[0]) / 2, chord: elevFrac * hsc * 0.9, servoID: "Elevator"))
-            controls.append(ControlSurface(name: "Rudder", hingeMid: [0, (vtt + finTop) / 2, uH], hornPosition: [t / 2, rudderHorn.y, rudderHorn.x],
-                                           servoPosition: [0, s2.y, s2.x], area: Poly.area(rudder), chord: 0.4 * vsc, servoID: "Rudder"))
+            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [eHornV, t / 2, hS(eHornV) + 7],
+                                           servoPosition: [0, t / 2 + s1.y, s1.x], area: Poly.area(elevR) * 2, chord: ef * hsc * 0.9, servoID: "Elevator"))
+            controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [t / 2, t / 2 + 8, uH + 7],
+                                           servoPosition: [0, t / 2 + s2.y, s2.x], area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder"))
 
-            batteryPos = [t / 2 + c.battery.size.h / 2, -fh * 0.22, c.batteryPosition]
-            fpvCamera = [0, fh * 0.3 + 7, uN + 14]
-            fpvVTX = [-(t / 2 + 3), fh * 0.12, c.rootChord * 0.55]
+            batteryPos = [t / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
+            fpvCamera = [0, t / 2 + hNose + 8, uN + 14]
+            fpvVTX = [-(t / 2 + 3), t / 2 + hWing * 0.5, c.rootChord * 0.6]
         }
 
-        /// Cross (+) or X reinforcement strips glued along the fuselage sides, ahead of and behind the wing.
-        mutating func addFuselageBracing(uN: Double, fh: Double, bh: Double, ta: Double) {
-            guard c.fuselageType != .profile else { return }
-            let isX = c.fuselageType == .xBrace
-            let wFront = min(fh * (isX ? 0.28 : 0.36), 26), wRear = min(bh * (isX ? 0.5 : 0.7), 18)
-            let f0 = uN + 28, f1 = -2.0
-            let r0 = c.rootChord + 2, r1 = ta - 12
-            let dirs: [SIMD3<Double>] = isX
-                ? [[0.7071, 0.7071, 0], [0.7071, -0.7071, 0], [-0.7071, 0.7071, 0], [-0.7071, -0.7071, 0]]
-                : [[1, 0, 0], [-1, 0, 0]]
-            let inst = dirs.map { d in Placement(origin: [d.x > 0 ? t / 2 : -t / 2, 0, 0], u: [0, 0, 1], v: d) }
-            let label = isX ? "X-brace" : "Cross plate"
-            if f1 - f0 > 20 {
-                var front = [Vec2(f0, 0), Vec2(f1, 0), Vec2(f1, wFront), Vec2(f0 + wFront * 0.8, wFront)]
-                front = Poly.insertNotch(front, at: Vec2((f0 + f1) / 2, 0), width: 3, depth: 1.5)
-                parts.append(Part(name: "\(label) – front", role: .fuselage, outline: front,
-                                  features: [.label(isX ? "X" : "+", Vec2((f0 + f1) / 2, wFront / 2))],
-                                  instances: inst, material: c.material))
-            }
-            if r1 - r0 > 20 {
-                var rear = [Vec2(r0, 0), Vec2(r1, 0), Vec2(r1, wRear * 0.5), Vec2(r0, wRear)]
-                rear = Poly.insertNotch(rear, at: Vec2((r0 + r1) / 2, 0), width: 3, depth: 1.5)
-                parts.append(Part(name: "\(label) – rear", role: .fuselage, outline: rear,
-                                  features: [.label(isX ? "X" : "+", Vec2((r0 + r1) / 2, wRear / 3))],
-                                  instances: inst, material: c.material))
-            }
-        }
-
-        // MARK: Twin boom pusher (SkyKart)
+        // MARK: Twin boom pusher
 
         mutating func buildTwinBoom() {
             let fh = c.fuselageHeight
@@ -364,28 +417,51 @@ enum DesignBuilder {
             let xb = c.boomX
             let boomY = -t / 2 - 2
             let rod = CarbonSpar.tube4
+            let w = wing
+            let W = c.fuselagePlateWidth, hw = W / 2
 
-            var flag: [Vec2]? = nil
-            let boomMarks: [Feature] = [-xb, xb].map { .spar(Vec2(c.rootChord * 0.15, $0), Vec2(wing.te($0) - 1, $0), rod.widthMM) }
-            _ = buildTailedWing(fuselageServoRegion: &flag, allowDihedral: false, extraFeatures: boomMarks)
+            // One-piece wing; the pod nose plate keys into its leading edge.
+            let out = w.build(full: true, surfaces: [], fraction: 0.3)
+            var wingOutline = out.outline
+            for v in [-hw * 0.5, hw * 0.5] { wingOutline = Poly.insertTab(wingOutline, at: Vec2(w.le(v), v), width: 10, height: -6) }
+            var wingHoles: [Hole] = []
+            var wingFeatures = out.features + sparFeatures(w, from: -s * 0.9, to: 0) + sparFeatures(w, from: 0, to: s * 0.9)
+            wingFeatures += [-xb, xb].map { .spar(Vec2(c.rootChord * 0.15, $0), Vec2(w.te($0) - 1, $0), rod.widthMM) }
 
-            // Pod: nose cone carrying battery, FPV and servos; motor at the tail end.
-            let pe = c.podEnd
-            var pod = [Vec2(uN, -fh * 0.25), Vec2(uN + 0.3 * c.noseLength, -fh * 0.5), Vec2(c.rootChord * 0.7, -fh * 0.5),
-                       Vec2(pe, -fh * 0.22), Vec2(pe, fh * 0.22), Vec2(c.rootChord * 0.6, fh * 0.5), Vec2(uN + 0.35 * c.noseLength, fh * 0.45), Vec2(uN, fh * 0.2)]
-            pod = Poly.insertNotch(pod, at: Vec2(uN + 0.6 * c.noseLength, -fh * 0.5 + 0.1))
-            var holes: [Hole] = [slot(minU: 0, maxU: c.rootChord, minV: -t / 2, maxV: t / 2)]
+            // Pod nose plate (horizontal, ahead of the wing) – gives the pod its + section.
+            var nose = [Vec2(uN, -W * 0.3), Vec2(uN + 6, -hw), Vec2(w.le(hw), -hw), Vec2(w.le(0), 0), Vec2(w.le(hw), hw), Vec2(uN + 6, hw), Vec2(uN, W * 0.3)]
+            for v in [-hw * 0.5, hw * 0.5] { nose = Poly.insertTab(nose, at: Vec2(w.le(v), v), width: 10, height: 6) }
+
+            // Pod halves glued on top and bottom with tabs.
+            let hp = fh * 0.5 - t / 2
+            let pe = c.rootChord
+            var podTop = [Vec2(uN, 0), Vec2(pe, 0), Vec2(pe, hp * 0.45), Vec2(c.rootChord * 0.55, hp), Vec2(uN + 0.35 * c.noseLength, hp * 0.9), Vec2(uN, hp * 0.5)]
+            var podBot = [Vec2(uN, 0), Vec2(uN, -hp * 0.5), Vec2(uN + 0.3 * c.noseLength, -hp), Vec2(c.rootChord * 0.6, -hp), Vec2(pe, -hp * 0.4), Vec2(pe, 0)]
+            let topTabs = [uN * 0.5, c.rootChord * 0.3, c.rootChord * 0.75], botTabs = [uN * 0.3, c.rootChord * 0.5]
+            for tu in topTabs { podTop = Poly.insertTab(podTop, at: Vec2(tu, 0), width: 10, height: t) }
+            for tu in botTabs { podBot = Poly.insertTab(podBot, at: Vec2(tu, 0), width: 10, height: t) }
+            wingHoles += centreSlots(topTabs.filter { $0 > 0 } + botTabs.filter { $0 > 0 })
+            let noseHoles = centreSlots(topTabs.filter { $0 < 0 } + botTabs.filter { $0 < 0 })
+
             let sv = c.servo.size
-            let s1 = Vec2(c.rootChord * 0.1 + sv.l / 2, t / 2 + 3 + sv.h / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
-            holes.append(servoCut("Elevator", center: s1, size: Vec2(sv.l, sv.h), in: pod, avoid: [holes[0].polygon]))
-            holes.append(servoCut("Rudders", center: s2, size: Vec2(sv.l, sv.h), in: pod, avoid: [holes[0].polygon]))
-            parts.append(Part(name: "Pod", role: .fuselage, outline: pod, holes: holes,
-                              features: [.label("POD", Vec2(uN * 0.5, -fh * 0.25)),
-                                         .zone(Poly.rect(center: Vec2(c.batteryPosition, -fh * 0.2), size: Vec2(c.battery.size.l, c.battery.size.h)), "Battery")],
-                              instances: [.vertical(at: .zero)], material: c.material))
-            if fh / 2 - t / 2 < 8 { issues.append("Pod height is too small around the wing slot.") }
+            let s1 = Vec2(c.rootChord * 0.08 + sv.l / 2, 3 + sv.h / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
+            let podHoles = [servoCut("Elevator", center: s1, size: Vec2(sv.l, sv.h), in: podTop),
+                            servoCut("Rudders", center: s2, size: Vec2(sv.l, sv.h), in: podTop)]
+            if fh / 2 - t / 2 < 8 { issues.append("Pod height is too small.") }
 
-            // Stabiliser resting on the booms, elevator stops short of the fins.
+            parts.append(Part(name: "Wing", role: .wing, outline: wingOutline, holes: wingHoles, features: wingFeatures,
+                              instances: [.horizontal(at: .zero)], material: c.material))
+            parts.append(Part(name: "Pod nose plate", role: .fuselage, outline: Poly.ccw(nose), holes: noseHoles,
+                              features: [.label("NOSE", Vec2(uN * 0.5, 0))], instances: [.horizontal(at: .zero)], material: c.material))
+            parts.append(Part(name: "Pod top", role: .fuselage, outline: podTop, holes: podHoles,
+                              features: [.label("POD TOP", Vec2(uN * 0.4, hp * 0.4))] + truss(from: uN + 20, to: -4, low: { _ in 2.5 }, high: { _ in hp * 0.45 }),
+                              instances: [.vertical(at: [0, t / 2, 0])], material: c.material))
+            parts.append(Part(name: "Pod bottom", role: .fuselage, outline: podBot,
+                              features: [.label("POD BOTTOM", Vec2(uN * 0.3, -hp * 0.5)),
+                                         .zone(Poly.rect(center: Vec2(c.batteryPosition, -c.battery.size.w / 2 - 1), size: Vec2(c.battery.size.l, c.battery.size.w)), "Battery")],
+                              instances: [.vertical(at: [0, -t / 2, 0])], material: c.material))
+
+            // Stabiliser on the booms with twin fins.
             let sh = c.hStabSpan / 2
             let stab = TaperedPanel(rootLE: ta, rootChord: hsc, tipChord: hsc, sweep: 0, semiSpan: sh)
             let so = stab.build(full: true, surfaces: [1...(sh - 14)], fraction: 0.4)
@@ -419,15 +495,15 @@ enum DesignBuilder {
                                        position: [0, boomY, c.rootChord * 0.15 + boomLen / 2], category: "Hardware"))
 
             controls.append(ControlSurface(name: "Elevator", hingeMid: [0, stabY, ta + hsc * 0.6], hornPosition: [eHorn.y, stabY + t, eHorn.x],
-                                           servoPosition: [0, s1.y, s1.x], area: Poly.area(so.controls.first ?? []) * 2, chord: 0.4 * hsc, servoID: "Elevator"))
+                                           servoPosition: [0, t / 2 + s1.y, s1.x], area: Poly.area(so.controls.first ?? []) * 2, chord: 0.4 * hsc, servoID: "Elevator"))
             let rudderArea = (fin.rudder.map { Poly.area($0) } ?? 0) * 2
             controls.append(ControlSurface(name: "Rudders", hingeMid: [xb, stabY + c.vStabHeight / 2, finU0 + rHingeU],
                                            hornPosition: [xb + t / 2, stabY + 10, finU0 + rHingeU + 7],
-                                           servoPosition: [0, s2.y, s2.x], area: rudderArea, chord: 0.4 * c.vStabChord, servoID: "Rudders"))
+                                           servoPosition: [0, t / 2 + s2.y, s2.x], area: rudderArea, chord: 0.4 * c.vStabChord, servoID: "Rudders"))
 
-            batteryPos = [t / 2 + c.battery.size.h / 2, -fh * 0.2, c.batteryPosition]
-            fpvCamera = [0, fh * 0.2 + 6, uN + 10]
-            fpvVTX = [-(t / 2 + 3), fh * 0.1, c.rootChord * 0.5]
+            batteryPos = [t / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
+            fpvCamera = [0, t / 2 + hp * 0.5 + 8, uN + 10]
+            fpvVTX = [-(t / 2 + 3), t / 2 + hp * 0.5, c.rootChord * 0.4]
         }
 
         // MARK: Electronics & hardware
@@ -442,7 +518,7 @@ enum DesignBuilder {
             components.append(MassItem(name: "Receiver", mass: 2.5, position: [0, 0, pusher ? c.rootChord * 0.1 : c.rootChord * 0.3], category: "Radio"))
             components.append(MassItem(name: "Wiring & connectors", mass: 3, position: [0, 0, c.rootChord * 0.15], category: "Radio"))
             components.append(MassItem(name: c.battery.name, mass: c.battery.mass, position: batteryPos, category: "Battery"))
-            components.append(MassItem(name: "Motor mount (printed)", mass: 1.2 + c.motor.mass * 0.12, position: [0, 0, motorZ + (pusher ? -10 : 10)], category: "Printed"))
+            components.append(MassItem(name: "Motor mount (printed)", mass: 1.5 + c.motor.mass * 0.12, position: [0, 0, motorZ + (pusher ? -10 : 10)], category: "Printed"))
 
             if c.fpv != .none {
                 components.append(MassItem(name: "FPV camera (\(c.fpv.name))", mass: c.fpv.cameraMass, position: fpvCamera, category: "FPV"))
@@ -461,8 +537,13 @@ enum DesignBuilder {
                                            position: (ctrl.servoPosition + ctrl.hornPosition) / 2, category: "Hardware"))
             }
             if c.sparEnabled {
-                components.append(MassItem(name: c.sparSpec.name, mass: c.sparLength / 1000 * c.sparSpec.gramsPerMeter,
+                // Top and bottom strip.
+                components.append(MassItem(name: "2 × \(c.sparSpec.name)", mass: 2 * c.sparLength / 1000 * c.sparSpec.gramsPerMeter,
                                            position: [0, 0, c.rootChord * 0.3 + c.sweep * 0.45], category: "Hardware"))
+            }
+            if trussLength > 0 {
+                components.append(MassItem(name: "Carbon truss strips 3 × 0.5 mm", mass: trussLength / 1000 * CarbonSpar.flat3x05.gramsPerMeter,
+                                           position: [0, 0, c.kind.hasFuselage ? (c.rootChord + c.tailArm) / 2 : c.rootChord * 0.4], category: "Hardware"))
             }
             if c.kind.hasFuselage && c.dihedral >= 0.5 {
                 components.append(MassItem(name: "Dihedral joiner (printed)", mass: 2.0, position: [0, -t, c.rootChord * 0.4], category: "Printed"))
@@ -477,3 +558,4 @@ enum DesignBuilder {
         }
     }
 }
+

@@ -33,7 +33,7 @@ extension AircraftKind {
         switch self {
         case .flyingWing: return ["Tailless", "Pusher", "Elevons"]
         case .delta: return ["Tailless", "Pusher", "High speed"]
-        case .skykart: return ["Twin boom", "Pusher", "FPV"]
+        case .twinBoom: return ["Twin boom", "Pusher", "FPV"]
         case .trainer: return ["Tractor", "Dihedral", "2-ch"]
         case .aerobat: return ["Tractor", "4-ch", "3D"]
         case .glider: return ["Tractor", "Long span", "Thermal"]
@@ -44,7 +44,7 @@ extension AircraftKind {
         switch self {
         case .flyingWing: return Theme.accent
         case .delta: return Color(red: 1, green: 0.35, blue: 0.45)
-        case .skykart: return Theme.good
+        case .twinBoom: return Theme.good
         case .trainer: return Theme.warn
         case .aerobat: return Theme.orange
         case .glider: return Theme.violet

@@ -3,14 +3,14 @@ import Foundation
 let maxWingspan: Double = 600
 
 enum AircraftKind: String, CaseIterable, Identifiable, Codable {
-    case flyingWing, delta, skykart, trainer, aerobat, glider
+    case flyingWing, delta, twinBoom, trainer, aerobat, glider
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .flyingWing: return "Flying Wing"
         case .delta: return "Delta Jet"
-        case .skykart: return "SkyKart"
+        case .twinBoom: return "Twin Boom Pusher"
         case .trainer: return "Park Trainer"
         case .aerobat: return "3D Profile"
         case .glider: return "Micro Glider"
@@ -21,7 +21,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .flyingWing: return "Swept wing · elevons · pusher"
         case .delta: return "High sweep · centre fin · pusher"
-        case .skykart: return "Twin-boom pusher · FPV cruiser"
+        case .twinBoom: return "Pod, carbon booms, twin fins · FPV cruiser"
         case .trainer: return "Dihedral · rudder & elevator"
         case .aerobat: return "Huge surfaces · 4 channels"
         case .glider: return "High aspect ratio · thermal"
@@ -32,7 +32,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .flyingWing: return "chevron.up"
         case .delta: return "triangle"
-        case .skykart: return "camera.fill"
+        case .twinBoom: return "camera.fill"
         case .trainer: return "graduationcap"
         case .aerobat: return "arrow.triangle.2.circlepath"
         case .glider: return "wind"
@@ -41,8 +41,8 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
 
     var isTailless: Bool { self == .flyingWing || self == .delta }
     var hasAilerons: Bool { self == .aerobat }
-    var isPusher: Bool { isTailless || self == .skykart }
-    var isTwinBoom: Bool { self == .skykart }
+    var isPusher: Bool { isTailless || self == .twinBoom }
+    var isTwinBoom: Bool { self == .twinBoom }
     /// Tailed aircraft with a full-length fuselage (fuselage structure option applies).
     var hasFuselage: Bool { !isTailless && !isTwinBoom }
 
@@ -51,7 +51,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .glider: return 0.35
         case .trainer: return 0.55
-        case .skykart: return 0.7
+        case .twinBoom: return 0.7
         case .flyingWing: return 0.6
         case .delta: return 0.8
         case .aerobat: return 1.1
@@ -69,7 +69,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
             c.wingspan = 460; c.rootChord = 330; c.tipChord = 70; c.sweep = 250; c.dihedral = 0
             c.controlChordPct = 0.2; c.wingletHeight = 90; c.sweep = 230
             c.material = .depron6; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
-        case .skykart:
+        case .twinBoom:
             c.wingspan = 580; c.rootChord = 150; c.tipChord = 120; c.sweep = 8; c.dihedral = 0
             c.fuselageLength = 300; c.fuselageHeight = 58; c.noseLength = 120; c.tailArm = 300
             c.hStabSpan = 230; c.hStabChord = 70; c.vStabHeight = 70; c.vStabChord = 70
@@ -87,7 +87,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
             c.material = .depron5; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
         case .glider:
             c.wingspan = 600; c.rootChord = 85; c.tipChord = 55; c.sweep = 15; c.dihedral = 8
-            c.fuselageLength = 470; c.fuselageHeight = 46; c.noseLength = 62; c.tailArm = 280
+            c.fuselageLength = 470; c.fuselageHeight = 56; c.noseLength = 62; c.tailArm = 280
             c.hStabSpan = 150; c.hStabChord = 50; c.vStabHeight = 65; c.vStabChord = 55
             c.material = .depron3; c.motor = .m1103; c.battery = .s1_300; c.servo = .g17
         }

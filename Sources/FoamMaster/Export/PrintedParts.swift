@@ -48,7 +48,7 @@ enum PrintedParts {
 
         if c.kind.hasFuselage && c.dihedral >= 0.5 {
             out.append(PrintedPart(name: "Dihedral joiner \(Int(c.dihedral))°", fileName: "dihedral_joiner_\(Int(c.dihedral))deg", quantity: 1,
-                                   mesh: dihedralJoiner(angle: c.dihedral, chord: c.rootChord, foam: t), note: "sets the wing dihedral in the fuselage slot"))
+                                   mesh: dihedralJoiner(angle: c.dihedral, chord: c.rootChord, foam: t), note: "glued under the wing/plate joint, sets the dihedral"))
         }
         out.append(PrintedPart(name: "Battery tray", fileName: "battery_tray_\(c.battery.rawValue)", quantity: 1,
                                mesh: batteryTray(c.battery), note: "velcro base with side rails"))
@@ -67,10 +67,16 @@ enum PrintedParts {
             holes.append(Poly.circle(Vec2(cos(a), sin(a)) * r, m.screwHole / 2, segments: 16))
         }
         var mesh = Mesh3D.extrude(Poly.rect(center: .zero, size: Vec2(plate, plate)), holes: holes, z0: 0, z1: th)
-        // Two cheeks that clamp the foam sheet (sheet lies in the YZ plane).
-        let gap = t / 2 + 0.15, wall = 1.6, len = 24.0
-        mesh.append(.box(min: [gap, -plate / 2, th], max: [gap + wall, plate / 2, th + len]))
-        mesh.append(.box(min: [-gap - wall, -plate / 2, th], max: [-gap, plate / 2, th + len]))
+        // Four corner blocks leave a + shaped channel that grips the vertical fuselage
+        // halves and the horizontal plate (or wing + keel) at the same time.
+        let gap = t / 2 + 0.15, len = 22.0, e = plate / 2
+        for sx in [-1.0, 1.0] {
+            for sy in [-1.0, 1.0] {
+                let x0 = sx > 0 ? gap : -e, x1 = sx > 0 ? e : -gap
+                let y0 = sy > 0 ? gap : -e, y1 = sy > 0 ? e : -gap
+                mesh.append(.box(min: [x0, y0, th], max: [x1, y1, th + len]))
+            }
+        }
         return mesh
     }
 

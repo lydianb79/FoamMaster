@@ -120,7 +120,7 @@ struct Analysis {
         stallSpeed = sqrt(2 * totalMass / 1000 * 9.81 / (1.225 * sM2 * clMax)) * 3.6
         thrust = c.motor.thrust(cells: c.battery.cells)
         thrustToWeight = thrust / max(totalMass, 1)
-        let wPerKg: Double = [.glider: 70, .trainer: 100, .skykart: 110, .flyingWing: 120, .delta: 140, .aerobat: 170][c.kind]!
+        let wPerKg: Double = [.glider: 70, .trainer: 100, .twinBoom: 110, .flyingWing: 120, .delta: 140, .aerobat: 170][c.kind]!
         let current = (wPerKg * totalMass / 1000 + c.fpv.power) / c.battery.voltage
         flightTime = c.battery.capacity * 0.8 / 1000 / max(current, 0.01) * 60
 
@@ -224,26 +224,26 @@ struct Analysis {
         }
         if servoOK { add(.ok, "Servos", "Servo torque sufficient", "\(loads.count) × \(c.servo.name) with ≥40 % reserve.") }
 
-        // Fuselage structure
+        // Fuselage structure (cross section: horizontal plate + upper/lower halves)
         if c.kind.hasFuselage {
-            let bh = max(20, c.fuselageHeight * 0.32)
-            let slender = (c.tailArm + c.hStabChord) / bh
-            let soft = c.material.family == .epp || c.material.thickness < 5
-            switch c.fuselageType {
-            case .profile where slender > 14 || (soft && slender > 10):
-                add(.error, "Structure", "Flat profile fuselage will not hold", "Tail boom is \(f0(slender))× longer than high\(soft ? " on soft/thin foam" : "") – it will twist and flex. Choose Cross + or X-brace.")
-            case .profile where slender > 9 || soft:
-                add(.warning, "Structure", "Flat profile fuselage may flex", "Consider a Cross + or X-brace fuselage for torsional stiffness.")
-            case .cross where slender > 22:
-                add(.warning, "Structure", "Long tail boom", "Even with cross plates the boom is slender – consider X-brace or a shorter tail arm.")
-            default:
-                add(.ok, "Structure", "\(c.fuselageType.name) fuselage", c.fuselageType == .profile ? "Short and stiff enough as a single sheet." : "Braced section resists bending and twisting.")
+            let slender = (c.tailArm + c.hStabChord) / max(c.fuselageHeight * 0.5, 1)
+            let heavyNose = c.motor.mass >= 19 || c.material.family == .epp
+            if c.fuselageType == .cross && heavyNose {
+                add(.warning, "Structure", "Front fuselage needs doublers", "\(c.material.family == .epp ? "EPP" : "A \(c.motor.name)") loads the nose – choose “Cross + doublers”.")
+            } else if slender > 14 {
+                add(.warning, "Structure", "Very long, slim tail", "Tail is \(f0(slender))× the fuselage half-height – increase fuselage height or shorten the tail arm.")
+            } else {
+                add(.ok, "Structure", "\(c.fuselageType.name) fuselage", "Horizontal plate + upper/lower halves form a + section along the whole length; carbon truss on both sides.")
             }
         }
 
         // Propeller clearance
         let r = c.motor.propInches * 25.4 / 2
-        if c.kind.isPusher {
+        if c.kind.isTailless {
+            let clear = c.motorNotchWidth / 2 - r
+            add(.ok, "Geometry", "Motor sits in the trailing-edge cutout", "\(f0(c.motorNotchWidth)) × \(f0(c.motorNotchDepth)) mm cutout, \(f1(clear)) mm prop clearance each side.")
+            if c.battery.size.l > c.rootChord * 0.7 { add(.warning, "Geometry", "Battery long for the centre section", "Battery \(f0(c.battery.size.l)) mm vs root chord \(f0(c.rootChord)) mm.") }
+        } else if c.kind.isPusher {
             let w = TaperedPanel(rootChord: c.rootChord, tipChord: c.tipChord, sweep: c.sweep, semiSpan: c.semiSpan)
             let propPlane = c.propPlaneZ
             let maxTE = stride(from: 0.0, through: min(r + 3, c.semiSpan), by: 2).map { w.te($0) }.max() ?? 0

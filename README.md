@@ -13,9 +13,9 @@ Requires Xcode / Swift 5.9+, macOS 14+. `swift run` also works for quick iterati
 
 ## Features
 
-- **Model gallery** – live 3D renders of Flying Wing, Delta Jet, SkyKart (twin-boom pusher), Park Trainer, 3D Profile and Micro Glider. Picking one opens a setup sheet for FPV system, fuselage structure and aileron servos; then customise every dimension.
+- **Model gallery** – live 3D renders of Flying Wing, Delta Jet, Twin Boom Pusher, Park Trainer, 3D Profile and Micro Glider. Picking one opens a setup sheet for FPV system, fuselage structure and aileron servos; then customise every dimension.
 - **FPV** – none, Analog, DJI O4 Lite or Walksnail; weight, CG position, power draw (flight time), BOM and a printed camera mount are included.
-- **Fuselage structure** – flat profile, Cross + (horizontal side plates) or X-brace (four 45° strips); long thin profile fuselages are flagged as structurally unsound.
+- **Multi-layer construction** (in the style of commercial flat-foam kits) – conventional aircraft get a full-length horizontal fuselage plate with the stabiliser built in, upper and lower fuselage halves glued on with tabs (a + section along the whole length), wing halves keyed into the plate sides, carbon spars on top and bottom, a carbon zig-zag truss on both fuselage sides and optional doubler layers. Flying wings get a centre keel and the motor sits in a trailing-edge cutout; the twin boom pusher has a pod built the same way.
 - **Aileron servos** – one central servo with torque rods, or one servo per aileron.
 - **Metal 3D view** – orbit/pan/zoom, control-surface deflection preview, live CG marker with target range.
 - **Materials** – Depron or EPP in 3 / 5 / 6 / 10 mm, optional carbon spar.

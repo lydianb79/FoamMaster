@@ -149,17 +149,20 @@ enum FPVSystem: String, CaseIterable, Identifiable, Codable {
 // MARK: - Fuselage structure
 
 enum FuselageType: String, CaseIterable, Identifiable, Codable {
-    case profile, cross, xBrace
+    /// RC Factory style: horizontal fuselage plate with upper and lower vertical halves glued on with tabs,
+    /// carbon truss on both sides of the vertical halves.
+    case cross
+    /// As `cross`, plus doubler layers on both sides of the front fuselage (nose → wing) for bigger motors / EPP.
+    case laminated
     var id: String { rawValue }
-    var name: String { [.profile: "Flat profile", .cross: "Cross +", .xBrace: "X-brace"][self]! }
+    var name: String { [.cross: "Cross + truss", .laminated: "Cross + doublers"][self]! }
     var detail: String {
         switch self {
-        case .profile: return "Single sheet – lightest, flexes on long tails"
-        case .cross: return "Horizontal side plates form a + section"
-        case .xBrace: return "Four 45° strips form an X section – stiffest"
+        case .cross: return "Horizontal plate, upper & lower halves, carbon truss"
+        case .laminated: return "Adds doubler layers on the front fuselage – for big motors or EPP"
         }
     }
-    var symbol: String { [.profile: "minus", .cross: "plus", .xBrace: "xmark"][self]! }
+    var symbol: String { [.cross: "plus", .laminated: "square.stack.3d.up"][self]! }
 }
 
 extension CarbonSpar {

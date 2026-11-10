@@ -30,7 +30,7 @@ enum BuildDocs {
             let spar = c.sparSpec
             let pieces = (!c.kind.isTailless && c.dihedral >= 0.5) ? 2 : (c.sweep > 15 && c.kind.isTailless ? 2 : 1)
             let len = ceil(c.sparLength / Double(pieces) / 10) * 10
-            items.append(BOMItem(category: "Carbon", item: spar.name, spec: "\(Int(len)) mm per piece, glued flush into a slit along the 30 % chord line", quantity: "\(pieces)×"))
+            items.append(BOMItem(category: "Carbon", item: spar.name, spec: "\(Int(len)) mm per piece – one strip in a slit on the top AND one on the bottom along the 30 % chord line", quantity: "\(pieces * 2)×"))
         }
         let pushLen = d.controls.reduce(0) { $0 + simd_distance($1.servoPosition, $1.hornPosition) }
         items.append(BOMItem(category: "Carbon", item: "Carbon rod Ø1 mm (pushrods)", spec: "Total \(Int(ceil(pushLen / 10) * 10 + 40)) mm", quantity: "\(d.controls.count)×"))
@@ -44,8 +44,8 @@ enum BuildDocs {
         if c.kind.hasAilerons && c.aileronServos == 1 {
             items.append(BOMItem(category: "Hardware", item: "Steel wire Ø1 mm torque rods", spec: "2 × 70 mm, L-bent into the aileron leading edges, brass tube bearings 2 × 15 mm", quantity: "2×"))
         }
-        if c.kind.hasFuselage {
-            items.append(BOMItem(category: "Carbon", item: "Carbon flat strip 3 × 0.5 mm", spec: "Fuselage boom stiffener, \(Int(c.tailArm + c.hStabChord)) mm, glued along the bottom edge", quantity: "1×"))
+        if d.trussLength > 0 {
+            items.append(BOMItem(category: "Carbon", item: "Carbon flat strip 3 × 0.5 mm", spec: "Zig-zag truss on both sides of the fuselage halves, total \(Int(ceil(d.trussLength / 10) * 10)) mm", quantity: "\(Int(ceil(d.trussLength / 1000)))× 1 m"))
         }
         let hingeLen = d.parts.reduce(0.0) { sum, p in
             sum + p.features.reduce(0.0) { s2, f in if case let .hinge(a, b) = f { return s2 + simd_distance(a, b) * Double(p.quantity) }; return s2 }
@@ -85,24 +85,19 @@ enum BuildDocs {
         if c.sparEnabled {
             s.append(BuildStep(title: "Install the carbon spar", text: "Cut a slit along the green spar line about \(String(format: "%.1f", c.material.thickness * 0.6)) mm deep, fill with glue and press in the \(c.sparSpec.name). Wipe off excess glue and let cure flat.", symbol: "line.diagonal"))
         }
-        if c.kind.hasFuselage && c.fuselageType != .profile {
-            s.append(BuildStep(title: c.fuselageType == .cross ? "Glue the cross plates" : "Glue the X-brace strips",
-                               text: c.fuselageType == .cross
-                ? "Glue the front and rear cross plates flat against both fuselage sides along the marked centre line (notch = alignment mark). Use a square to keep them at 90° – together with the wing they form a stiff + section."
-                : "Glue the four front and four rear strips at 45° along the marked centre line on both sides (one up, one down per side). Check the X is symmetric from the front before the glue sets.", symbol: c.fuselageType.symbol))
+        if c.kind.hasFuselage {
+            s.append(BuildStep(title: "Join the wing halves to the fuselage plate", text: "Push the wing-half tabs into the notches in the plate sides\(c.dihedral >= 0.5 ? ", set the \(Int(c.dihedral))° dihedral with the printed joiner underneath" : "") and glue with foam-safe CA. Then slit the spar lines on the top and the bottom and glue one carbon strip into each – the strips run across the plate and lock the joint.", symbol: "rectangle.split.3x1"))
+            s.append(BuildStep(title: "Fuselage top & bottom halves", text: "Press the tabs of the top half into the centre-line slots of the plate, then the bottom half from below. Check both halves are exactly 90° to the plate and in line – this + section is what makes the fuselage stiff.\(c.fuselageType == .laminated ? " Glue the doubler layers on both sides of the front fuselage." : "")", symbol: "plus"))
+            s.append(BuildStep(title: "Carbon truss", text: "Cut shallow slits along the zig-zag lines on both sides of the top and bottom halves and glue in 3 × 0.5 mm carbon strips. Wick thin CA into every corner where the strips meet.", symbol: "triangle"))
         }
         if c.kind.isTwinBoom {
-            s.append(BuildStep(title: "Pod, booms & twin fins", text: "Slide the wing through the pod slot. Groove the wing and stabiliser undersides along the boom lines, glue in both Ø4 mm carbon booms parallel to the pod. Push the fin tabs through the stabiliser slots. Join the elevator halves with a 1 mm carbon rod and link both rudders with a wire across the stab.", symbol: "rectangle.split.3x1"))
+            s.append(BuildStep(title: "Pod, booms & twin fins", text: "Key the pod nose plate into the wing leading edge, then glue the pod top and bottom halves on with their tabs. Groove the wing and stabiliser undersides along the boom lines, glue in both Ø4 mm carbon booms parallel to the pod. Push the fin tabs through the stabiliser slots. Join the elevator halves with a 1 mm carbon rod and link both rudders with a wire across the stab.", symbol: "rectangle.split.3x1"))
             s.append(BuildStep(title: "Mount the pusher motor", text: "Slide the printed mount over the pod tail and glue. Prop clearance to the booms is checked by FoamMaster – verify it turns freely.", symbol: "fanblades"))
         } else if c.kind.isTailless {
             s.append(BuildStep(title: c.kind == .delta ? "Fit the centre fin" : "Fit the winglets", text: "Push the tabs through the matching slots in the wing until flush underneath. Check 90° to the wing with a square and glue.", symbol: "square.split.bottomrightquarter"))
-            s.append(BuildStep(title: "Mount the motor", text: "Screw the motor onto the printed mount (\(c.motor.screw)). Slide the mount clamp over the trailing edge at the centre notch and glue. Motor axis parallel to the wing chord.", symbol: "fanblades"))
+            s.append(BuildStep(title: "Centre keel & motor", text: "Glue the centre keel under the wing with its tabs. Screw the motor onto the printed mount (\(c.motor.screw)) and push its + shaped clamp onto the wing and keel at the front of the trailing-edge cutout – the prop spins inside the cutout.", symbol: "fanblades"))
         } else {
-            s.append(BuildStep(title: "Join the fuselage and wing", text: c.dihedral >= 0.5
-                ? "Glue the printed dihedral joiner into the wing slot. Insert both wing halves (root notches face the fuselage) and set \(String(format: "%.0f", c.dihedral))° dihedral – the joiner sets the angle."
-                : "Slide the wing through the fuselage slot until the LE/TE notches line up with the fuselage. Check the wing is square to the fuselage, then glue.", symbol: "airplane"))
-            s.append(BuildStep(title: "Fit the stabiliser", text: "Press the stabiliser slots over the tabs under the tail boom. Check it is parallel to the wing when viewed from the front, then glue. Glue the 3 × 0.5 mm carbon strip along the fuselage bottom edge.", symbol: "arrow.left.and.right"))
-            s.append(BuildStep(title: "Mount the motor", text: "Screw the motor onto the printed firewall (\(c.motor.screw)), slide its clamp over the nose and glue. 1–2° right thrust can be shimmed with a washer.", symbol: "fanblades"))
+            s.append(BuildStep(title: "Mount the motor", text: "Screw the motor onto the printed firewall (\(c.motor.screw)) and push its + shaped clamp over the nose so it grips the plate and both fuselage halves. 1–2° right thrust can be shimmed with a washer.", symbol: "fanblades"))
         }
         if c.kind.hasAilerons && c.aileronServos == 1 {
             s.append(BuildStep(title: "Aileron torque rods", text: "Bend two 1 mm wires into L-shapes, slide them through short brass tubes glued into the wing at the hinge line next to the fuselage and press the long legs into the aileron leading edges. The single aileron servo below the wing drives both rods with one pushrod each.", symbol: "arrow.triangle.branch"))

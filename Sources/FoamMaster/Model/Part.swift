@@ -114,4 +114,6 @@ struct Design {
     var controls: [ControlSurface]
     var servoCutouts: [(part: String, rect: [Vec2])]
     var geometryIssues: [String]
+    /// Carbon truss strip length (mm, both sides) for the BOM.
+    var trussLength: Double = 0
 }
