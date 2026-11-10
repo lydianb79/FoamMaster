@@ -199,6 +199,8 @@ struct AircraftConfig: Codable, Equatable {
     var servo: ServoClass = .g25
     /// Battery centre position measured aft of the root leading edge (mm, negative = forward).
     var batteryPosition: Double = 0
+    /// Pick motor, ESC, prop and battery automatically whenever the airframe changes.
+    var autoPower: Bool = true
     var fuselageType: FuselageType = .cross
     /// 1 = one central servo driving both ailerons with a double arm and two pushrods, 2 = one servo per aileron.
     var aileronServos: Int = 2

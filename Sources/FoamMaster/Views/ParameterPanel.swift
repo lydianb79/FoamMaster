@@ -16,6 +16,14 @@ struct ParameterContent: View {
     @EnvironmentObject var project: Project
     private var lastConfig: AircraftConfig { project.lastConfig ?? AircraftKind.trainer.defaults }
 
+    /// Binding for a power-system choice: picking one by hand switches the automatic selection off.
+    func manual<T>(_ kp: WritableKeyPath<AircraftConfig, T>) -> Binding<T> {
+        let b = bind(kp)
+        return Binding(get: { b.wrappedValue }, set: { v in
+            if project.config != nil { project.config!.autoPower = false; project.config![keyPath: kp] = v }
+        })
+    }
+
     func bind<T>(_ kp: WritableKeyPath<AircraftConfig, T>) -> Binding<T> {
         // The editor stays on screen briefly while fading out after "Back", when config is already nil.
         let fallback = project.config ?? lastConfig
@@ -132,18 +140,18 @@ struct ParameterContent: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         SectionHeader(title: "Electronics", symbol: "bolt.fill")
-                        PickerRow(label: "Motor", selection: bind(\.motor), options: MotorClass.allCases) { $0.name }
-                        HStack(spacing: 6) {
-                            Image(systemName: "circle.grid.cross.fill").font(.system(size: 10)).foregroundStyle(Theme.accent)
-                            Text("Mount pattern \(c.motor.pattern.label)").font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
-                        }.padding(.leading, 62)
-                        HStack(spacing: 6) {
-                            Image(systemName: "fanblades.fill").font(.system(size: 10)).foregroundStyle(Theme.accent)
-                            Text("Prop \(c.propRecommendation)")
-                                .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
-                        }.padding(.leading, 62)
-                        Text(c.kind.propBladeReason).font(.system(size: 9.5)).foregroundStyle(.tertiary).padding(.leading, 78)
-                        PickerRow(label: "Battery", selection: bind(\.battery), options: BatteryPack.allCases) { "\($0.name) · \(Int($0.mass)) g" }
+                        Toggle(isOn: bind(\.autoPower)) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Auto power system").font(.system(size: 12, weight: .semibold))
+                                Text(project.findingPower ? "Finding the best motor, ESC, prop and battery…"
+                                     : (c.autoPower ? "Motor, ESC, prop and battery follow the airframe (T/W ≥ \(String(format: "%.2f", c.kind.recommendedThrustToWeight)), ≥ 6 min)"
+                                                     : "Off – picking a motor or battery yourself switches it off"))
+                                    .font(.system(size: 9.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .toggleStyle(.switch).tint(Theme.accent)
+                        PickerRow(label: "Motor", selection: manual(\.motor), options: MotorClass.allCases) { $0.name }
+                        PickerRow(label: "Battery", selection: manual(\.battery), options: BatteryPack.allCases) { "\($0.name) · \(Int($0.mass)) g" }
                         PickerRow(label: "Servos", selection: bind(\.servo), options: ServoClass.allCases) { $0.name }
                         if let d = project.design, let a = project.analysis {
                             // Full electronics list – the same items as under Materials ▸ Electronics.

@@ -120,15 +120,15 @@ enum SelfTest {
             }
         }
         // Close-ups of the motor area for visual checks.
-        for (name, kind, dual) in [("trainer", AircraftKind.trainer, false), ("wing", .flyingWing, false), ("dualtrainer", .trainer, true), ("twin", .twinBoom, false), ("nutball", .nutBall, false), ("jet", .jet, false), ("delta", .delta, false), ("dualdelta", .delta, true), ("dualwing", .flyingWing, true)] {
+        for (name, kind, dual) in [("trainer", AircraftKind.trainer, false), ("wing", .flyingWing, false), ("dualtrainer", .trainer, true), ("twin", .twinBoom, false), ("nutball", .nutBall, false), ("jet", .jet, false), ("delta", .delta, false), ("dualdelta", .delta, true), ("dualwing", .flyingWing, true), ("dualnose", .trainer, true)] {
             var c = kind.defaults; if dual { c.motorLayout = .dualTractor }
             c = Project.balanced(c)
             let d = DesignBuilder.build(c); let a = Analysis(design: d)
             let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
             if let r = Renderer(view: view) {
                 r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
-                let x = Float(c.motorXs.last ?? 0)
-                r.target = SIMD3<Float>(x, 0, Float(c.firewallZ))
+                let x = Float(name == "dualnose" ? 0 : (c.motorXs.last ?? 0))
+                r.target = SIMD3<Float>(x, 0, Float(name == "dualnose" ? -c.noseLength : c.firewallZ))
                 r.zoom = 0.22; r.yaw = 0.9; r.pitch = 0.35
                 if let img = r.snapshot(width: 1000, height: 700) { savePNG(img, dir.appendingPathComponent("close_\(name).png")) }
             }
@@ -186,6 +186,20 @@ enum SelfTest {
         do {
             let d = DesignBuilder.build(Project.balanced(AircraftKind.trainer.defaults)); let a = Analysis(design: d)
             print("   weight rows: " + WeightBars.groups(d, a).map { "\($0.label) \(String(format: "%.1f", $0.mass))" }.joined(separator: " | "))
+        }
+        // Automatic power system per type (and after making the trainer heavier).
+        do {
+            let t0 = Date()
+            for kind in AircraftKind.allCases {
+                if let r = PowerOptimizer.best(for: kind.defaults) {
+                    print("   power \(kind.title): \(r.config.motor.rawValue) + \(r.config.battery.name), \(r.config.propRecommendation), T/W \(String(format: "%.2f", r.analysis.thrustToWeight)) (target \(String(format: "%.2f", kind.recommendedThrustToWeight))), AUW \(Int(r.analysis.totalMass)) g, \(Int(r.analysis.flightTime)) min, score \(r.analysis.score)")
+                } else { print("   power \(kind.title): none") }
+            }
+            var heavy = AircraftKind.trainer.defaults; heavy.material = .depron10; heavy.wingspan = 800
+            if let r = PowerOptimizer.best(for: heavy) {
+                print("   power trainer 800/10mm: \(r.config.motor.rawValue) + \(r.config.battery.name), T/W \(String(format: "%.2f", r.analysis.thrustToWeight)), AUW \(Int(r.analysis.totalMass)) g")
+            }
+            print("   power search: \(String(format: "%.2f", Date().timeIntervalSince(t0) / 9)) s per search")
         }
         // Tail close-ups from the side with the elevator up: the rudder cut-out must clear it.
         for kind in [AircraftKind.trainer, .jet, .nutBall] {

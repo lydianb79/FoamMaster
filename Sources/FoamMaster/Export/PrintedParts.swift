@@ -33,7 +33,7 @@ enum PrintedParts {
             out.append(PrintedPart(name: "Nose protector", fileName: "nose_protector_\(c.kind.isTailless ? "apex" : "cross_\(Int(t))mm")", quantity: 1,
                                    mesh: noseProtector(for: c),
                                    note: c.kind.isTailless ? "glue-on apex guard following the swept leading edge – protects the nose on landings"
-                                                           : "+ clamp for \(Int(t)) mm foam with a bumper pad – protects the nose on landings (no motor in the nose)"))
+                                                           : "rounded nose cone, + socket for \(Int(t)) mm foam, glue on – protects the nose on landings (no motor in the nose)"))
         }
         if !d.controls.isEmpty {
             out.append(PrintedPart(name: "Control horn", fileName: "control_horn_\(Int(t))mm", quantity: d.controls.count,
@@ -214,9 +214,9 @@ enum PrintedParts {
         return mesh
     }
 
-    /// Nose protector for dual-motor layouts (nothing sits on the nose any more): tailed planes get the + clamp of
-    /// the motor mount with a solid plate and a 4 mm bumper pad in front; tailless wings a glue-on apex guard that
-    /// follows the swept leading edge (lip in front, jaw under the wing – the top stays free for the battery).
+    /// Nose protector for dual-motor layouts (nothing sits on the nose any more): tailed planes get a rounded nose
+    /// cone with a + socket that slips over the plate and both webs; tailless wings a glue-on apex guard that follows
+    /// the swept leading edge (lip in front, jaw under the wing – the top stays free for the battery).
     /// Mesh frame: z = 0 at the foam nose / apex, +z aft, y up.
     static func noseProtector(for c: AircraftConfig) -> Mesh3D {
         let t = c.material.thickness
@@ -231,12 +231,44 @@ enum PrintedParts {
             mesh.append(prism(jaw, axis: 1, from: -gapY - 1.6, to: -gapY))
             return mesh
         }
+        // Rounded nose cone: a socket with a + shaped cavity slides 10 mm over the nose (plate + both webs), a 2 mm
+        // front wall takes the impact and a bullet-shaped dome in front of it softens it.
         let tw = t * Double(c.fuselageType.webLayers)
-        var mesh = motorMount(c.motor, foam: t, webTop: tw, webBottom: tw, blank: true)
-        let e = motorMountPlate(c.motor, foam: t) / 2, ch = e * 0.45
-        let pad = [Vec2(-e + ch, -e), Vec2(e - ch, -e), Vec2(e, -e + ch), Vec2(e, e - ch), Vec2(e - ch, e), Vec2(-e + ch, e), Vec2(-e, e - ch), Vec2(-e, -e + ch)]
-        mesh.append(Mesh3D.extrude(pad, z0: -4, z1: 0))
-        return mesh.translated([0, 0, -mountPlate])   // plate sits in front of the nose, jaws start at z = 0
+        let S = 10.0, wall = 1.6
+        let f = c.noseFace(at: S)
+        let hx = f.halfWidth + 0.15, hy = t / 2 + 0.1, vx = tw / 2 + 0.1
+        let yt = t / 2 + f.top + 0.1, yb = -(t / 2 + f.bottom + 0.1)
+        let plus = [Vec2(hx, -hy), Vec2(hx, hy), Vec2(vx, hy), Vec2(vx, yt), Vec2(-vx, yt), Vec2(-vx, hy),
+                    Vec2(-hx, hy), Vec2(-hx, -hy), Vec2(-vx, -hy), Vec2(-vx, yb), Vec2(vx, yb), Vec2(vx, -hy)]
+        let ax = hx + wall + 1, ay = (yt - yb) / 2 + wall, y0 = (yt + yb) / 2
+        // Superellipse outline (n = 4): rounded-square nose section.
+        let n = 56
+        let ring: [Vec2] = (0..<n).map { k in
+            let a = Double(k) / Double(n) * 2 * .pi
+            let cx = cos(a), sy = sin(a)
+            return Vec2(ax * (cx >= 0 ? 1 : -1) * pow(abs(cx), 0.5), y0 + ay * (sy >= 0 ? 1 : -1) * pow(abs(sy), 0.5))
+        }
+        var mesh = Mesh3D.extrude(ring, holes: [plus], z0: 0, z1: S)       // socket
+        mesh.append(.extrude(ring, z0: -2, z1: 0))                         // front wall
+        // Dome: rings shrinking towards a rounded tip (quarter ellipse in length).
+        let D = min(ax, ay) * 0.9, K = 10
+        var dome = Mesh3D()
+        func ringPoint(_ k: Int, _ i: Int) -> SIMD3<Double> {
+            let th = Double(k) / Double(K) * .pi / 2, s = cos(th)
+            let p = ring[i % n]
+            return [p.x * s, y0 + (p.y - y0) * s, -2 - D * sin(th)]
+        }
+        for k in 0..<K {
+            for i in 0..<n {
+                let a = ringPoint(k, i), b = ringPoint(k, i + 1), cc = ringPoint(k + 1, i + 1), d = ringPoint(k + 1, i)
+                if k + 1 == K { dome.triangles.append((a, b, cc)) }            // last ring collapses to the tip
+                else { dome.triangles += [(a, b, cc), (a, cc, d)] }
+            }
+        }
+        let base = SIMD3<Double>(0, y0, -2)
+        for i in 0..<n { dome.triangles.append((base, ringPoint(0, i + 1), ringPoint(0, i))) }
+        mesh.append(dome.signedVolume < 0 ? dome.flipped : dome)
+        return mesh
     }
 
     static func controlHorn(foam t: Double) -> Mesh3D {

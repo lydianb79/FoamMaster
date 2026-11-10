@@ -187,7 +187,7 @@ enum SceneBuilder {
                 scene.addMesh(placed.translated([p.x, 0, c.firewallZ]), color: Palette.printed)
             case "Printed" where item.name.hasPrefix("Nose protector"):
                 let z0 = c.kind.isTailless ? 0 : -c.noseLength
-                scene.label = c.kind.isTailless ? "Nose protector (printed) – apex guard" : "Nose protector (printed) – + clamp with bumper"
+                scene.label = c.kind.isTailless ? "Nose protector (printed) – apex guard" : "Nose cone (printed) – slips over the + nose"
                 scene.addMesh(PrintedParts.noseProtector(for: c).translated([0, 0, z0]), color: Palette.printed)
             case "Printed":
                 continue   // horns are drawn with their linkages

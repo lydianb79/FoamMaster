@@ -33,6 +33,21 @@ extension AircraftConfig {
         return -noseLength - th
     }
     var firewallThickness: Double { PrintedParts.firewallThickness(motor) }
+
+    /// Nose face (+ section) `d` mm aft of the nose: plate half width and web height above / below the plate.
+    /// Matches the outlines drawn by the builder (the nose tapers to the size of the motor mount / nose cone).
+    func noseFace(at d: Double) -> (halfWidth: Double, top: Double, bottom: Double) {
+        let t = material.thickness, W = fuselagePlateWidth, hw = W / 2
+        let halfWidth = W * 0.3 + (hw - W * 0.3) * min(1, d / 6)
+        if kind.isTwinBoom {
+            let hp = fuselageHeight * 0.5 - t / 2
+            return (halfWidth, hp * 0.5 + hp * 0.4 * min(1, d / (0.35 * noseLength)), hp * 0.5 + hp * 0.5 * min(1, d / (0.3 * noseLength)))
+        }
+        let mountHalf = PrintedParts.motorMountPlate(motor, foam: t) / 2
+        let hNose = fuselageHeight * 0.4 - t / 2, hLowWing = fuselageHeight * 0.5 - t / 2
+        let top0 = min(hNose * 0.65, max(mountHalf - t / 2 - 0.5, 4)), bot0 = min(hLowWing * 0.55, max(mountHalf - t / 2 - 0.5, 4))
+        return (halfWidth, top0 + (hNose - top0) * min(1, d / (0.35 * noseLength)), bot0 + (hLowWing - bot0) * min(1, d / (0.3 * noseLength)))
+    }
     /// Printed standoff between firewall and clamp jaws. Needed for dual tractors on swept wings: the inboard
     /// half of each prop disc sweeps ahead of the leading edge there, so the motor has to move forward until
     /// the blades keep `propClearance` to the closest point of the leading edge.

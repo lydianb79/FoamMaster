@@ -59,7 +59,7 @@ enum BuildDocs {
         let pat = c.motor.pattern
         items.append(BOMItem(category: "Hardware", item: "Motor screws \(pat.screw)", spec: "Cap/pan head, length = firewall + \(pat.thread >= 2 ? "3–4" : "2–3") mm thread engagement – \(pat.label) pattern", quantity: "\(pat.holes * c.motorCount)×"))
 
-        items.append(BOMItem(category: "Electronics", item: c.motor.name, spec: "\(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S, ~\(Int(a.thrust / Double(c.motorCount))) g thrust each\(c.isDual ? ", one CW + one CCW" : "")", quantity: "\(c.motorCount)×"))
+        items.append(BOMItem(category: "Electronics", item: c.motor.name, spec: "\(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S, ~\(Int(a.thrust / Double(c.motorCount))) g thrust each, mount pattern \(c.motor.pattern.label)\(c.isDual ? ", one CW + one CCW" : "")", quantity: "\(c.motorCount)×"))
         items.append(BOMItem(category: "Electronics", item: "ESC", spec: "\(c.motor.escMass > 4 ? 12 : 6) A, \(c.battery.cells)S\(c.isDual ? " – both on the throttle channel via a Y-lead" : "")", quantity: "\(c.motorCount)×"))
         if c.isDual { items.append(BOMItem(category: "Electronics", item: "Y-lead + parallel battery adapter", spec: "Throttle signal to both ESCs, power from one pack", quantity: "1×")) }
         items.append(BOMItem(category: "Electronics", item: "Propeller \(c.propRecommendation)",

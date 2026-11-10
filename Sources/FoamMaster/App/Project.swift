@@ -11,7 +11,10 @@ final class Project: ObservableObject {
             // Keep the fuselage taller than the prop window (jet) – e.g. after a motor change.
             if let c = config, c.fuselageHeight < c.minFuselageHeight { config?.fuselageHeight = c.minFuselageHeight }
             if let c = config { lastConfig = c }
-            if config != oldValue { rebuild() }
+            if config != oldValue {
+                rebuild()
+                if let c = config, c.autoPower, Project.airframeChanged(oldValue, c) || oldValue?.autoPower == false { schedulePowerSearch() }
+            }
         }
     }
     private(set) var lastConfig: AircraftConfig?
@@ -51,6 +54,44 @@ final class Project: ObservableObject {
     }
 
     // MARK: Fix suggestions
+
+    // MARK: Automatic power system
+
+    @Published private(set) var findingPower = false
+    private var powerToken = 0
+
+    /// True when something that changes the weight or the drag changed (anything but the power system itself,
+    /// the battery position and the name).
+    static func airframeChanged(_ old: AircraftConfig?, _ new: AircraftConfig) -> Bool {
+        guard var a = old else { return true }
+        var b = new
+        a.motor = b.motor; a.battery = b.battery; a.batteryPosition = b.batteryPosition; a.name = b.name; a.autoPower = b.autoPower
+        b.autoPower = a.autoPower
+        return a != b
+    }
+
+    private func schedulePowerSearch() {
+        powerToken += 1
+        let token = powerToken
+        guard let c = config else { return }
+        findingPower = true
+        Task.detached(priority: .userInitiated) {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard await self.powerToken == token else { return }
+            let result = PowerOptimizer.best(for: c)
+            await MainActor.run {
+                guard self.powerToken == token else { return }
+                self.findingPower = false
+                guard let r = result, var cur = self.config, cur.autoPower else { return }
+                if cur.motor == r.config.motor && cur.battery == r.config.battery { return }
+                cur.motor = r.config.motor
+                cur.battery = r.config.battery
+                cur.batteryPosition = r.config.batteryPosition
+                self.config = cur         // only motor/battery changed → does not trigger another search
+                self.flash("Power system: \(cur.motor.name.replacingOccurrences(of: " brushless", with: "")) + \(cur.battery.name) · T/W \(String(format: "%.2f", r.analysis.thrustToWeight))")
+            }
+        }
+    }
 
     @Published var inspectorTab: InspectorTab = .analysis
     @Published private(set) var fixes: [FixSuggestion] = []

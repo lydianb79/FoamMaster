@@ -24,6 +24,11 @@ struct Mesh3D {
         abs(triangles.reduce(0) { $0 + simd_dot($1.0, simd_cross($1.1, $1.2)) / 6 })
     }
 
+    /// Signed volume: negative when the triangles are wound inward.
+    var signedVolume: Double { triangles.reduce(0) { $0 + simd_dot($1.0, simd_cross($1.1, $1.2)) / 6 } }
+    /// Same mesh with the winding reversed (normals flipped).
+    var flipped: Mesh3D { Mesh3D(triangles: triangles.map { ($0.0, $0.2, $0.1) }) }
+
     var bounds: (min: SIMD3<Double>, max: SIMD3<Double>) {
         var lo = SIMD3<Double>(repeating: .greatestFiniteMagnitude), hi = -lo
         for t in triangles { for p in [t.0, t.1, t.2] { lo = simd_min(lo, p); hi = simd_max(hi, p) } }
