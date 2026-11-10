@@ -87,7 +87,7 @@ enum PlanPDF {
         PlanDrawer.text("LEGEND", at: Vec2(15, ly - 6), size: 3.4, weight: .bold)
         let legend: [(NSColor, String, [CGFloat])] = [
             (.black, "Cut line (through)", []), (PlanDrawer.hingeColor, "Hinge line – bevel 45° underneath, tape on top", [2, 1.2]),
-            (PlanDrawer.sparColor, "Carbon spar channel", [3, 1.5]), (.gray, "Component zone", [1.5, 1.5]),
+            (PlanDrawer.sparColor, "Carbon rod spar (groove underneath) / boom groove", [3, 1.5]), (.gray, "Component zone", [1.5, 1.5]),
             (PlanDrawer.hornColor, "Horn position – flange outline, ○ = pushrod hole over the hinge", [1, 0.8])
         ]
         for (i, l) in legend.enumerated() {

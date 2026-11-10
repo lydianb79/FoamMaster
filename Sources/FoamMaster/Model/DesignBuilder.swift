@@ -265,10 +265,10 @@ enum DesignBuilder {
             [Region(polygon: out.main, isControl: false)] + out.controls.map { Region(polygon: $0, isControl: true) }
         }
 
-        /// Carbon spar on the 30 % chord line, slit in from top and bottom.
+        /// Carbon rod spar on the 30 % chord line, in a groove under the wing.
         func sparFeatures(_ w: TaperedPanel, from v0: Double, to v1: Double) -> [Feature] {
             guard c.sparEnabled else { return [] }
-            return [.spar(Vec2(w.le(v0) + 0.3 * w.chord(v0), v0), Vec2(w.le(v1) + 0.3 * w.chord(v1), v1), c.sparSpec.widthMM)]
+            return [.rod(Vec2(w.le(v0) + 0.3 * w.chord(v0), v0), Vec2(w.le(v1) + 0.3 * w.chord(v1), v1), c.sparSpec.widthMM)]
         }
 
         /// Fuselage carbon truss was removed on request – only the wing spar is carbon.
@@ -1046,7 +1046,7 @@ enum DesignBuilder {
             let us = L * 0.3
             let vs = S * sin(acos(min(1, max(-1, 1 - 2 * us / L)))) * 0.88
             var features: [Feature] = [.hinge(Vec2(uH, -pt(thH).y), pt(thH)), .label("NUTBALL", Vec2(L * 0.55, S * 0.35))]
-            if c.sparEnabled { features.append(.spar(Vec2(us, -vs), Vec2(us, vs), c.sparSpec.widthMM)) }
+            if c.sparEnabled { features.append(.rod(Vec2(us, -vs), Vec2(us, vs), c.sparSpec.widthMM)) }
             parts.append(Part(name: "Disc wing", role: .wing, outline: outline, holes: discHoles, features: features,
                               regions: [Region(polygon: mainRegion, isControl: false), Region(polygon: elevator, isControl: true)],
                               instances: [.horizontal(at: .zero)], material: c.material))
@@ -1117,7 +1117,7 @@ enum DesignBuilder {
             }
             if c.sparEnabled {
                 // Top and bottom strip.
-                components.append(MassItem(name: "2 × \(c.sparSpec.name)", mass: 2 * c.sparLength / 1000 * c.sparSpec.gramsPerMeter,
+                components.append(MassItem(name: "\(c.sparSpec.name) wing spar", mass: c.sparLength / 1000 * c.sparSpec.gramsPerMeter,
                                            position: [0, 0, c.rootChord * 0.3 + c.sweep * 0.45], category: "Hardware"))
             }
             if trussLength > 0 {

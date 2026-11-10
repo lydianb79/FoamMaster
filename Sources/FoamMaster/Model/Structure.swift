@@ -21,6 +21,26 @@ struct StructureReport {
     var bendingStiffness: Double?      // EI of the tail boom (N·mm²)
     var torsionStiffness: Double?      // GJ of the tail boom (N·mm²)
 
+    /// Bending stiffness of the wing root section: foam plate plus an optional carbon rod whose bottom is flush with
+    /// the underside (composite section, transformed about the common neutral axis). N·mm².
+    static func wingEI(_ c: AircraftConfig, rod: CarbonSpar?) -> Double {
+        let t = c.material.thickness, Ef = c.material.modulus
+        // NutBall: the disc's mean chord over the half span (π/4 of its length) carries the bending.
+        let b = c.rootChord * (c.kind.isNutBall ? .pi / 4 : 1)
+        let Af = b * t, If = b * t * t * t / 12
+        guard let rod else { return Ef * If }
+        let Ac = rod.roundArea, Ic = rod.roundEI / carbonE
+        let e = t / 2 - rod.widthMM / 2                    // rod centre below the foam centre
+        let yNA = carbonE * Ac * e / (Ef * Af + carbonE * Ac)
+        return Ef * (If + Af * yNA * yNA) + carbonE * (Ic + Ac * (e - yNA) * (e - yNA))
+    }
+    /// Tip deflection / half span at 3 g (uniform load on a cantilever half wing).
+    static func wingDeflectionRatio(_ c: AircraftConfig, rod: CarbonSpar?, totalMass: Double) -> Double {
+        let L = c.semiSpan
+        let F = 3 * totalMass * 9.81e-3 / 2
+        return F * L * L * L / (8 * wingEI(c, rod: rod)) / L
+    }
+
     init(_ c: AircraftConfig, totalMass: Double, stallSpeed: Double) {
         let t = c.material.thickness
         let E = c.material.modulus, G = c.material.shearModulus
@@ -28,18 +48,11 @@ struct StructureReport {
         loadSpeed = v * 3.6
         let q = 0.5 * 1.225 * v * v * 1e-6          // N/mm²
 
-        // Wing half as a cantilever plate + carbon strips top and bottom, uniform 3 g load.
+        // Wing half as a cantilever plate + carbon rod spar in a groove underneath, uniform 3 g load.
         let L = c.semiSpan
-        // NutBall: the disc's mean chord over the half span (π/4 of its length) carries the bending.
-        var EI = E * c.rootChord * (c.kind.isNutBall ? .pi / 4 : 1) * t * t * t / 12
-        if c.sparEnabled {
-            let sp = c.sparSpec
-            let d = t / 2 - sp.heightMM / 2
-            EI += Self.carbonE * 2 * (sp.widthMM * sp.heightMM) * d * d
-        }
-        let F = 3 * totalMass * 9.81e-3 / 2
-        wingTipDeflection = F * L * L * L / (8 * EI)
-        wingDeflectionRatio = wingTipDeflection / L
+        wingDeflectionRatio = Self.wingDeflectionRatio(c, rod: c.sparEnabled ? c.sparSpec : nil, totalMass: totalMass)
+        wingTipDeflection = wingDeflectionRatio * L
+        _ = (t, E)
 
         guard c.kind.hasTail else { return }
         let Sh = c.hStabSpan * c.hStabChord, Sv = c.vStabHeight * c.vStabChord * (c.kind.isTwinBoom ? 2 : 1)

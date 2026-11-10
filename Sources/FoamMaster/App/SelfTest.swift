@@ -267,6 +267,11 @@ enum SelfTest {
                 print("   horns \(kind.title)\(one ? " 1-servo" : ""): \(offsets.count) slots, slot − hinge = " + offsets.map { String(format: "%.2f", $0) }.joined(separator: ", "))
             }
         }
+        for kind in AircraftKind.allCases {
+            let c = kind.defaults
+            let a = Analysis(design: DesignBuilder.build(Project.balanced(c)))
+            print("   spar \(kind.title): \(c.sparSpec.name) (\(c.material.displayName)), length \(Int(c.sparLength)) mm, \(String(format: "%.1f", c.sparLength / 1000 * c.sparSpec.gramsPerMeter)) g, tip deflection \(String(format: "%.1f", (a.structure?.wingDeflectionRatio ?? 0) * 100)) %, battery \(Project.balanced(c).battery.name)")
+        }
         // Tail close-ups from the side with the elevator up: the rudder cut-out must clear it.
         for kind in [AircraftKind.trainer, .jet, .nutBall] {
             let c = Project.balanced(kind.defaults)

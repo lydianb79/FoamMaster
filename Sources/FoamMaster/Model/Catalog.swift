@@ -132,6 +132,22 @@ struct CarbonSpar {
     var widthMM: Double
     var heightMM: Double
     var gramsPerMeter: Double
+    /// Inner diameter of a tube (0 for solid rods and strips).
+    var innerMM: Double = 0
+
+    /// Bending stiffness of a round rod / tube about its own axis (N·mm²).
+    var roundEI: Double { StructureReport.carbonE * .pi / 64 * (pow(widthMM, 4) - pow(innerMM, 4)) }
+    var roundArea: Double { .pi / 4 * (widthMM * widthMM - innerMM * innerMM) }
+
+    /// Wing spar options: carbon rods and tubes, smallest first.
+    static let wingRods: [CarbonSpar] = [
+        CarbonSpar(name: "Carbon rod Ø1.5 mm", widthMM: 1.5, heightMM: 1.5, gramsPerMeter: 2.7),
+        CarbonSpar(name: "Carbon rod Ø2 mm", widthMM: 2, heightMM: 2, gramsPerMeter: 5.0),
+        CarbonSpar(name: "Carbon rod Ø3 mm", widthMM: 3, heightMM: 3, gramsPerMeter: 11.0),
+        CarbonSpar(name: "Carbon tube Ø4 × 3 mm", widthMM: 4, heightMM: 4, gramsPerMeter: 8.0, innerMM: 3),
+        CarbonSpar(name: "Carbon tube Ø5 × 4 mm", widthMM: 5, heightMM: 5, gramsPerMeter: 11.0, innerMM: 4),
+        CarbonSpar(name: "Carbon tube Ø6 × 5 mm", widthMM: 6, heightMM: 6, gramsPerMeter: 13.5, innerMM: 5),
+    ]
 
     static let flat3x05 = CarbonSpar(name: "Carbon flat strip 3 × 0.5 mm", widthMM: 3, heightMM: 0.5, gramsPerMeter: 2.3)
     static let flat5x05 = CarbonSpar(name: "Carbon flat strip 5 × 0.5 mm", widthMM: 5, heightMM: 0.5, gramsPerMeter: 3.8)

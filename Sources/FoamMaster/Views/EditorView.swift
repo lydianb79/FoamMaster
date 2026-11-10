@@ -169,7 +169,7 @@ struct ComponentLegend: View {
             ("Printed parts", Palette.printed, "Motor mount, servo frames, horns, battery tray – exported as STL"),
         ]
         if c.sparEnabled || c.kind.isTwinBoom {
-            list.append(("Carbon", Palette.carbon, [c.sparEnabled ? "\(c.sparSpec.name) spar top + bottom" : nil, c.kind.isTwinBoom ? "\(CarbonSpar.tube4.name) tail booms" : nil].compactMap { $0 }.joined(separator: " · ")))
+            list.append(("Carbon", Palette.carbon, [c.sparEnabled ? "\(c.sparSpec.name) wing spar" : nil, c.kind.isTwinBoom ? "\(CarbonSpar.tube4.name) tail booms" : nil].compactMap { $0 }.joined(separator: " · ")))
         }
         list.append(("Centre of gravity", Palette.cg, "Pink ball = current CG, green line = target, faint lines = allowed range (toggle with CG)"))
         return list

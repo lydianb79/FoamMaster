@@ -27,8 +27,10 @@ enum Feature {
     case hinge(Vec2, Vec2)
     /// Through cut separating a control surface from the fixed part.
     case cut(Vec2, Vec2)
-    /// Carbon spar channel (centre line, width).
+    /// Carbon groove for a boom / tube (centre line, width).
     case spar(Vec2, Vec2, Double)
+    /// Wing spar: carbon rod (diameter) in a groove underneath, bottom flush with the underside.
+    case rod(Vec2, Vec2, Double)
     /// Marker for the recommended centre of gravity.
     case cg(Vec2)
     /// Dashed outline for component placement (battery, receiver …).

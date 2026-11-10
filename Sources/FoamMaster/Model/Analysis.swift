@@ -15,9 +15,18 @@ struct Check: Identifiable {
 }
 
 extension AircraftConfig {
+    /// Wing spar: one carbon rod (or tube) in a groove under the wing along the 30 % chord line. The lightest size
+    /// that keeps the tip deflection at 3 g below 3 % of the half span for a typical weight of this wing
+    /// (15 g/dm², at least 60 g); limited to what fits the foam (Ø ≤ thickness − 1 mm, ≥ 1 mm foam above it).
     var sparSpec: CarbonSpar {
-        if wingspan > 500 || material.family == .epp { return material.thickness >= 6 ? .flat5x05 : .flat3x05 }
-        return .flat3x05
+        let fits = CarbonSpar.wingRods.filter { $0.widthMM <= material.thickness - 1 + 1e-9 }
+        guard !fits.isEmpty else { return CarbonSpar.wingRods[0] }
+        let areaDm2 = (kind.isNutBall ? .pi / 4 * rootChord * wingspan : (rootChord + tipChord) * semiSpan) / 1e4
+        let mass = max(60, areaDm2 * 15)
+        // Lightest rod / tube that is stiff enough (a thin tube often beats a thicker solid rod).
+        let byWeight = fits.sorted { ($0.gramsPerMeter, -$0.roundEI) < ($1.gramsPerMeter, -$1.roundEI) }
+        return byWeight.first { StructureReport.wingDeflectionRatio(self, rod: $0, totalMass: mass) < 0.03 }
+            ?? fits.max { $0.roundEI < $1.roundEI }!
     }
     var sparLength: Double { kind.isNutBall ? wingspan * 0.8 : (wingspan * 0.9) / cos(atan2(sweep, semiSpan)) }
 }

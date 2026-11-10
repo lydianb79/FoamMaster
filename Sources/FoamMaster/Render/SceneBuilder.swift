@@ -106,10 +106,21 @@ enum SceneBuilder {
             }
             // Carbon: wing spars (if enabled), truss strips, boom grooves, X-bracing – drawn as strips on both faces.
             for f in part.features {
+                if case let .rod(p0, p1, dia) = f {
+                    // Rod in its groove, bottom flush with the underside (visible from below).
+                    scene.label = "Carbon rod spar – \(d.config.sparSpec.name), groove underneath"
+                    for inst in part.instances {
+                        let a3 = inst.point(p0, offset: -part.thickness / 2 + dia / 2), b3 = inst.point(p1, offset: -part.thickness / 2 + dia / 2)
+                        let dir = simd_normalize(b3 - a3), up = inst.normal, side = simd_normalize(simd_cross(dir, up))
+                        let rod = Mesh3D.extrude(Poly.circle(.zero, dia / 2, segments: 12), z0: 0, z1: simd_distance(a3, b3))
+                            .transformed { p in a3 + side * p.x + up * p.y + dir * p.z }
+                        scene.addMesh(rod, color: Palette.carbon)
+                    }
+                    continue
+                }
                 guard case let .spar(p0, p1, width) = f else { continue }
-                if part.role == .wing && (width == 3 || width == 5) && !d.config.sparEnabled { continue }
                 let w = max(width, 1.6)
-                scene.label = width == 4 ? "Carbon boom groove – \(CarbonSpar.tube4.name)" : "Carbon spar – \(d.config.sparSpec.name), top and bottom"
+                scene.label = "Carbon boom groove – \(CarbonSpar.tube4.name)"
                 for inst in part.instances {
                     for side in [-1.0, 1.0] {
                         let a = inst.point(p0, offset: side * part.thickness / 2), b = inst.point(p1, offset: side * part.thickness / 2)
