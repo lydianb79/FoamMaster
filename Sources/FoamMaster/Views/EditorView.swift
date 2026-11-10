@@ -20,6 +20,9 @@ struct EditorView: View {
 
 struct ViewportView: View {
     @EnvironmentObject var project: Project
+    /// Object under the mouse in the 3D view and where the mouse is.
+    @State private var hoverName: String?
+    @State private var hoverPoint = CGPoint.zero
 
     var scene: SceneData {
         guard let d = project.design else { return SceneData() }
@@ -32,7 +35,24 @@ struct ViewportView: View {
                 MetalView(scene: scene,
                           sceneID: project.revision &* 31 &+ Int(project.deflection * 100) &+ (project.showCG ? 1 : 0),
                           resetKey: project.config?.kind.rawValue ?? "",
-                          autoRotate: project.autoRotate)
+                          autoRotate: project.autoRotate,
+                          onHover: { name, point in
+                              if hoverName != name { hoverName = name }
+                              hoverPoint = point
+                          })
+            }
+            if let hoverName {
+                // Hover label next to the cursor naming the part under it.
+                Text(hoverName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 9).padding(.vertical, 5)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.white.opacity(0.15)))
+                    .fixedSize()
+                    .alignmentGuide(.leading) { _ in -(hoverPoint.x + 14) }
+                    .alignmentGuide(.top) { _ in -(hoverPoint.y + 16) }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .allowsHitTesting(false)
             }
             VStack(spacing: 0) {
                 topBar
@@ -43,7 +63,6 @@ struct ViewportView: View {
             if let c = project.config {
                 VStack { HStack { Spacer(); ComponentLegend(config: c) }; Spacer() }
                     .padding(.top, 84).padding(.trailing, 20)
-                    .allowsHitTesting(false)
             }
         }
     }
@@ -127,26 +146,59 @@ struct FeasibilityBadge: View {
 }
 
 
-/// Colour key for the 3D view – shows only what the current design contains.
+/// Colour key for the 3D view – shows only what the current design contains. Hovering an entry explains it.
 struct ComponentLegend: View {
     var config: AircraftConfig
+    @State private var hovered: String?
 
     private func swatch(_ c: SIMD4<Float>) -> Color { Color(red: Double(c.x), green: Double(c.y), blue: Double(c.z)) }
 
+    private var items: [(name: String, color: SIMD4<Float>, detail: String)] {
+        let c = config
+        let esc = "\(c.motor.escMass > 4 ? 12 : 6) A brushless ESC\(c.isDual ? " (one per motor)" : ""), taped where the motor leads reach"
+        var list: [(String, SIMD4<Float>, String)] = [
+            ("Foam", c.material.family == .depron ? Palette.depron : Palette.epp, "\(c.material.displayName) – all flat foam parts"),
+            ("Control surface", Palette.control, "Hinged \(c.kind.isTailless ? "elevons" : (c.hasAilerons ? "ailerons, elevator\(c.hasRudder ? " and rudder" : "")" : "elevator\(c.hasRudder ? " and rudder" : "")")) – the Surfaces slider previews the throw"),
+            ("Motor", Palette.motor, "\(c.motorCount) × \(c.motor.name) – stator base, red bell, shaft · \(c.motor.pattern.label) mount"),
+            ("Propeller", Palette.prop, c.motor.propRecommendation(cells: c.battery.cells, pusher: c.isPusher, blades: c.kind.propBlades, pair: c.isDual)),
+            ("Battery", Palette.battery, "\(c.battery.name), \(Int(c.battery.mass)) g on a printed tray – move it to balance"),
+            ("Servo", Palette.servo, "\(c.servo.name) in printed frames"),
+            ("ESC", Palette.esc, esc),
+            ("Receiver", Palette.receiver, "Micro receiver, taped to the fuselage / wing"),
+            ("Servo arm", Palette.linkage, "Servo arms; the white lines are the Ø1 mm carbon pushrods"),
+            ("Printed parts", Palette.printed, "Motor mount, servo frames, horns, battery tray – exported as STL"),
+        ]
+        if c.sparEnabled || c.kind.isTwinBoom {
+            list.append(("Carbon", Palette.carbon, [c.sparEnabled ? "\(c.sparSpec.name) spar top + bottom" : nil, c.kind.isTwinBoom ? "\(CarbonSpar.tube4.name) tail booms" : nil].compactMap { $0 }.joined(separator: " · ")))
+        }
+        list.append(("Centre of gravity", Palette.cg, "Pink ball = current CG, green line = target, faint lines = allowed range (toggle with CG)"))
+        return list
+    }
+
     var body: some View {
-        var items: [(String, SIMD4<Float>)] = [("Motor", Palette.motor), ("Propeller", Palette.prop), ("Battery", Palette.battery), ("Servo", Palette.servo)]
-        items += [("ESC", Palette.esc), ("Receiver", Palette.receiver)]
-        items += [("Printed parts", Palette.printed), ("Control surface", Palette.control), ("Carbon", Palette.carbon)]
+        let list = items
         return VStack(alignment: .leading, spacing: 4) {
-            ForEach(items, id: \.0) { item in
+            ForEach(list, id: \.name) { item in
                 HStack(spacing: 6) {
-                    RoundedRectangle(cornerRadius: 2).fill(swatch(item.1)).frame(width: 10, height: 10)
+                    RoundedRectangle(cornerRadius: 2).fill(swatch(item.color)).frame(width: 10, height: 10)
                         .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(.white.opacity(0.35), lineWidth: 0.5))
-                    Text(item.0).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                    Text(item.name).font(.system(size: 10, weight: hovered == item.name ? .bold : .medium))
+                        .foregroundStyle(hovered == item.name ? .primary : .secondary)
                 }
+                .contentShape(Rectangle())
+                .onHover { h in hovered = h ? item.name : (hovered == item.name ? nil : hovered) }
+                .help(item.detail)
+            }
+            if let h = hovered, let item = list.first(where: { $0.name == h }) {
+                Text(item.detail).font(.system(size: 9.5)).foregroundStyle(.secondary)
+                    .frame(width: 150, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 3)
+            } else {
+                Text("Hover the model to name a part").font(.system(size: 9)).foregroundStyle(.tertiary).padding(.top, 3)
             }
         }
         .padding(10)
+        .frame(width: 170, alignment: .leading)
         .background(.ultraThinMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
     }
 }

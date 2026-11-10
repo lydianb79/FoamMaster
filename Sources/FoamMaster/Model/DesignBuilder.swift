@@ -87,15 +87,15 @@ enum DesignBuilder {
             let e = escSize
             let side = c.kind.isTailless || c.isDual ? 0 : t * Double(c.fuselageType.webLayers) / 2 + e.z / 2   // right web face
             if c.isDual { return [x * 0.8, t / 2 + e.z / 2, c.rootChord * 0.3] }                         // on the wing behind its motor
-            // Tailless: on top of the wing, left of the centre line behind the battery.
-            if c.kind.isTailless { return [-(c.battery.size.w / 2 + e.y / 2 + 6), t / 2 + e.z / 2, c.rootChord * 0.4] }
+            // Tailless: forward on top of the wing, left of the battery – keeps the CG reachable.
+            if c.kind.isTailless { return [-(c.battery.size.w / 2 + e.y / 2 + 6), t / 2 + e.z / 2, c.rootChord * 0.25] }
             if c.kind.isTwinBoom { return [side, t / 2 + e.y / 2 + 2, c.rootChord * 0.55] }              // pod top, right side
             if c.kind.isJet { return [side, t / 2 + e.y / 2 + 2, c.firewallZ - e.x / 2 - 6] }            // canopy, right side
             return [side, t / 2 + e.y / 2 + 2, -c.noseLength * 0.55 + e.x / 2]                          // upper nose, right side
         }
         /// Receiver on the left side of the upper fuselage behind the servos (on top of the wing on tailless).
         var receiverPosition: SIMD3<Double> {
-            if c.kind.isTailless { return [c.battery.size.w / 2 + 11, t / 2 + 1.5, c.rootChord * 0.4] }
+            if c.kind.isTailless { return [c.battery.size.w / 2 + 11, t / 2 + 1.5, c.rootChord * 0.22] }
             if c.kind.isNutBall { return [-(t / 2 + 2), t / 2 + 12, c.rootChord * 0.32] }
             return [-(t / 2 + 2), t / 2 + 12, c.rootChord * (c.kind.isJet ? 0.45 : 0.72)]
         }

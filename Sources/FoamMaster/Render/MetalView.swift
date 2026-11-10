@@ -4,11 +4,35 @@ import MetalKit
 /// MTKView with orbit (drag), zoom (scroll / pinch) and double-click reset.
 final class OrbitMTKView: MTKView {
     weak var renderer: Renderer?
+    /// Called with the name of the object under the mouse (nil when there is none) and the mouse position
+    /// (points, origin top-left).
+    var onHover: ((String?, CGPoint) -> Void)?
+    private var tracking: NSTrackingArea?
+    private var lastPick = CACurrentMediaTime()
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let t = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(t)
+        tracking = t
+    }
+    override func mouseMoved(with e: NSEvent) {
+        guard let onHover, let r = renderer else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastPick > 0.03 else { return }
+        lastPick = now
+        let p = convert(e.locationInWindow, from: nil)
+        let top = CGPoint(x: p.x, y: bounds.height - p.y)
+        onHover(r.pick(top, in: bounds.size), top)
+    }
+    override func mouseExited(with e: NSEvent) { onHover?(nil, .zero) }
 
     override var acceptsFirstResponder: Bool { true }
     override var isOpaque: Bool { false }
 
     override func mouseDragged(with e: NSEvent) {
+        onHover?(nil, .zero)
         guard let r = renderer else { return }
         r.yaw -= Float(e.deltaX) * 0.008
         r.pitch = min(1.5, max(-1.5, r.pitch + Float(e.deltaY) * 0.008))
@@ -41,6 +65,7 @@ struct MetalView: NSViewRepresentable {
     var sceneID: Int
     var resetKey: String
     var autoRotate: Bool = false
+    var onHover: ((String?, CGPoint) -> Void)? = nil
 
     final class Coordinator {
         var renderer: Renderer?
@@ -62,6 +87,7 @@ struct MetalView: NSViewRepresentable {
 
     func updateNSView(_ v: OrbitMTKView, context: Context) {
         let c = context.coordinator
+        v.onHover = onHover
         c.renderer?.autoRotate = autoRotate
         if c.lastID != sceneID {
             let reset = c.lastReset != resetKey

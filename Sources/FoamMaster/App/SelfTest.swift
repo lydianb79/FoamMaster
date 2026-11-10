@@ -133,6 +133,21 @@ enum SelfTest {
                 if let img = r.snapshot(width: 1000, height: 700) { savePNG(img, dir.appendingPathComponent("close_\(name).png")) }
             }
         }
+        // Hover picking: probe a grid of points over the trainer and list what is under them.
+        do {
+            let d = DesignBuilder.build(Project.balanced(AircraftKind.trainer.defaults)); let a = Analysis(design: d)
+            let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+            if let r = Renderer(view: view) {
+                r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: true), resetCamera: true)
+                var seen = Set<String>()
+                for gy in stride(from: 100.0, through: 400, by: 12) {
+                    for gx in stride(from: 100.0, through: 700, by: 12) {
+                        if let n = r.pick(CGPoint(x: gx, y: gy), in: CGSize(width: 800, height: 500)) { seen.insert(n) }
+                    }
+                }
+                print("   hover names (\(seen.count)): " + seen.sorted().joined(separator: " | "))
+            }
+        }
         var feasible = 0
         for _ in 0..<20 {
             let c = AircraftConfig.random(kind: AircraftKind.allCases.randomElement()!)

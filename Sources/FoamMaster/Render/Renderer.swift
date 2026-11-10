@@ -48,6 +48,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var lineBuffer: MTLBuffer?
     private var triCount = 0
     private var lineCount = 0
+    // CPU copy of the triangles for mouse picking.
+    private var pickVerts: [SIMD3<Float>] = []
+    private var pickLabels: [Int32] = []
+    private var labelNames: [String] = []
 
     // Camera
     var yaw: Float = 0.75
@@ -107,6 +111,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         lineCount = s.lines.count
         triBuffer = triCount > 0 ? device.makeBuffer(bytes: s.triangles, length: MemoryLayout<GPUVertex>.stride * triCount) : nil
         lineBuffer = lineCount > 0 ? device.makeBuffer(bytes: s.lines, length: MemoryLayout<GPUVertex>.stride * lineCount) : nil
+        pickVerts = s.triangles.map { SIMD3($0.position.x, $0.position.y, $0.position.z) }
+        pickLabels = s.triLabels
+        labelNames = s.labelNames
         if resetCamera {
             target = s.center
             radius = s.radius
@@ -157,12 +164,51 @@ final class Renderer: NSObject, MTKViewDelegate {
         cmd.commit()
     }
 
-    private func encode(_ enc: MTLRenderCommandEncoder, aspect: Float) {
+    private func camera(aspect: Float) -> (viewProj: simd_float4x4, eye: SIMD3<Float>) {
         let dist = radius * 2.0 * zoom * max(1, 1.25 / max(aspect, 0.1))
         let eye = target + SIMD3<Float>(cos(pitch) * sin(yaw), sin(pitch), cos(pitch) * cos(yaw)) * dist
         let viewM = lookAt(eye: eye, center: target, up: [0, 1, 0])
         let proj = perspective(fovY: 0.7, aspect: aspect, near: max(dist * 0.02, 1), far: dist * 10)
-        var uni = Uniforms(viewProj: proj * viewM, light: SIMD4(0.4, 0.9, 0.6, 0), eye: SIMD4(eye, 1))
+        return (proj * viewM, eye)
+    }
+
+    /// Name of the nearest object under a point of the view (points, origin top-left), or nil.
+    func pick(_ point: CGPoint, in size: CGSize) -> String? {
+        guard size.width > 0, size.height > 0, !pickVerts.isEmpty else { return nil }
+        let inv = camera(aspect: Float(size.width / size.height)).viewProj.inverse
+        let nx = Float(2 * point.x / size.width - 1), ny = Float(1 - 2 * point.y / size.height)
+        func unproject(_ z: Float) -> SIMD3<Float> { let p = inv * SIMD4(nx, ny, z, 1); return SIMD3(p.x, p.y, p.z) / p.w }
+        let o = unproject(0), d = simd_normalize(unproject(1) - o)
+        var best = Float.greatestFiniteMagnitude, hit = -1
+        var i = 0
+        let n = pickVerts.count - 2
+        while i < n {
+            // Möller–Trumbore ray / triangle intersection.
+            let a = pickVerts[i], e1 = pickVerts[i + 1] - a, e2 = pickVerts[i + 2] - a
+            let pv = simd_cross(d, e2)
+            let det = simd_dot(e1, pv)
+            if abs(det) > 1e-9 {
+                let inv = 1 / det, tv = o - a
+                let u = simd_dot(tv, pv) * inv
+                if u >= 0 && u <= 1 {
+                    let q = simd_cross(tv, e1)
+                    let v = simd_dot(d, q) * inv
+                    if v >= 0 && u + v <= 1 {
+                        let t = simd_dot(e2, q) * inv
+                        if t > 0 && t < best { best = t; hit = i / 3 }
+                    }
+                }
+            }
+            i += 3
+        }
+        guard hit >= 0, hit < pickLabels.count else { return nil }
+        let name = labelNames[Int(pickLabels[hit])]
+        return name.isEmpty ? nil : name
+    }
+
+    private func encode(_ enc: MTLRenderCommandEncoder, aspect: Float) {
+        let (viewProj, eye) = camera(aspect: aspect)
+        var uni = Uniforms(viewProj: viewProj, light: SIMD4(0.4, 0.9, 0.6, 0), eye: SIMD4(eye, 1))
 
         enc.setRenderPipelineState(pipeline)
         enc.setCullMode(.none)
