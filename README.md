@@ -13,7 +13,7 @@ open build/FoamMaster.app
 
 Requires Xcode / Swift 5.9+, macOS 14+. `swift run` also works for quick iteration.
 
-The About sheet (ⓘ in the gallery, or FoamMaster ▸ About) shows the channel logo from `Assets/RockFPV_logo.png` when that file exists (copied into the app by `build_app.sh`).
+A credits splash with the Rock FPV logo (`Assets/RockFPV_logo.png`, copied into the app by `build_app.sh`), the YouTube and GitHub links appears at start-up; a click closes it (FoamMaster ▸ About shows it again).
 
 ## Features
 
@@ -27,7 +27,7 @@ The About sheet (ⓘ in the gallery, or FoamMaster ▸ About) shows the channel 
 - **Control layouts** – tailed planes: ailerons + elevator, or ailerons + elevator + rudder (flat wings need ailerons); NutBall: always rudder + elevator.
 - **Component layout** – ESC (green) and receiver (cyan) sit on the visible side where the leads reach. The colour legend in the 3D view lists every colour with an explanation on hover, and hovering the model names the part under the mouse (foam part, control surface, motor, prop, mount with its bolt pattern, servo, ESC, receiver, battery, horn, carbon, CG). All models are for line-of-sight flying (no FPV gear).
 - **Linkages** – servos lie flat in the wing (only their width crosses the foam) and pass through the vertical fuselage halves, always with the shaft sideways; arm, straight pushrod and horn (holes above the hinge line) are placed so elevator and rudder pushrods never cross, and are drawn in 3D.
-- **Propeller** – recommended diameter × pitch and blade count (2-blade where diameter is free, 3-blade where it is limited by a prop slot / cutout or for 3D), drawn as a real twisted prop.
+- **Propeller** – recommended diameter × pitch and blade count (2-blade where diameter is free, 3-blade where it is limited by a prop slot / cutout or for 3D), drawn as a real twisted prop. Props keep 5 mm clearance to all foam (tips and blade faces); the printed firewall always sits against the end of the foam. The Sport Jet uses a 4" 3-blade in a slot from the firewall to behind the spinner (motor inside the slot).
 - **Control layout** – chosen in the setup sheet: rudder + elevator, ailerons + elevator, or all four; ailerons on one central servo (torque rods) or one per side. The app shows how many surfaces and servos result and which servo drives what (joined elevator halves, linked twin rudders).
 - **Metal 3D view** – orbit/pan/zoom, control-surface deflection preview, live CG marker with target range. Printed parts (motor mount, servo frames, battery tray) are drawn from the same meshes as the STL export, the motor as stator, bell and shaft, and ESCs and the receiver are shown in place (outside the foam) with their leads.
 - **Materials** – Depron or EPP in 3 / 5 / 6 / 10 mm, optional carbon spar.

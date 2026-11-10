@@ -8,7 +8,7 @@ extension AircraftConfig {
     /// Depth of the trailing-edge cutout the pusher motor of a flying wing sits in: firewall at the front of
     /// the cutout, motor body behind it, prop spinning inside the cutout.
     var motorNotchDepth: Double { max(26, motorLength + 14) }
-    var motorNotchWidth: Double { motor.propInches * 25.4 + 10 }
+    var motorNotchWidth: Double { propInches * 25.4 + 2 * AircraftConfig.propClearance }
     /// Half width of the trailing-edge cutout: at least the prop + clearance, and it ends at the elevons.
     var motorNotchHalfWidth: Double { max(semiSpan * 0.12, motorNotchWidth / 2) }
     /// Firewall (printed mount plate) position. The clamp always grips the structure ahead of / behind it:
@@ -16,18 +16,44 @@ extension AircraftConfig {
     /// Lateral position of the two motors of a dual-tractor layout: props clear the fuselage/pod and each other.
     /// As far inboard as possible (less roll inertia and less yaw if one motor quits) while the props clear the
     /// fuselage/pod/centre fin by 4 mm.
-    var dualMotorX: Double { motor.propInches * 25.4 / 2 + dualBodyHalfWidth + 4 }
+    var dualMotorX: Double { propRadius + dualBodyHalfWidth + AircraftConfig.propClearance }
     /// Half width of whatever sits between the two props (centre fin / keel, or fuselage plate / pod).
     var dualBodyHalfWidth: Double {
         kind.isTailless ? (taillessFins == .centreFin ? material.thickness / 2 + 2 : 4) : fuselagePlateWidth / 2 + 2
     }
+    /// The printed firewall plate always sits against the end of the foam, never inside it: tractors have the plate
+    /// in front of the nose / leading edge, pushers behind the foam end. `firewallZ` is the plate face the motor
+    /// is screwed to.
     var firewallZ: Double {
-        if isDual { return sweep * dualMotorX / semiSpan - 2 }   // just ahead of the leading edge at the motor station
-        if kind.isTailless { return rootChord - motorNotchDepth + 2 }
-        if kind.isTwinBoom { return rootChord }
-        if kind.isJet { return jetPropZ - 5 - motorLength }
-        return -noseLength
+        let th = firewallThickness
+        if isDual { return sweep * dualMotorX / semiSpan - th }      // plate in front of the leading edge
+        if kind.isTailless { return rootChord - motorNotchDepth + th } // plate against the front of the TE cutout
+        if kind.isTwinBoom { return rootChord + th }                  // plate against the end of the pod
+        if kind.isJet { return jetPropZ - 4 - motorLength }           // prop disc exactly at jetPropZ
+        return -noseLength - th
     }
+    var firewallThickness: Double { PrintedParts.firewallThickness(motor) }
+
+    // MARK: Propeller
+
+    /// Prop diameter used (inches). The jet's prop spins in a slot through the wing: it is kept to 4" so the slot
+    /// stays short, the wing root keeps its strength and the prop clears the ground on belly landings.
+    var propInches: Double { kind.isJet ? min(motor.propInches, 4) : motor.propInches }
+    var propRadius: Double { propInches * 25.4 / 2 }
+    var propRecommendation: String {
+        motor.propRecommendation(cells: battery.cells, pusher: isPusher, blades: kind.propBlades, pair: isDual, diameter: propInches)
+    }
+    /// Gap kept between the prop (tips and blade faces) and any foam or structure.
+    static let propClearance = 5.0
+    /// Prop hub radius (matches the 3D propeller).
+    var propHub: Double { motor.bellDiameter / 2 * 0.45 }
+    /// Axial extent of the prop from its disc plane: towards the motor (blade pitch) and outward (hub + spinner).
+    var propDepthIn: Double { 0.06 * propRadius + 0.5 }
+    var propDepthOut: Double { max(0.06 * propRadius, 2.6 * propHub) }
+    /// Jet: prop slot through the wing from the firewall plate to behind the spinner, with clearance all round.
+    var jetSlotFront: Double { firewallZ - firewallThickness }
+    var jetSlotRear: Double { jetPropZ + propDepthOut + AircraftConfig.propClearance }
+    var jetSlotHalfWidth: Double { propRadius + AircraftConfig.propClearance + 1 }
     /// Centre of the motor body.
     var motorZ: Double { isPusher ? firewallZ + motorLength / 2 : firewallZ - motorLength / 2 }
     /// z of the propeller disc (on the far side of the motor from the firewall).
@@ -95,7 +121,7 @@ enum DesignBuilder {
             if c.kind.isTailless { return [-(c.battery.size.w / 2 + e.y / 2 + 6), t / 2 + e.z / 2, c.rootChord * 0.25] }
             if c.kind.isTwinBoom { return [side, t / 2 + e.y / 2 + 2, c.rootChord * 0.55] }              // pod top, right side
             // Jet: on the canopy side ahead of the motor-mount clamp (the jaws reach forward from the firewall).
-            if c.kind.isJet { return [side, t / 2 + e.y / 2 + 2, c.firewallZ - PrintedParts.mountJaw - PrintedParts.mountPlate - e.x / 2 - 4] }
+            if c.kind.isJet { return [side, t / 2 + e.y / 2 + 2, c.jetSlotFront - PrintedParts.mountJaw - e.x / 2 - 4] }
             return [side, t / 2 + e.y / 2 + 2, -c.noseLength * 0.55 + e.x / 2]                          // upper nose, right side
         }
         /// Receiver on the left side of the upper fuselage behind the servos (on top of the wing on tailless).
@@ -105,7 +131,7 @@ enum DesignBuilder {
             return [-(t / 2 + 2), t / 2 + 12, c.rootChord * (c.kind.isJet ? 0.45 : 0.72)]
         }
         var s: Double { c.semiSpan }
-        var propRadius: Double { c.motor.propInches * 25.4 / 2 }
+        var propRadius: Double { c.propRadius }
 
         var wing: TaperedPanel {
             TaperedPanel(rootChord: c.rootChord, tipChord: c.tipChord, sweep: c.sweep, semiSpan: s)
@@ -306,7 +332,7 @@ enum DesignBuilder {
 
             // Centre keel under the wing (reinforcement strip, stays within the chord) – carries the motor mount clamp.
             let k0 = 10.0
-            let k1 = single ? w.te(0) - nd + 2 : w.te(0) - 12
+            let k1 = single ? w.te(0) - nd : w.te(0) - 12
             let hk = max(12, min(20, c.rootChord * 0.08))
             if k1 - k0 > 40 {
                 var keel = [Vec2(k0, 0), Vec2(k0 + hk, -hk), Vec2(k1, -hk), Vec2(k1, 0)]
@@ -537,8 +563,8 @@ enum DesignBuilder {
             let W = c.fuselagePlateWidth, hw = W / 2, wb = c.plateTailWidth
             let w = wing
             let zp = c.jetPropZ
-            let slotHalf = propRadius + 4
-            let gap = 8.0                                   // fuselage halves stop this far from the prop plane
+            let slotHalf = c.jetSlotHalfWidth
+            let gap = c.jetSlotRear - zp                    // rear fuselage halves start behind the slot (prop + spinner + clearance)
             let layers = Double(c.fuselageType.webLayers), tw = t * layers
             let webX: [Double] = layers > 1 ? [-t / 2, t / 2] : [0]
             let layerNote = layers > 1 ? " · 2 layers laminated" : ""
@@ -555,9 +581,10 @@ enum DesignBuilder {
                     wingMain = Poly.insertTab(wingMain, at: Vec2(u, v), width: 10, height: -6)
                 }
             }
-            var wingHoles: [Hole] = [slot(minU: zp - 7, maxU: zp + 7, minV: -slotHalf, maxV: slotHalf)]
+            // The slot runs from the firewall plate (motor body inside it) to behind the spinner.
+            var wingHoles: [Hole] = [slot(minU: c.jetSlotFront, maxU: c.jetSlotRear, minV: -slotHalf, maxV: slotHalf)]
             wingHoles[0].note = "prop slot"
-            if w.le(slotHalf) > zp - 14 || w.te(slotHalf) < zp + 14 {
+            if w.le(slotHalf) > c.jetSlotFront - 10 || w.te(slotHalf) < c.jetSlotRear + 10 {
                 issues.append("The prop slot (\(Int(slotHalf * 2)) mm) does not fit in the wing root – increase root chord, reduce sweep or use a smaller prop.")
             }
             if c.hasAilerons {
@@ -607,7 +634,7 @@ enum DesignBuilder {
             let hCanopy = fh * 0.5 - t / 2, hMid = fh * 0.32, hBoom = c.boomTopHeight
             let finTop = hBoom + c.vStabHeight
             let finLE = uH - 1.3 * vsc
-            let fw = c.firewallZ
+            let fw = c.jetSlotFront                          // front halves end at the firewall plate
             var upFront = [Vec2(uN + 12, 0), Vec2(fw, 0), Vec2(fw, hMid), Vec2(c.rootChord * 0.2, hCanopy),
                            Vec2(-0.3 * c.noseLength, hCanopy * 0.85), Vec2(uN + 0.45 * c.noseLength, hCanopy * 0.4), Vec2(uN + 12, 3)]
             let rgJ = c.hasRudder ? TaperedPanel.endGap : 0
@@ -929,7 +956,7 @@ enum DesignBuilder {
             for (i, x) in c.motorXs.enumerated() {
                 let tag = c.isDual ? (i == 0 ? " (left)" : " (right)") : ""
                 components.append(MassItem(name: c.motor.name + tag, mass: c.motor.mass, position: [x, 0, motorZ], category: "Power"))
-                components.append(MassItem(name: "Propeller\(tag)", mass: c.motor.propInches * 0.35, position: [x, 0, c.propPlaneZ], category: "Power"))
+                components.append(MassItem(name: "Propeller\(tag)", mass: c.propInches * 0.35, position: [x, 0, c.propPlaneZ], category: "Power"))
                 components.append(MassItem(name: "Motor mount (printed)\(tag)", mass: 1.5 + c.motor.mass * 0.12, position: [x, 0, c.firewallZ], category: "Printed"))
                 components.append(MassItem(name: "ESC\(tag)", mass: c.motor.escMass, position: escPosition(motorX: x), category: "Power"))
             }

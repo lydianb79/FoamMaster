@@ -139,7 +139,7 @@ struct ParameterContent: View {
                         }.padding(.leading, 62)
                         HStack(spacing: 6) {
                             Image(systemName: "fanblades.fill").font(.system(size: 10)).foregroundStyle(Theme.accent)
-                            Text("Prop \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.isPusher, blades: c.kind.propBlades, pair: c.isDual))")
+                            Text("Prop \(c.propRecommendation)")
                                 .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
                         }.padding(.leading, 62)
                         Text(c.kind.propBladeReason).font(.system(size: 9.5)).foregroundStyle(.tertiary).padding(.leading, 78)

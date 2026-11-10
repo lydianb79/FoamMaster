@@ -127,7 +127,8 @@ struct Analysis {
         wingLoading = totalMass / (wingArea * 1e-4)
         let clMax = c.kind.isTailless ? 0.65 : (c.kind.isNutBall ? 0.95 : 0.8)
         stallSpeed = sqrt(2 * totalMass / 1000 * 9.81 / (1.225 * sM2 * clMax)) * 3.6
-        thrust = c.motor.thrust(cells: c.battery.cells) * Double(c.motorCount)
+        // A prop smaller than the motor's standard size (jet) gives proportionally less static thrust.
+        thrust = c.motor.thrust(cells: c.battery.cells) * Double(c.motorCount) * c.propInches / c.motor.propInches
         thrustToWeight = thrust / max(totalMass, 1)
         let wPerKg: Double = [.glider: 70, .trainer: 100, .twinBoom: 110, .jet: 150, .flyingWing: 120, .delta: 140, .aerobat: 170, .nutBall: 110][c.kind]!
         let current = wPerKg * totalMass / 1000 / c.battery.voltage
@@ -273,10 +274,10 @@ struct Analysis {
         }
 
         // Propeller clearance
-        let r = c.motor.propInches * 25.4 / 2
+        let r = c.propRadius
         if c.isDual {
             let clear = c.dualMotorX - r - c.dualBodyHalfWidth
-            if clear < 3 { add(.error, "Geometry", "Props hit the fuselage", "Dual motors at ±\(f0(c.dualMotorX)) mm leave \(f1(clear)) mm prop clearance – use smaller props.") }
+            if clear < AircraftConfig.propClearance - 0.5 { add(.error, "Geometry", "Props hit the fuselage", "Dual motors at ±\(f0(c.dualMotorX)) mm leave \(f1(clear)) mm prop clearance – use smaller props.") }
             else { add(.ok, "Geometry", "Dual tractor layout", "Motors at ±\(f0(c.dualMotorX)) mm (\(f0(c.dualMotorX * 2)) mm apart) – as far inboard as the \(f1(clear)) mm prop clearance allows, counter-rotating.") }
         } else if c.kind.isTailless {
             let clear = c.motorNotchHalfWidth - r
@@ -286,8 +287,8 @@ struct Analysis {
             let w = TaperedPanel(rootChord: c.rootChord, tipChord: c.tipChord, sweep: c.sweep, semiSpan: c.semiSpan)
             let propPlane = c.propPlaneZ
             let maxTE = stride(from: 0.0, through: min(r + 3, c.semiSpan), by: 2).map { w.te($0) }.max() ?? 0
-            if maxTE > propPlane - 3 {
-                add(.error, "Geometry", "Propeller hits the trailing edge", "Swept TE reaches \(f0(maxTE)) mm within the \(f1(c.motor.propInches))\" prop disc (plane at \(f0(propPlane)) mm). Reduce sweep or increase root chord.")
+            if maxTE > propPlane - c.propDepthIn - AircraftConfig.propClearance {
+                add(.error, "Geometry", "Propeller hits the trailing edge", "Swept TE reaches \(f0(maxTE)) mm within the \(f1(c.propInches))\" prop disc (plane at \(f0(propPlane)) mm). Reduce sweep or increase root chord.")
             } else { add(.ok, "Geometry", "Propeller clearance OK", "\(f1(propPlane - maxTE)) mm to the trailing edge.") }
             if c.kind.isTailless && c.battery.size.l > c.rootChord * 0.7 { add(.warning, "Geometry", "Battery long for the centre section", "Battery \(f0(c.battery.size.l)) mm vs root chord \(f0(c.rootChord)) mm.") }
         } else if r > c.noseLength * 1.6 {

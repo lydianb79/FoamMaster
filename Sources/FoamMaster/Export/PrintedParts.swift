@@ -60,6 +60,8 @@ enum PrintedParts {
         max(m.boltCircle + m.screwHole * 2 + 6, m.bellDiameter * 0.8, t + 14)
     }
     static let mountJaw = 24.0
+    /// Firewall thickness: thick enough for the counterbored screw heads plus 1.4 mm under them.
+    static func firewallThickness(_ m: MotorClass) -> Double { max(mountPlate, m.pattern.headHeight + 1.4) }
 
     /// Motor mount matching the aircraft: wing-only clamp for dual tractors, + channel clamp otherwise.
     /// Motor mount matching the structure it grips:
@@ -123,7 +125,7 @@ enum PrintedParts {
         let wingClamp = webTop == nil && webBottom == nil
         let pat = m.pattern
         let headD = pat.headDiameter + 0.4
-        let th = max(mountPlate, pat.headHeight + 1.4), len = mountJaw
+        let th = firewallThickness(m), len = mountJaw
         let plate = motorMountPlate(m, foam: t)
         let e = plate / 2
         let screws = pat.positions

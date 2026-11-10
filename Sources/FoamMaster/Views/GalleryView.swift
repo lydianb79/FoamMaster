@@ -22,9 +22,13 @@ struct RootView: View {
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
+            if project.showAbout {
+                AboutView { withAnimation(.easeOut(duration: 0.25)) { project.showAbout = false } }
+                    .transition(.opacity)
+                    .zIndex(10)
+            }
         }
         .ignoresSafeArea(.container, edges: .top)
-        .sheet(isPresented: $project.showAbout) { AboutView() }
         .animation(.easeInOut(duration: 0.3), value: project.config == nil)
         .animation(.spring(duration: 0.35), value: project.statusMessage)
     }
@@ -100,7 +104,6 @@ struct GalleryContent: View {
                 Spacer(minLength: 12)
                 Text("Choose a base model to start customising")
                     .font(.system(size: 12, weight: .semibold)).foregroundStyle(.tertiary).lineLimit(1)
-                InfoButton().alignmentGuide(.firstTextBaseline) { d in d[VerticalAlignment.center] + 4 }
             }
             .frame(height: Self.headerHeight)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: Self.gridSpacing)], spacing: Self.gridSpacing) {

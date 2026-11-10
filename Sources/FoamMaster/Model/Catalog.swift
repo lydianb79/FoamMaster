@@ -67,7 +67,8 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
         }
     }
     /// Recommended propeller (diameter × pitch in inches) – pitch drops with cell count to keep the current in range.
-    func propRecommendation(cells: Int, pusher: Bool, blades: Int = 2, pair: Bool = false) -> String {
+    func propRecommendation(cells: Int, pusher: Bool, blades: Int = 2, pair: Bool = false, diameter: Double? = nil) -> String {
+        let propInches = diameter ?? self.propInches
         // A 3-blade absorbs more power at the same diameter – drop the pitch a little to keep the current in range.
         let ratio = (cells <= 1 ? 0.6 : (cells == 2 ? 0.55 : 0.45)) - (blades >= 3 ? 0.05 : 0)
         let pitch = (propInches * ratio * 2).rounded() / 2

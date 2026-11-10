@@ -25,7 +25,7 @@ struct FoamMasterApp: App {
         .defaultSize(width: 1480, height: 920)
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About FoamMaster") { project.showAbout = true }
+                Button("About FoamMaster") { withAnimation { project.showAbout = true } }
             }
             CommandGroup(replacing: .newItem) {
                 Button("New Model…") { project.config = nil }.keyboardShortcut("n")

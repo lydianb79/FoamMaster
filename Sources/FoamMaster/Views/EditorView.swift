@@ -160,7 +160,7 @@ struct ComponentLegend: View {
             ("Foam", c.material.family == .depron ? Palette.depron : Palette.epp, "\(c.material.displayName) – all flat foam parts"),
             ("Control surface", Palette.control, "Hinged \(c.kind.isTailless ? "elevons" : (c.hasAilerons ? "ailerons, elevator\(c.hasRudder ? " and rudder" : "")" : "elevator\(c.hasRudder ? " and rudder" : "")")) – the Surfaces slider previews the throw"),
             ("Motor", Palette.motor, "\(c.motorCount) × \(c.motor.name) – stator base, red bell, shaft · \(c.motor.pattern.label) mount"),
-            ("Propeller", Palette.prop, c.motor.propRecommendation(cells: c.battery.cells, pusher: c.isPusher, blades: c.kind.propBlades, pair: c.isDual)),
+            ("Propeller", Palette.prop, c.propRecommendation),
             ("Battery", Palette.battery, "\(c.battery.name), \(Int(c.battery.mass)) g on a printed tray – move it to balance"),
             ("Servo", Palette.servo, "\(c.servo.name) in printed frames"),
             ("ESC", Palette.esc, esc),

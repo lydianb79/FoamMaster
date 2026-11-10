@@ -23,7 +23,8 @@ final class Project: ObservableObject {
     @Published var deflection: Double = 0   // control surface preview, -1…1
 
     @Published var statusMessage: String?
-    @Published var showAbout = false
+    /// Credits splash – shown at start-up, closed with a click.
+    @Published var showAbout = true
     /// Result of the last balance fix, shown in the CG panel until the design changes.
     @Published var balanceNote: String?
 

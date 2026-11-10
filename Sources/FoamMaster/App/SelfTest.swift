@@ -120,7 +120,7 @@ enum SelfTest {
             }
         }
         // Close-ups of the motor area for visual checks.
-        for (name, kind, dual) in [("trainer", AircraftKind.trainer, false), ("wing", .flyingWing, false), ("dualtrainer", .trainer, true), ("twin", .twinBoom, false), ("nutball", .nutBall, false)] {
+        for (name, kind, dual) in [("trainer", AircraftKind.trainer, false), ("wing", .flyingWing, false), ("dualtrainer", .trainer, true), ("twin", .twinBoom, false), ("nutball", .nutBall, false), ("jet", .jet, false), ("delta", .delta, false)] {
             var c = kind.defaults; if dual { c.motorLayout = .dualTractor }
             c = Project.balanced(c)
             let d = DesignBuilder.build(c); let a = Analysis(design: d)
@@ -131,6 +131,14 @@ enum SelfTest {
                 r.target = SIMD3<Float>(x, 0, Float(c.firewallZ))
                 r.zoom = 0.22; r.yaw = 0.9; r.pitch = 0.35
                 if let img = r.snapshot(width: 1000, height: 700) { savePNG(img, dir.appendingPathComponent("close_\(name).png")) }
+            }
+        }
+        // Propeller size / type / clearance per type.
+        for kind in AircraftKind.allCases {
+            for dual in [false, true] where !dual || kind.allowsDualMotors {
+                var c = kind.defaults; if dual { c.motorLayout = .dualTractor }
+                let a = Analysis(design: DesignBuilder.build(Project.balanced(c)))
+                print("   prop \(kind.title)\(dual ? " dual" : ""): \(c.propRecommendation), firewall \(String(format: "%.1f", c.firewallZ)), plane \(String(format: "%.1f", c.propPlaneZ))\(kind.isJet ? String(format: ", slot %.0f…%.0f ±%.0f", c.jetSlotFront, c.jetSlotRear, c.jetSlotHalfWidth) : ""), errors \(a.checks.filter { $0.severity == .error }.map(\.title))")
             }
         }
         // Wider fuselage cross and 800 mm span.

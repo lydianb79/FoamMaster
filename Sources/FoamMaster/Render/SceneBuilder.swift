@@ -158,14 +158,14 @@ enum SceneBuilder {
                 let shaftStart = fw + out * L * 0.94, shaftEnd = c.propPlaneZ
                 scene.addMesh(cylinder(center: [p.x, 0, (shaftStart + shaftEnd) / 2], radius: 1.2, length: abs(shaftEnd - shaftStart) + 1),
                               color: SIMD4(0.75, 0.75, 0.78, 1))
-                let pr = c.motor.propInches * 25.4 / 2
+                let pr = c.propRadius
                 let z = c.propPlaneZ
                 for k in 0..<48 {
                     let a0 = Double(k) / 48 * 2 * .pi, a1 = Double(k + 1) / 48 * 2 * .pi
                     scene.addLine([p.x + cos(a0) * pr, sin(a0) * pr, z], [p.x + cos(a1) * pr, sin(a1) * pr, z], color: SIMD4(1, 1, 1, 0.25))
                 }
                 // Counter-rotating pair: the right-hand prop is the mirror image of the left one.
-                scene.label = "Propeller – \(c.motor.propRecommendation(cells: c.battery.cells, pusher: c.isPusher, blades: c.kind.propBlades, pair: c.isDual))"
+                scene.label = "Propeller – \(c.propRecommendation)"
                 scene.addMesh(propeller(radius: pr, blades: c.kind.propBlades, z: z, hub: r * 0.45, outward: out, mirrored: c.isPusher != right)
                                 .translated([p.x, 0, 0]), color: Palette.prop)
             case "Power" where item.name.hasPrefix("ESC"):
