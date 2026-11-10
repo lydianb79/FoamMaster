@@ -216,6 +216,30 @@ enum SelfTest {
                 }
             }
         }
+        // Printed nose cap and control horn on their own, and the receiver channel plans.
+        do {
+            var c = AircraftKind.trainer.defaults; c.motorLayout = .dualTractor
+            for (name, mesh, center, rad) in [("nosecap", PrintedParts.noseProtector(for: c), SIMD3<Float>(0, 0, 4), Float(28)),
+                                              ("horn", PrintedParts.controlHorn(foam: 6).transformed { SIMD3<Double>($0.x, $0.z, $0.y) }, SIMD3<Float>(0, 3, 0), Float(14))] {
+                var sc = SceneData(); sc.addMesh(mesh, color: SIMD4(0.55, 0.6, 0.68, 1)); sc.center = center; sc.radius = rad
+                let view = MTKView(frame: CGRect(x: 0, y: 0, width: 600, height: 600), device: MTLCreateSystemDefaultDevice())
+                if let r = Renderer(view: view) {
+                    r.setScene(sc, resetCamera: true); r.yaw = name == "horn" ? 1.2 : 2.5; r.pitch = 0.4
+                    if let img = r.snapshot(width: 700, height: 600) { savePNG(img, dir.appendingPathComponent("part_\(name).png")) }
+                }
+                try? mesh.stlData(name: name).write(to: dir.appendingPathComponent("part_\(name).stl"))
+            }
+            for t in [3.0, 5, 6, 10] {
+                var cc = AircraftKind.trainer.defaults; cc.motorLayout = .dualTractor
+                cc.material = FoamMaterial.allCases.first { $0.family == .depron && $0.thickness == t }!
+                try? PrintedParts.noseProtector(for: cc).stlData(name: "cap").write(to: dir.appendingPathComponent("part_nosecap_\(Int(t))mm.stl"))
+                try? PrintedParts.controlHorn(foam: t).stlData(name: "horn").write(to: dir.appendingPathComponent("part_horn_\(Int(t))mm.stl"))
+            }
+            for kind in AircraftKind.allCases {
+                let d = DesignBuilder.build(kind.defaults)
+                print("   channels \(kind.title): " + d.channelPlan.map { "CH\($0.channel) \($0.function)" }.joined(separator: ", "))
+            }
+        }
         // Tail close-ups from the side with the elevator up: the rudder cut-out must clear it.
         for kind in [AircraftKind.trainer, .jet, .nutBall] {
             let c = Project.balanced(kind.defaults)

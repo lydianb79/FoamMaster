@@ -368,7 +368,7 @@ struct ControlsCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 SectionHeader(title: "Controls & servos", symbol: "gearshape.2")
-                Text("\(design.controls.surfaceCount) surfaces · \(groups.count) servos").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.accent)
+                Text("\(design.controls.surfaceCount) surfaces · \(groups.count) servos · \(design.channels) ch").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.accent)
             }
             ForEach(groups.keys.sorted(), id: \.self) { servo in
                 HStack(alignment: .top) {
@@ -381,6 +381,24 @@ struct ControlsCard: View {
                 }
             }
         }
+            HStack(alignment: .top) {
+                Image(systemName: "bolt.fill").font(.system(size: 10)).foregroundStyle(Theme.accent).padding(.top, 2)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Throttle: \(design.config.isDual ? "2 × ESC" : "ESC")").font(.system(size: 11.5, weight: .semibold))
+                    Text("\(design.config.motorCount) × \(design.config.motor.name)\(design.config.isDual ? " – both ESCs on one channel via a Y-lead" : "") · one receiver channel")
+                        .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                }
+            }
+            Divider().opacity(0.3)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("RECEIVER – \(design.channels) CHANNELS").font(.system(size: 9, weight: .bold)).kerning(0.6).foregroundStyle(.tertiary)
+                ForEach(design.channelPlan, id: \.channel) { ch in
+                    HStack(spacing: 8) {
+                        Text("CH\(ch.channel)").font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.accent).frame(width: 34, alignment: .leading)
+                        Text(ch.function).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    }
+                }
+            }
         .glass()
     }
 

@@ -187,7 +187,7 @@ enum SceneBuilder {
                 scene.addMesh(placed.translated([p.x, 0, c.firewallZ]), color: Palette.printed)
             case "Printed" where item.name.hasPrefix("Nose protector"):
                 let z0 = c.kind.isTailless ? 0 : -c.noseLength
-                scene.label = c.kind.isTailless ? "Nose protector (printed) – apex guard" : "Nose cone (printed) – slips over the + nose"
+                scene.label = c.kind.isTailless ? "Nose protector (printed) – apex guard" : "Nose protector (printed) – + channel cap"
                 scene.addMesh(PrintedParts.noseProtector(for: c).translated([0, 0, z0]), color: Palette.printed)
             case "Printed":
                 continue   // horns are drawn with their linkages
@@ -235,13 +235,14 @@ enum SceneBuilder {
                 scene.addMesh(.box(min: simd_min(shaft, arm) - [0.8, 0, 2], max: simd_max(shaft, arm) + [0.8, 0, 2]), color: Palette.linkage)
             }
             scene.addLine(arm, ctrl.hornPosition, color: SIMD4(0.9, 0.9, 0.95, 0.9))
-            let a = ctrl.hornAxis
-            let base = ctrl.hornPosition - a * 9
-            let lo = simd_min(base, ctrl.hornPosition), hi = simd_max(base, ctrl.hornPosition)
-            // Horn plate lies in the plane of the pushrod motion (contains the horn axis and the flight direction).
-            let thin: SIMD3<Double> = abs(a.y) > 0.5 ? [0.7, 0, 0] : [0, 0.7, 0]
+            // The printed horn (same mesh as the STL): plate in the plane of the pushrod motion – horn axis and flight
+            // direction –, tab in the slot 6 mm behind the hinge, pushrod hole above the hinge line.
+            let a = simd_normalize(ctrl.hornAxis)
+            let ex = SIMD3<Double>(0, 0, 1), ey = simd_cross(a, ex)
+            let origin = ctrl.hornPosition - a * 9 + [0, 0, 4]
+            let horn = PrintedParts.controlHorn(foam: t).transformed { p in origin + ex * p.x + ey * p.y + a * p.z }
             scene.label = "Control horn (printed) – \(ctrl.name)"
-            scene.addMesh(.box(min: lo - thin - [0, 0, 5], max: hi + thin + [0, 0, 5]), color: Palette.printed)
+            scene.addMesh(horn, color: Palette.printed)
         }
 
         scene.fitBounds()

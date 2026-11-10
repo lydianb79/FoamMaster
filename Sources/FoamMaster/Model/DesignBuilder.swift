@@ -1139,4 +1139,24 @@ enum DesignBuilder {
 extension Design {
     /// Receiver channels needed: one per servo plus the throttle (the ESCs of a dual layout share it via a Y-lead).
     var channels: Int { Set(controls.map(\.servoID)).count + 1 }
+
+    /// Receiver channel assignment in the usual AETR order: aileron (elevon / rudder on 2-channel planes),
+    /// elevator, throttle, rudder, then any extra servo (second aileron).
+    var channelPlan: [(channel: Int, function: String)] {
+        var servos = controls.map(\.servoID).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        func take(_ pred: (String) -> Bool) -> String? {
+            guard let i = servos.firstIndex(where: pred) else { return nil }
+            return servos.remove(at: i)
+        }
+        let throttle = config.isDual ? "Throttle (both ESCs, Y-lead)" : "Throttle (ESC)"
+        var plan: [String] = []
+        let aileron = take { $0.contains("aileron") || $0.contains("Ailerons") || $0.contains("elevon") }
+        let elevator = take { $0.hasPrefix("Elevator") || $0.contains("elevon") }
+        if let aileron { plan.append(aileron) } else if let r = take({ $0.hasPrefix("Rudder") }) { plan.append(r) }
+        if let elevator { plan.append(elevator) }
+        plan.append(throttle)
+        if let r = take({ $0.hasPrefix("Rudder") }) { plan.append(r) }
+        plan += servos
+        return plan.enumerated().map { ($0.offset + 1, $0.element) }
+    }
 }

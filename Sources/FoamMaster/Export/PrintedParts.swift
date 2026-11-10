@@ -30,14 +30,14 @@ enum PrintedParts {
                                    note: "\(c.motor.pattern.label) motor pattern, + clamp for \(Int(t)) mm foam, M2 clamp bolt – " + (c.kind.isTailless ? "front of the trailing-edge cutout" : (c.kind.isTwinBoom ? "pod tail" : (c.kind.isJet ? "front of the prop slot" : (c.kind.isNutBall ? "nose of the disc" : "fuselage nose"))))))
         }
         if c.isDual {
-            out.append(PrintedPart(name: "Nose protector", fileName: "nose_protector_\(c.kind.isTailless ? "apex" : "cross_\(Int(t))mm")", quantity: 1,
+            out.append(PrintedPart(name: "Nose protector", fileName: "nose_protector_\(c.kind.isTailless ? "apex" : "cross")_\(Int(t))mm", quantity: 1,
                                    mesh: noseProtector(for: c),
-                                   note: c.kind.isTailless ? "glue-on apex guard following the swept leading edge – protects the nose on landings"
-                                                           : "rounded nose cone, + socket for \(Int(t)) mm foam, glue on – protects the nose on landings (no motor in the nose)"))
+                                   note: c.kind.isTailless ? "glue-on apex guard following the swept leading edge for \(Int(t)) mm foam – protects the nose on landings"
+                                                           : "+ channel cap for \(Int(t)) mm foam (plate and both fuselage halves), glue on – protects the nose on landings"))
         }
         if !d.controls.isEmpty {
             out.append(PrintedPart(name: "Control horn", fileName: "control_horn_\(Int(t))mm", quantity: d.controls.count,
-                                   mesh: controlHorn(foam: t), note: "tab fits a 10 × 1.6 mm slot"))
+                                   mesh: controlHorn(foam: t), note: "tab for the 10 × 1.6 mm slot, \(String(format: "%.1f", t - 0.5)) mm deep for \(Int(t)) mm foam; pushrod hole above the hinge line"))
         }
 
         // Servo frames grouped by cutout size.
@@ -214,8 +214,8 @@ enum PrintedParts {
         return mesh
     }
 
-    /// Nose protector for dual-motor layouts (nothing sits on the nose any more): tailed planes get a rounded nose
-    /// cone with a + socket that slips over the plate and both webs; tailless wings a glue-on apex guard that follows
+    /// Nose protector for dual-motor layouts (nothing sits on the nose any more): tailed planes get a + channel cap
+    /// (flat + front plate, U-channels for the plate and both webs, sized to the foam thickness); tailless wings a glue-on apex guard that follows
     /// the swept leading edge (lip in front, jaw under the wing – the top stays free for the battery).
     /// Mesh frame: z = 0 at the foam nose / apex, +z aft, y up.
     static func noseProtector(for c: AircraftConfig) -> Mesh3D {
@@ -231,52 +231,50 @@ enum PrintedParts {
             mesh.append(prism(jaw, axis: 1, from: -gapY - 1.6, to: -gapY))
             return mesh
         }
-        // Rounded nose cone: a socket with a + shaped cavity slides 10 mm over the nose (plate + both webs), a 2 mm
-        // front wall takes the impact and a bullet-shaped dome in front of it softens it.
+        // + channel cap: a flat + shaped front plate (1.6 mm) with walls along both sides of every arm, forming four
+        // U-channels that take the plate and the two fuselage halves (channel width = foam thickness + 0.2 mm).
         let tw = t * Double(c.fuselageType.webLayers)
-        let S = 10.0, wall = 1.6
-        let f = c.noseFace(at: S)
-        let hx = f.halfWidth + 0.15, hy = t / 2 + 0.1, vx = tw / 2 + 0.1
-        let yt = t / 2 + f.top + 0.1, yb = -(t / 2 + f.bottom + 0.1)
-        let plus = [Vec2(hx, -hy), Vec2(hx, hy), Vec2(vx, hy), Vec2(vx, yt), Vec2(-vx, yt), Vec2(-vx, hy),
-                    Vec2(-hx, hy), Vec2(-hx, -hy), Vec2(-vx, -hy), Vec2(-vx, yb), Vec2(vx, yb), Vec2(vx, -hy)]
-        let ax = hx + wall + 1, ay = (yt - yb) / 2 + wall, y0 = (yt + yb) / 2
-        // Superellipse outline (n = 4): rounded-square nose section.
-        let n = 56
-        let ring: [Vec2] = (0..<n).map { k in
-            let a = Double(k) / Double(n) * 2 * .pi
-            let cx = cos(a), sy = sin(a)
-            return Vec2(ax * (cx >= 0 ? 1 : -1) * pow(abs(cx), 0.5), y0 + ay * (sy >= 0 ? 1 : -1) * pow(abs(sy), 0.5))
+        let S = 9.0, wall = 1.4, front = 1.6
+        let f = c.noseFace(at: 0)
+        let hy = t / 2 + 0.1, vx = tw / 2 + 0.1            // channel half widths
+        let ex = f.halfWidth + 0.5                           // arm ends (a little past the foam)
+        let et = t / 2 + f.top + 0.5, eb = -(t / 2 + f.bottom + 0.5)
+        let ox = vx + wall, oy = hy + wall                  // outer half widths of the arms
+        // Front plate as two overlapping bars (horizontal and vertical arm of the +).
+        var mesh = Mesh3D.box(min: [-ex, -oy, -front], max: [ex, oy, 0])
+        mesh.append(.box(min: [-ox, eb, -front], max: [ox, et, 0]))
+        // Walls of the horizontal arms (above and below the plate) and of the vertical arms (both sides of the webs).
+        for sx in [-1.0, 1.0] {
+            let x0 = sx > 0 ? vx : -ex, x1 = sx > 0 ? ex : -vx
+            mesh.append(.box(min: [x0, hy, 0], max: [x1, oy, S]))
+            mesh.append(.box(min: [x0, -oy, 0], max: [x1, -hy, S]))
         }
-        var mesh = Mesh3D.extrude(ring, holes: [plus], z0: 0, z1: S)       // socket
-        mesh.append(.extrude(ring, z0: -2, z1: 0))                         // front wall
-        // Dome: rings shrinking towards a rounded tip (quarter ellipse in length).
-        let D = min(ax, ay) * 0.9, K = 10
-        var dome = Mesh3D()
-        func ringPoint(_ k: Int, _ i: Int) -> SIMD3<Double> {
-            let th = Double(k) / Double(K) * .pi / 2, s = cos(th)
-            let p = ring[i % n]
-            return [p.x * s, y0 + (p.y - y0) * s, -2 - D * sin(th)]
+        for (y0, y1) in [(hy, et), (eb, -hy)] {
+            mesh.append(.box(min: [vx, y0, 0], max: [ox, y1, S]))
+            mesh.append(.box(min: [-ox, y0, 0], max: [-vx, y1, S]))
         }
-        for k in 0..<K {
-            for i in 0..<n {
-                let a = ringPoint(k, i), b = ringPoint(k, i + 1), cc = ringPoint(k + 1, i + 1), d = ringPoint(k + 1, i)
-                if k + 1 == K { dome.triangles.append((a, b, cc)) }            // last ring collapses to the tip
-                else { dome.triangles += [(a, b, cc), (a, cc, d)] }
-            }
-        }
-        let base = SIMD3<Double>(0, y0, -2)
-        for i in 0..<n { dome.triangles.append((base, ringPoint(0, i + 1), ringPoint(0, i))) }
-        mesh.append(dome.signedVolume < 0 ? dome.flipped : dome)
         return mesh
     }
 
+    /// Control horn: base flange glued on the surface, a tab below it for the 10 × 1.6 mm horn slot (depth = foam
+    /// thickness − 0.5 mm, so it never pokes out the other side), and a triangular horn plate rising to a round boss
+    /// with the pushrod hole right above the hinge line (the slot sits 6 mm behind the hinge).
+    /// Mesh frame: x along the chord (+x aft), z up from the surface, plate in the x–z plane.
+    static let hornHoleHeight = 10.0
     static func controlHorn(foam t: Double) -> Mesh3D {
-        var mesh = Mesh3D.box(min: [-7, -4, 0], max: [7, 4, 1])
-        let profile: [Vec2] = [Vec2(-5, -t), Vec2(5, -t), Vec2(5, 0), Vec2(6.5, 0), Vec2(3.5, 14), Vec2(-3.5, 14), Vec2(-6.5, 0), Vec2(-5, 0)]
-        let holes = [6.0, 8.8, 11.6].map { Poly.circle(Vec2(0, $0), 0.55, segments: 12) }
-        let fin = Mesh3D.extrude(profile, holes: holes, z0: -0.6, z1: 0.6).rotated(.pi / 2, axis: [1, 0, 0])
-        mesh.append(fin)
+        let flangeT = 1.2, plateT = 1.6, H = hornHoleHeight, r = 3.0
+        var mesh = Mesh3D.box(min: [-9.5, -3, 0], max: [9.5, 3, flangeT])
+        mesh.append(.box(min: [-4.8, -0.7, -(t - 0.5)], max: [4.8, 0.7, 0]))     // tab in the slot
+        let cx = -6.0                                                           // hole above the hinge line
+        let arc: [Vec2] = (0...14).map { k in
+            let a = (70.0 + 130.0 * Double(k) / 14) * .pi / 180
+            return Vec2(cx + r * cos(a), H + r * sin(a))
+        }
+        let profile = Poly.ccw([Vec2(9.5, 0), Vec2(9.5, flangeT + 0.8)] + arc + [Vec2(cx - r * 1.05, 0)])
+        let hole = [Poly.circle(Vec2(cx, H), 0.95, segments: 16)]                // Ø1.9 for Z-bend / clevis / EZ connector
+        let plate = Mesh3D.extrude(profile, holes: hole, z0: -plateT / 2, z1: plateT / 2)
+            .transformed { p in SIMD3<Double>(p.x, p.z, p.y) }                   // profile (x, z), thickness along y
+        mesh.append(plate.flipped)                                              // the axis swap mirrors – restore winding
         return mesh
     }
 
