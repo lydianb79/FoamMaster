@@ -15,6 +15,7 @@ enum Thumbnailer {
         guard let r = renderer else { return nil }
         r.setScene(SceneBuilder.aircraft(design, nil, deflection: 0, showCG: false), resetCamera: true)
         r.yaw = 0.62; r.pitch = 0.42; r.zoom = 0.95
+        r.fitToView(aspect: Float(size.width / size.height), fill: 0.74, centerY: -0.12)   // centred, below the tag chips
         guard let cg = r.snapshot(width: Int(size.width), height: Int(size.height),
                                   clear: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)) else { return nil }
         let img = NSImage(cgImage: cg, size: NSSize(width: size.width / 2, height: size.height / 2))

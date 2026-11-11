@@ -7,7 +7,7 @@ extension AircraftKind {
 
 /// Picks motor and battery (and with them ESC, prop size, pitch and blade count) for the best power-to-weight
 /// ratio: the lightest feasible combination that reaches the recommended thrust/weight and at least 6 minutes of
-/// flight; if none does, the one closest to it.
+/// flight; if none does, the one closest to it. Dual tractors keep at least the single-motor version's motor and battery.
 enum PowerOptimizer {
     static let minFlightTime = 6.0
 
@@ -19,8 +19,20 @@ enum PowerOptimizer {
     static func best(for input: AircraftConfig) -> Result? {
         let target = input.kind.recommendedThrustToWeight
         var best: (key: (Int, Int, Double), result: Result)?
-        for motor in MotorClass.allCases {
-            for battery in BatteryPack.allCases where motor.allowedCells.contains(battery.cells) {
+        // Dual tractor: the single-motor version's power system ×2 – motors at least that size and a battery with at
+        // least its cells and capacity – instead of two tiny motors on a small pack that cancel out the second motor,
+        // ESC and mounts. So switching to dual always adds that hardware's weight.
+        var minMotorMass = 0.0, minCells = 0, minCapacity = 0.0
+        if input.isDual {
+            var single = input
+            single.motorLayout = .single
+            if let s = PowerOptimizer.best(for: single)?.config {
+                minMotorMass = s.motor.mass; minCells = s.battery.cells; minCapacity = s.battery.capacity
+            }
+        }
+        for motor in MotorClass.allCases where motor.mass >= minMotorMass {
+            for battery in BatteryPack.allCases where motor.allowedCells.contains(battery.cells)
+                && battery.cells >= minCells && battery.capacity >= minCapacity {
                 var c = input
                 c.motor = motor
                 c.battery = battery

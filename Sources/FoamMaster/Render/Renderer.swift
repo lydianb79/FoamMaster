@@ -172,6 +172,31 @@ final class Renderer: NSObject, MTKViewDelegate {
         return (proj * viewM, eye)
     }
 
+    /// Centres the model on screen and zooms so its projected outline fills `fill` of the view (thumbnails):
+    /// the camera target moves to the centre of the projected bounding box (perspective – a few iterations).
+    /// `centerY`: where the model's centre should land vertically (NDC, negative = lower, e.g. under overlay tags).
+    func fitToView(aspect: Float, fill: Float = 0.86, centerY: Float = 0) {
+        guard !pickVerts.isEmpty else { return }
+        for _ in 0..<4 {
+            let (vp, _) = camera(aspect: aspect)
+            var lo = SIMD2<Float>(repeating: .greatestFiniteMagnitude), hi = -lo
+            var depth: Float = 0
+            for v in pickVerts {
+                let p = vp * SIMD4(v, 1)
+                guard p.w > 1e-6 else { continue }
+                let n = SIMD2(p.x, p.y) / p.w
+                lo = simd_min(lo, n); hi = simd_max(hi, n)
+            }
+            let t = vp * SIMD4(target, 1); depth = t.z / t.w
+            let c = (lo + hi) / 2
+            let inv = vp.inverse
+            let w = inv * SIMD4(c.x, c.y - centerY, depth, 1)
+            target = SIMD3(w.x, w.y, w.z) / w.w
+            let size = max((hi.x - lo.x) / 2, (hi.y - lo.y) / 2)
+            if size > 1e-4 { zoom *= size / fill }
+        }
+    }
+
     /// Name of the nearest object under a point of the view (points, origin top-left), or nil.
     func pick(_ point: CGPoint, in size: CGSize) -> String? {
         guard size.width > 0, size.height > 0, !pickVerts.isEmpty else { return nil }

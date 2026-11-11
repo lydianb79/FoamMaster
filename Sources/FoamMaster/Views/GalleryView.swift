@@ -69,6 +69,14 @@ struct ModelPreview: Identifiable {
     let design: Design
     let analysis: Analysis
     var id: AircraftKind { kind }
+
+    /// Ready-to-fly weight split into airframe (foam, carbon, printed parts, hardware), electronics and battery.
+    var weightSplit: (airframe: Double, electronics: Double, battery: Double) {
+        let comps = design.components
+        let battery = comps.filter { $0.category == "Battery" }.reduce(0) { $0 + $1.mass }
+        let electronics = comps.filter { $0.category == "Power" || $0.category == "Radio" }.reduce(0) { $0 + $1.mass }
+        return (analysis.totalMass - battery - electronics, electronics, battery)
+    }
 }
 
 struct GalleryContent: View {
@@ -78,7 +86,7 @@ struct GalleryContent: View {
     @State private var selected: AircraftKind?
     static let pad: CGFloat = 32, gridSpacing: CGFloat = 16, headerHeight: CGFloat = 58, topPad: CGFloat = 34
     /// Card height without the thumbnail (padding, title row, stat chips, spacing).
-    static let cardChrome: CGFloat = 164
+    static let cardChrome: CGFloat = 194
     private var thumbHeight: CGFloat {
         let cols = max(1, Int((available.width - 2 * Self.pad + Self.gridSpacing) / (320 + Self.gridSpacing)))
         let rows = CGFloat((previews.count + cols - 1) / cols)
@@ -183,9 +191,19 @@ struct ModelCard: View {
                 }
                 HStack(spacing: 8) {
                     StatChip(label: "Span", value: "\(Int(preview.design.config.wingspan)) mm", tint: kind.tint)
-                    StatChip(label: "AUW", value: "\(Int(preview.analysis.totalMass)) g", tint: Theme.orange)
+                    StatChip(label: "Total", value: "\(Int(preview.analysis.totalMass.rounded())) g", tint: Theme.orange)
                     StatChip(label: "Load", value: String(format: "%.0f g/dm²", preview.analysis.wingLoading), tint: Theme.violet)
                 }
+                // Weight split: everything on the card's model is in the ready-to-fly weight.
+                let w = preview.weightSplit
+                HStack(spacing: 6) {
+                    Image(systemName: "scalemass.fill").font(.system(size: 9)).foregroundStyle(Theme.orange)
+                    Text(String(format: "Airframe %.0f g · Electronics %.0f g · Battery %.0f g", w.airframe, w.electronics, w.battery))
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                    Spacer(minLength: 0)
+                }
+                .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
+                .help("Airframe: foam, carbon, printed parts, pushrods, glue · Electronics: motor, prop, ESC, servos, receiver, wiring")
                 // Recommended power system of this variant.
                 let pc = preview.design.config
                 HStack(spacing: 6) {

@@ -82,6 +82,15 @@ enum SelfTest {
             }
             for p in d.parts { for f in p.features { if case let .rod(a0, b0, dia) = f { print("   rod on \(p.name): \(a0) → \(b0) Ø\(dia), instances \(p.instances.count)") } } }
         }
+        // Single vs dual tractor: what the auto power system picks and the weights.
+        for kind in AircraftKind.allCases where kind.allowsDualMotors {
+            let single = kind.recommended
+            var dual = single; dual.motorLayout = .dualTractor
+            let aS = Analysis(design: DesignBuilder.build(single))
+            let aD0 = Analysis(design: DesignBuilder.build(FixFinder.evaluate(dual).config))
+            let r = PowerOptimizer.best(for: dual)
+            print("   1→2 \(kind.title): single \(single.motor.rawValue)+\(single.battery.rawValue) \(String(format: "%.1f", aS.totalMass)) g T/W \(String(format: "%.2f", aS.thrustToWeight)) | dual same power \(String(format: "%.1f", aD0.totalMass)) g T/W \(String(format: "%.2f", aD0.thrustToWeight)) | dual re-optimised \(r.map { "\($0.config.motor.rawValue)+\($0.config.battery.rawValue) \(String(format: "%.1f", $0.analysis.totalMass)) g T/W \(String(format: "%.2f", $0.analysis.thrustToWeight))" } ?? "none")")
+        }
         let project = Project()
         project.start(.flyingWing)
         snapshotView(GalleryContent().environmentObject(project), size: CGSize(width: 1300, height: 820), to: dir.appendingPathComponent("ui_gallery.png"))
