@@ -5,7 +5,7 @@ import Foundation
 enum FoamFamily: String, Codable { case depron = "Depron", epp = "EPP" }
 
 enum FoamMaterial: String, CaseIterable, Identifiable, Codable {
-    case depron3, depron5, depron6, depron10, epp3, epp5, epp6, epp10
+    case depron3, depron5, depron6, depron8, depron10, epp3, epp5, epp6, epp8, epp10
     var id: String { rawValue }
 
     var family: FoamFamily { rawValue.hasPrefix("depron") ? .depron : .epp }
@@ -16,6 +16,7 @@ enum FoamMaterial: String, CaseIterable, Identifiable, Codable {
         case .depron3, .epp3: return 3
         case .depron5, .epp5: return 5
         case .depron6, .epp6: return 6
+        case .depron8, .epp8: return 8
         case .depron10, .epp10: return 10
         }
     }

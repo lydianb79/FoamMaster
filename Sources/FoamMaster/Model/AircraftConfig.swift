@@ -292,7 +292,7 @@ struct AircraftConfig: Codable, Equatable {
             r(\.wingletHeight, spread: 0.3); r(\.noseLength, spread: 0.3)
         }
         c.tipChord = min(c.tipChord, c.rootChord)
-        let foams: [FoamMaterial] = [.depron3, .depron5, .depron6, .epp5, .epp6, .depron10, .epp10]
+        let foams: [FoamMaterial] = [.depron3, .depron5, .depron6, .epp5, .epp6, .depron8, .epp8, .depron10, .epp10]
         c.material = foams.filter { $0.thickness <= (kind == .glider ? 5 : 10) }.randomElement()!
         c.sparEnabled = Bool.random() || c.material.family == .epp
         c.motor = MotorClass.allCases.filter { $0 != .m2204 }.randomElement()!

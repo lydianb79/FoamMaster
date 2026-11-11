@@ -255,7 +255,7 @@ struct Analysis {
         if pct >= 10 { add(.error, "Structure", "Wing far too flexible", "Tip bends \(f0(st.wingTipDeflection)) mm (\(f0(pct)) % of the half span) at 3 g. \(wingFix)") }
         else if pct >= 4 { add(.warning, "Structure", "Wing flexes noticeably", "Tip bends \(f0(st.wingTipDeflection)) mm (\(f1(pct)) %) at 3 g. \(wingFix)") }
         else { add(.ok, "Structure", "Wing stiffness OK", "Tip deflection \(f1(st.wingTipDeflection)) mm (\(f1(pct)) %) at 3 g\(c.sparEnabled ? " with spars top + bottom" : "").") }
-        if c.material.thickness >= 10 && c.wingspan < 350 { add(.info, "Structure", "Thick foam on a small model", "10 mm sheet adds weight – 5/6 mm is usually enough.") }
+        if c.material.thickness >= 8 && c.wingspan < 350 { add(.info, "Structure", "Thick foam on a small model", "\(Int(c.material.thickness)) mm sheet adds weight – 5/6 mm is usually enough.") }
 
         // Servos: hinge moment H = Ch · q · S · c at ~2.5 × stall speed (min 30 km/h), Ch ≈ 0.4 at full throw.
         let vMax = max(stallSpeed * 2.5, 30) / 3.6

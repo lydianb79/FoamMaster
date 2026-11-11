@@ -92,6 +92,21 @@ enum SelfTest {
             let r = PowerOptimizer.best(for: dual)
             print("   1→2 \(kind.title): single \(single.motor.rawValue)+\(single.battery.rawValue) \(String(format: "%.1f", aS.totalMass)) g T/W \(String(format: "%.2f", aS.thrustToWeight)) | dual same power \(String(format: "%.1f", aD0.totalMass)) g T/W \(String(format: "%.2f", aD0.thrustToWeight)) | dual re-optimised \(r.map { "\($0.config.motor.rawValue)+\($0.config.battery.rawValue) \(String(format: "%.1f", $0.analysis.totalMass)) g T/W \(String(format: "%.2f", $0.analysis.thrustToWeight))" } ?? "none")")
         }
+        // 8 mm foam: every type builds, and the printed parts get the 8 mm versions.
+        for kind in AircraftKind.allCases {
+            for m in [FoamMaterial.depron8, .epp8, .epp6, .epp10] {
+                var c = kind.recommended; c.material = m
+                let r = PowerOptimizer.best(for: c)
+                let cc = r?.config ?? FixFinder.evaluate(c).config
+                let d = DesignBuilder.build(cc); let a = Analysis(design: d)
+                print("   8mm \(kind.title) \(m.displayName): \(cc.motor.rawValue)+\(cc.battery.rawValue), spar \(cc.sparSpec.name), AUW \(Int(a.totalMass)) g, score \(a.score), feasible \(a.feasible)" + a.checks.filter { $0.severity == .error }.map { " [\($0.title)]" }.joined())
+                if m == .depron8 {
+                    for part in PrintedParts.generate(d) {
+                        try? part.mesh.stlData(name: part.name).write(to: dir.appendingPathComponent("8mm_\(kind.rawValue)_\(part.fileName).stl"))
+                    }
+                }
+            }
+        }
         let project = Project()
         project.start(.flyingWing)
         snapshotView(GalleryContent().environmentObject(project), size: CGSize(width: 1300, height: 820), to: dir.appendingPathComponent("ui_gallery.png"))
