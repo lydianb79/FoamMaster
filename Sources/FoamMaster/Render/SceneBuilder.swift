@@ -55,6 +55,7 @@ enum Palette {
     static let epp = SIMD4<Float>(0.62, 0.80, 0.95, 1)
     static let control = SIMD4<Float>(1.0, 0.52, 0.18, 1)
     static let carbon = SIMD4<Float>(0.24, 0.26, 0.32, 1)
+    static let strutLine = SIMD4<Float>(0.72, 0.76, 0.86, 1)
     static let motor = SIMD4<Float>(0.75, 0.2, 0.25, 1)
     static let battery = SIMD4<Float>(0.62, 0.42, 0.95, 1)
     static let servo = SIMD4<Float>(0.2, 0.45, 0.95, 1)
@@ -243,9 +244,12 @@ enum SceneBuilder {
             let a3 = st.a.rodEnd, dir = st.direction
             let side = simd_normalize(abs(dir.y) < 0.9 ? simd_cross(dir, [0, 1, 0]) : simd_cross(dir, [1, 0, 0]))
             let up = simd_cross(side, dir)
-            let rod = Mesh3D.extrude(Poly.circle(.zero, st.diameter / 2, segments: 10), z0: 0, z1: st.length)
+            // Display only: at least Ø1.6 mm and a light line along the axis, so a Ø1 rod stays visible against
+            // the dark background at any zoom (geometry, STLs and checks use the true diameter).
+            let rod = Mesh3D.extrude(Poly.circle(.zero, max(st.diameter, 1.6) / 2, segments: 10), z0: 0, z1: st.length)
                 .transformed { p in a3 + side * p.x + up * p.y + dir * p.z }
             scene.addMesh(rod, color: Palette.carbon)
+            scene.addLine(a3, st.b.rodEnd, color: Palette.strutLine)
             for end in [st.a, st.b] {
                 let w = simd_cross(end.normal, end.along)
                 let m = PrintedParts.strutAnchor(dia: st.diameter, elevation: end.elevation)

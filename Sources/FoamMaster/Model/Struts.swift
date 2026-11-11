@@ -468,8 +468,9 @@ struct StrutPlanner {
     /// One rod each side from the fixed part of the stabiliser (ahead of the elevator hinge, mid half-span) up to the
     /// fixed fin (ahead of the rudder hinge): braces the fin sideways and keeps clear of elevator and rudder travel,
     /// their horns and pushrods. Candidates in order of preference; the thinnest rod that fits and does not buckle.
-    func finStruts(avoiding existing: [Strut]) -> [Strut] {
-        guard !c.kind.isTailless, !c.kind.isTwinBoom, let st = stabiliser else { return [] }
+    func finStruts(avoiding existing: [Strut], tally: ((String) -> Void)? = nil) -> [Strut] {
+        guard !c.kind.isTailless, !c.kind.isTwinBoom else { return [] }
+        guard let st = stabiliser else { tally?("no stabiliser"); return [] }
         let stab = d.parts[st.part], inst = stab.instances[st.inst]
         // Only the fin rods' own buckling counts here (the wing / tail set was chosen before).
         let alreadyBuckles = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed, struts: existing).strutsBuckle
@@ -481,29 +482,30 @@ struct StrutPlanner {
         }
         for fx in [0.55, 0.45, 0.65, 0.35, 0.75, 0.25] {
             let x = fx * st.halfSpan
-            guard let le = stabLE(x) else { continue }
+            guard let le = stabLE(x) else { tally?("no stab chord"); continue }
             for fz in [0.5, 0.35, 0.65, 0.2, 0.8, 0.9] {
                 let zs = le + 6 + fz * (st.hingeZ - 12 - le)
-                guard zs < st.hingeZ - 8 else { continue }
+                guard zs < st.hingeZ - 8 else { tally?("stab station behind hinge"); continue }
                 for dz in [0.0, -10, 10, -20, 20] {
                     let zf = zs + dz
-                    guard zf < st.hingeZ - 8, let top = webEdge(z: zf, top: true) else { continue }
+                    guard zf < st.hingeZ - 8, let top = webEdge(z: zf, top: true) else { tally?("no fin at station"); continue }
                     let root = t / 2
-                    guard top - root > 30 else { continue }
+                    guard top - root > 30 else { tally?("fin too low"); continue }
                     for fh in [0.6, 0.5, 0.7, 0.4] {
                         let yf = root + fh * (top - root)
                         for dia in CarbonSpar.strutDiameters {
                             var pair: [Strut] = []
                             for side in [1.0, -1.0] {
-                                guard let a = flatSite(part: st.part, inst: st.inst, x: side * x, z: zs),
-                                      let b = webSite(z: zf, y: yf, side: side),
-                                      let s = strut("Fin strut", .fin, wing: a, body: b, dia: dia) else { break }
+                                guard let a = flatSite(part: st.part, inst: st.inst, x: side * x, z: zs) else { tally?("no stab site"); break }
+                                guard let b = webSite(z: zf, y: yf, side: side) else { tally?("no fin site"); break }
+                                guard let s = strut("Fin strut", .fin, wing: a, body: b, dia: dia) else { tally?("pad does not fit"); break }
                                 pair.append(s)
                             }
-                            guard pair.count == 2,
-                                  isClear(pair[0], others: existing + [pair[1]]), isClear(pair[1], others: existing + [pair[0]]) else { continue }
+                            guard pair.count == 2 else { continue }
+                            guard isClear(pair[0], others: existing + [pair[1]]), isClear(pair[1], others: existing + [pair[0]]) else { tally?("not clear"); continue }
                             let rep = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed, struts: existing + pair)
                             if !rep.strutsBuckle || alreadyBuckles { return pair }
+                            tally?("buckles")
                         }
                     }
                 }

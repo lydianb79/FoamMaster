@@ -225,7 +225,8 @@ struct ParameterContent: View {
         let struts = project.design?.struts ?? []
         if struts.isEmpty { return c.struts == .off ? StrutMode.off.detail : c.struts.detail + " – none needed / none fit" }
         let wing = struts.filter { $0.group == .wing }.count, tail = struts.filter { $0.group == .tail }.count
-        let parts = [wing > 0 ? "\(wing) wing" : nil, tail > 0 ? "\(tail) tail" : nil].compactMap { $0 }.joined(separator: " + ")
+        let fin = struts.filter { $0.group == .fin }.count
+        let parts = [wing > 0 ? "\(wing) wing" : nil, tail > 0 ? "\(tail) tail" : nil, fin > 0 ? "\(fin) fin" : nil].compactMap { $0 }.joined(separator: " + ")
         let mass = struts.reduce(0) { $0 + $1.rodMass }
         return "\(parts) struts fitted (\(String(format: "%.1f", mass)) g carbon + printed anchors) – marked S1… on the plans"
     }

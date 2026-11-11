@@ -147,6 +147,13 @@ enum SelfTest {
                         // From below and behind, where most struts are.
                         r.pitch = -0.35; r.yaw = 2.3
                         if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("\(tag)_3d_below.png")) }
+                        // Tail close-up from behind and to the side (fin struts), like a photo of the real model.
+                        if let fin = d.struts.first(where: { $0.group == .fin }) {
+                            r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
+                            r.target = SIMD3<Float>(0, Float(fin.b.rodEnd.y) * 0.5, Float(fin.b.rodEnd.z))
+                            r.zoom = 0.3; r.pitch = 0.18; r.yaw = 0.55
+                            if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("\(tag)_3d_tail.png")) }
+                        }
                     }
                 }
             }
@@ -159,6 +166,20 @@ enum SelfTest {
                 let d = DesignBuilder.build(c), a = Analysis(design: d)
                 let fin = d.struts.filter { $0.group == .fin }
                 print("   defaults fin \(kind.title) \(m.displayName) \(mode.name): \(d.struts.count) struts, \(d.struts.map { "\($0.label) Ø\(String(format: "%.1f", $0.diameter)) \(Int($0.length)) \(Int(($0.a.elevation * 180 / .pi).rounded()))°/\(Int(($0.b.elevation * 180 / .pi).rounded()))°" }.joined(separator: " ")) bend \(a.structure?.tailBendDeg.map { String(format: "%.2f", $0) } ?? "–") twist \(a.structure?.tailTwistDeg.map { String(format: "%.2f", $0) } ?? "–"), fin struts \(fin.count)\(fin.first.map { " Ø\(String(format: "%.1f", $0.diameter)) \(Int($0.length)) mm" } ?? ""), fin tilt \(a.structure?.finFlexBareDeg.map { String(format: "%.1f", $0) } ?? "–")→\(a.structure?.finFlexDeg.map { String(format: "%.2f", $0) } ?? "–")°, feasible \(a.feasible), score \(a.score)\(d.strutNotes.isEmpty ? "" : " [fin left out: CG]")" + a.checks.filter { $0.severity >= .warning }.map { " {\($0.title): \($0.detail)}" }.joined())
+            }
+        }
+        // Why fin struts are missing where struts are fitted: rejection tally over every foam.
+        for kind in AircraftKind.allCases where (kind.hasTail || kind.isNutBall) && !kind.isTwinBoom {
+            for m in FoamMaterial.allCases {
+                var c = kind.defaults; c.material = m; c.struts = .always
+                c = Project.balanced(c)
+                let d = DesignBuilder.build(c)
+                guard !d.struts.isEmpty, !d.struts.contains(where: { $0.group == .fin }) else { continue }
+                let loads = Analysis.massAndStall(d)
+                var why: [String: Int] = [:]
+                _ = StrutPlanner(design: d, totalMass: loads.mass, stallSpeed: loads.stall)
+                    .finStruts(avoiding: d.struts, tally: { why[$0, default: 0] += 1 })
+                print("   no fin struts \(kind.title) \(m.displayName): \(d.strutNotes.isEmpty ? "" : "[CG] ")\(why.sorted { $0.value > $1.value }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))")
             }
         }
         // Random variants with struts (always mode, so every type gets some): no surface may touch a strut.
