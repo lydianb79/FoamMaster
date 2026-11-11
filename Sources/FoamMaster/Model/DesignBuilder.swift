@@ -280,6 +280,13 @@ enum DesignBuilder {
         /// Wing servos (ailerons, elevons, Twin Boom elevator) sit as far forward as possible – front edge about
         /// `servoSparGap` behind the spar groove (30 % chord line, also used as reference without a spar) – which
         /// moves the CG forward and lets the battery sit further aft. Never further aft than 8 mm ahead of the hinge.
+        /// Spar line (30 % chord) at its most aft point across a flat wing servo's spanwise width at station `v`:
+        /// on swept / tapered wings the spar runs diagonally, so the servo's outboard corner is the closest one.
+        func sparAcrossServo(_ p: TaperedPanel, _ v: Double) -> Double {
+            let h = c.servo.size.h / 2 + 0.2
+            func spar(_ x: Double) -> Double { p.le(x) + 0.3 * p.chord(x) }
+            return max(spar(v - h), spar(v + h))
+        }
         func wingServoU(hingeU: Double, sparU: Double) -> Double {
             let l = c.servo.size.l
             let sparHalf = c.sparEnabled ? c.sparSpec.widthMM / 2 : 1.5
@@ -386,7 +393,7 @@ enum DesignBuilder {
             for side in [-1.0, 1.0] where v1 > v0 + 10 {
                 let vs = v0 + max(sv.h / 2 + 6, 14)
                 let hingeU = w.te(vs) - f * w.chord(vs)
-                let center = Vec2(wingServoU(hingeU: hingeU, sparU: w.le(vs) + 0.3 * w.chord(vs)), side * vs)
+                let center = Vec2(wingServoU(hingeU: hingeU, sparU: sparAcrossServo(w, vs)), side * vs)
                 let name = side < 0 ? "Left elevon" : "Right elevon"
                 holes.append(servoCut(name, center: center, size: wingServoCut, in: mainRegion))
                 let vh = vs + armOffset, hingeH = w.te(vh) - f * w.chord(vh)
@@ -499,7 +506,7 @@ enum DesignBuilder {
                 } else {
                     let vs = a0 + max(14, sv.h / 2 + 6)
                     let hingeU = half.te(vs) - f * half.chord(vs)
-                    let center = Vec2(wingServoU(hingeU: hingeU, sparU: half.le(vs) + 0.3 * half.chord(vs)), vs)
+                    let center = Vec2(wingServoU(hingeU: hingeU, sparU: sparAcrossServo(half, vs)), vs)
                     holes.append(servoCut("Aileron", center: center, size: wingServoCut, in: main))
                     let vh = vs + armOffset, hingeH = half.te(vh) - f * half.chord(vh)
                     holes.append(hornSlot(at: Vec2(hingeH + 6, vh)))
@@ -717,7 +724,7 @@ enum DesignBuilder {
                 let hingeU = w.te(vs) - fA * w.chord(vs)
                 for side in [-1.0, 1.0] {
                     let name = side < 0 ? "Left aileron" : "Right aileron"
-                    let center = Vec2(wingServoU(hingeU: hingeU, sparU: w.le(vs) + 0.3 * w.chord(vs)), side * vs)
+                    let center = Vec2(wingServoU(hingeU: hingeU, sparU: sparAcrossServo(w, vs)), side * vs)
                     wingHoles.append(servoCut(name, center: center, size: wingServoCut, in: wingMain))
                     let vh = vs + armOffset, hingeH = w.te(vh) - fA * w.chord(vh)
                     wingHoles.append(hornSlot(at: Vec2(hingeH + 6, side * vh)))
@@ -884,7 +891,7 @@ enum DesignBuilder {
             let ePushX = xb - 12
             let eServoX = ePushX - armOffset
             // Same rule as the aileron servos: front edge 5 mm behind the spar groove (one row of servos).
-            let sparE = w.le(eServoX) + 0.3 * w.chord(eServoX)
+            let sparE = sparAcrossServo(w, eServoX)
             let eServoU = wingServoU(hingeU: w.te(eServoX) - fA * w.chord(eServoX), sparU: sparE)
             wingHoles.append(servoCut("Elevator", center: Vec2(eServoU, eServoX), size: wingServoCut, in: twinMain))
             if !c.isDual && ePushX < propRadius + AircraftConfig.propClearance + 2 {
@@ -896,7 +903,7 @@ enum DesignBuilder {
                 let hingeU = w.te(vs) - fA * w.chord(vs)
                 for side in [-1.0, 1.0] {
                     let name = side < 0 ? "Left aileron" : "Right aileron"
-                    let center = Vec2(wingServoU(hingeU: hingeU, sparU: w.le(vs) + 0.3 * w.chord(vs)), side * vs)
+                    let center = Vec2(wingServoU(hingeU: hingeU, sparU: sparAcrossServo(w, vs)), side * vs)
                     wingHoles.append(servoCut(name, center: center, size: wingServoCut, in: out.main))
                     let vh = vs + armOffset, hingeH = w.te(vh) - fA * w.chord(vh)
                     wingHoles.append(hornSlot(at: Vec2(hingeH + 6, side * vh)))

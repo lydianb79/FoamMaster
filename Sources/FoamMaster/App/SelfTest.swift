@@ -57,9 +57,10 @@ enum SelfTest {
                 for part in d.parts {
                     let rods: [(Vec2, Vec2, Double)] = part.features.compactMap { if case let .rod(a, b, dd) = $0 { return (a, b, dd) }; return nil }
                     for h in part.holes where h.kind == .servo {
+                        // Closest corner: spar position at both spanwise edges of the cutout.
                         let bb = Poly.bounds(h.polygon), cy = (bb.min.y + bb.max.y) / 2
                         for (ra, rb, dd) in rods where cy >= min(ra.y, rb.y) - 1 && cy <= max(ra.y, rb.y) + 1 && abs(rb.y - ra.y) > 1e-6 {
-                            let su = ra.x + (rb.x - ra.x) * (cy - ra.y) / (rb.y - ra.y)
+                            let su = [bb.min.y, bb.max.y].map { y in ra.x + (rb.x - ra.x) * (y - ra.y) / (rb.y - ra.y) }.max()!
                             sparGaps.append(String(format: "%@ %.1f", h.note, bb.min.x - (su + dd / 2)))
                         }
                     }
