@@ -89,6 +89,21 @@ struct PropClearance {
                 }
             }
         }
+        // Pushrods (servo arm → horn) must not pass through the spinning prop either.
+        for mx in c.motorXs {
+            for ctrl in d.controls {
+                let a = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition, b = ctrl.hornPosition
+                let n = max(2, Int(simd_distance(a, b) / 1.0))
+                for k in 0...n {
+                    let p = a + (b - a) * (Double(k) / Double(n))
+                    let r = simd_length(SIMD2(p.x - mx, p.y))
+                    let sAx = (p.z - c.propPlaneZ) * (c.isPusher ? -1 : 1)
+                    let axialOut = sAx >= 0 ? max(0, sAx - c.propDepthIn) : max(0, -sAx - c.propDepthOut)
+                    let g = (axialOut * axialOut + max(0, r - c.propRadius) * max(0, r - c.propRadius)).squareRoot()
+                    if g < best.gap { best = PropClearance(gap: g, part: "\(ctrl.name) pushrod") }
+                }
+            }
+        }
         if best.gap == .greatestFiniteMagnitude { best.gap = 99 }
         return best
     }

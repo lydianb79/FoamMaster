@@ -797,9 +797,11 @@ enum DesignBuilder {
             let eHornV = max(armOffset, tw / 2 + 10)
             tailHoles.append(hornSlot(at: Vec2(uH + 6, eHornV)))
 
-            // Servo box in the upper front half, over the wing.
+            // Elevator and rudder servos in the upper fuselage BEHIND the prop window: their pushrods run aft to the
+            // tail without crossing the spinning prop (from the canopy they would pass straight through it).
             let sv = c.servo.size
-            let s1 = Vec2(c.rootChord * 0.05 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
+            let s1 = Vec2(wR + 12 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
+            if s2.x + sv.l / 2 + 6 > finLE { issues.append("No room for the elevator and rudder servos between the prop window and the fin – lengthen the tail arm.") }
             var upperHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: upperMain)]
             if c.hasRudder {
                 upperHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upperMain))
@@ -865,6 +867,15 @@ enum DesignBuilder {
                 twinMain = Poly.insertTab(twinMain, at: Vec2(w.le(v), v), width: 10, height: -6)
             }
             var wingHoles: [Hole] = []
+            // Elevator servo lies flat in the right wing between the prop disc and the boom: its pushrod runs aft
+            // 12 mm inboard of the boom, outside the prop disc (from the pod it would cross the spinning prop).
+            let ePushX = xb - 12
+            let eServoX = ePushX - armOffset
+            let eServoU = wingServoU(hingeU: w.te(eServoX), sparU: w.le(eServoX) + 0.3 * w.chord(eServoX))
+            wingHoles.append(servoCut("Elevator", center: Vec2(eServoU, eServoX), size: wingServoCut, in: twinMain))
+            if !c.isDual && ePushX < propRadius + AircraftConfig.propClearance + 2 {
+                issues.append("The elevator pushrod would pass through the prop disc – increase the stabiliser span (boom spacing) or use a smaller prop.")
+            }
             if c.hasAilerons {
                 let sv = c.servo.size
                 let vs = a0 + max(14, sv.h / 2 + 6)
@@ -901,7 +912,7 @@ enum DesignBuilder {
 
             let sv = c.servo.size
             let s1 = Vec2(c.rootChord * 0.08 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
-            var podHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: podTop)]
+            var podHoles: [Hole] = []          // elevator servo sits in the wing (see above)
             if c.hasRudder { podHoles.append(servoCut("Rudders", center: s2, size: webServoCut, in: podTop)) }
             if fh / 2 - t / 2 < 8 { issues.append("Pod height is too small.") }
 
@@ -950,7 +961,7 @@ enum DesignBuilder {
                     stabRegions[0].polygon = Poly.insertTab(stabRegions[0].polygon, at: Vec2(finU0 + tu, v), width: 10, height: t)
                 }
             }
-            let eHorn = Vec2(ta + hsc * 0.6 + 6, max(armOffset, 8))
+            let eHorn = Vec2(ta + hsc * 0.6 + 6, ePushX)          // straight behind the wing servo's arm
             stabHoles.append(hornSlot(at: eHorn))
             let stabY = boomY + 2 + t / 2
             parts.append(Part(name: "Stabiliser", role: .stabilizer, outline: stabOutline, holes: stabHoles,
@@ -973,7 +984,7 @@ enum DesignBuilder {
             components.append(MassItem(name: "Tail booms (2 × \(rod.name))", mass: 2 * boomLen / 1000 * rod.gramsPerMeter,
                                        position: [0, boomY, c.rootChord * 0.15 + boomLen / 2], category: "Hardware"))
 
-            let eBody: SIMD3<Double> = [0, t / 2 + s1.y, s1.x]
+            let eBody: SIMD3<Double> = [eServoX, 0, eServoU]
             controls.append(ControlSurface(name: "Elevator", hingeMid: [0, stabY, ta + hsc * 0.6], hornPosition: [eHorn.y, stabY + t / 2 + 9, ta + hsc * 0.6 + 2],
                                            servoPosition: eBody, area: Poly.area(soElevator), chord: 0.4 * hsc, servoID: "Elevator",
                                            armPosition: armTip(eBody, side: 1)))
