@@ -55,6 +55,20 @@ enum SelfTest {
                 print("   servos \(kind.title)\(one ? " 1-servo" : ""): servo z \(wingCtrl.first.map { String(format: "%.0f", $0.servoPosition.z) } ?? "-"), hinge−servo \(gaps.first.map { String(format: "%.0f", $0) } ?? "-") mm, pushrods \(String(format: "%.0f", rods.reduce(0, +))) mm, battery \(Int(c.batteryPosition)) (\(c.battery.name)), CG \(String(format: "%.1f", a.cg.z)) / target \(String(format: "%.1f", a.recommendedCG)), AUW \(String(format: "%.1f", a.totalMass)) g, score \(a.score)" + d.geometryIssues.map { " [\($0)]" }.joined())
             }
         }
+        // Spar display check: dual trainer from above and below.
+        do {
+            var c = AircraftKind.trainer.recommended; c.motorLayout = .dualTractor
+            let d = DesignBuilder.build(c); let a = Analysis(design: d)
+            for (tag, yaw, pitch) in [("top", Float(0.5), Float(0.9)), ("bottom", Float(2.4), Float(-0.7))] {
+                let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+                if let r = Renderer(view: view) {
+                    r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
+                    r.yaw = yaw; r.pitch = pitch; r.zoom = 0.7
+                    if let img = r.snapshot(width: 1100, height: 760) { savePNG(img, dir.appendingPathComponent("spar_\(tag).png")) }
+                }
+            }
+            for p in d.parts { for f in p.features { if case let .rod(a0, b0, dia) = f { print("   rod on \(p.name): \(a0) → \(b0) Ø\(dia), instances \(p.instances.count)") } } }
+        }
         let project = Project()
         project.start(.flyingWing)
         snapshotView(GalleryContent().environmentObject(project), size: CGSize(width: 1300, height: 820), to: dir.appendingPathComponent("ui_gallery.png"))

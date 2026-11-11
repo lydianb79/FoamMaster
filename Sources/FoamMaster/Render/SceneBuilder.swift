@@ -112,13 +112,16 @@ enum SceneBuilder {
                     // spar line so the spar is also visible from above.
                     scene.label = "Carbon rod spar – \(d.config.sparSpec.name), groove underneath"
                     for inst in part.instances {
-                        let off = -part.thickness / 2 + dia / 2 - 0.3
+                        // Offsets along the WORLD up direction: mirrored wing halves have a downward placement normal.
+                        let flip: Double = inst.normal.y < 0 ? -1 : 1
+                        let up = inst.normal * flip
+                        let off = (-part.thickness / 2 + dia / 2 - 0.3) * flip
                         let a3 = inst.point(p0, offset: off), b3 = inst.point(p1, offset: off)
-                        let dir = simd_normalize(b3 - a3), up = inst.normal, side = simd_normalize(simd_cross(dir, up))
+                        let dir = simd_normalize(b3 - a3), side = simd_normalize(simd_cross(dir, up))
                         let rod = Mesh3D.extrude(Poly.circle(.zero, dia / 2, segments: 12), z0: 0, z1: simd_distance(a3, b3))
                             .transformed { p in a3 + side * p.x + up * p.y + dir * p.z }
                         scene.addMesh(rod, color: Palette.carbon)
-                        let ta = inst.point(p0, offset: part.thickness / 2), tb = inst.point(p1, offset: part.thickness / 2)
+                        let ta = inst.point(p0, offset: part.thickness / 2 * flip), tb = inst.point(p1, offset: part.thickness / 2 * flip)
                         scene.addMesh(strip(from: ta, to: tb, normal: up, width: max(dia + 1.5, 4), height: 0.25), color: SIMD4(0.12, 0.13, 0.16, 1))
                     }
                     continue

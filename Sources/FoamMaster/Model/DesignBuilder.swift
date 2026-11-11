@@ -153,7 +153,7 @@ enum DesignBuilder {
         func escPosition(motorX x: Double) -> SIMD3<Double> {
             let e = escSize
             let side = c.kind.isTailless || c.isDual ? 0 : t * Double(c.fuselageType.webLayers) / 2 + e.z / 2   // right web face
-            if c.isDual { return [x * 0.8, t / 2 + e.z / 2, c.rootChord * 0.3] }                         // on the wing behind its motor
+            if c.isDual { return [x * 0.8, t / 2 + e.z / 2, c.rootChord * 0.48] }                        // on the wing behind its motor, aft of the spar
             // Tailless: forward on top of the wing, left of the battery – keeps the CG reachable.
             if c.kind.isTailless { return [-(c.battery.size.w / 2 + e.y / 2 + 6), t / 2 + e.z / 2, c.rootChord * 0.25] }
             if c.kind.isTwinBoom { return [side, t / 2 + e.y / 2 + 2, c.rootChord * 0.55] }              // pod top, right side
@@ -871,7 +871,14 @@ enum DesignBuilder {
             // 12 mm inboard of the boom, outside the prop disc (from the pod it would cross the spinning prop).
             let ePushX = xb - 12
             let eServoX = ePushX - armOffset
-            let eServoU = wingServoU(hingeU: w.te(eServoX), sparU: w.le(eServoX) + 0.3 * w.chord(eServoX))
+            // Same chord position as the aileron servos (one row of servos), still clear of the spar groove.
+            let svE = c.servo.size
+            let vsA = a0 + max(14, svE.h / 2 + 6)
+            let uA = wingServoU(hingeU: w.te(vsA) - fA * w.chord(vsA), sparU: w.le(vsA) + 0.3 * w.chord(vsA))
+            let sparE = w.le(eServoX) + 0.3 * w.chord(eServoX)
+            let eServoU = c.hasAilerons
+                ? max(uA, c.sparEnabled ? sparE + c.sparSpec.widthMM / 2 + 4 + svE.l / 2 : uA)
+                : wingServoU(hingeU: w.te(eServoX) - fA * w.chord(eServoX), sparU: sparE)
             wingHoles.append(servoCut("Elevator", center: Vec2(eServoU, eServoX), size: wingServoCut, in: twinMain))
             if !c.isDual && ePushX < propRadius + AircraftConfig.propClearance + 2 {
                 issues.append("The elevator pushrod would pass through the prop disc – increase the stabiliser span (boom spacing) or use a smaller prop.")
