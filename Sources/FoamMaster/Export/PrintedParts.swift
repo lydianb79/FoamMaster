@@ -53,6 +53,23 @@ enum PrintedParts {
                                    quantity: g.count, mesh: servoFrame(cutout: g.size, foam: t), note: "press-fit into servo cutout"))
         }
 
+        // Strut anchors grouped by rod size and boss angle (left and right ends are the same part).
+        var anchors: [String: (dia: Double, deg: Int, labels: [String])] = [:]
+        for st in d.struts {
+            for end in [st.a, st.b] {
+                let deg = Int((end.elevation * 180 / .pi).rounded())
+                let key = String(format: "d%.1f_%02d", st.diameter, deg)
+                anchors[key, default: (st.diameter, deg, [])].labels.append(st.label)
+            }
+        }
+        for (key, g) in anchors.sorted(by: { $0.key < $1.key }) {
+            let dTxt = g.dia == g.dia.rounded() ? String(format: "%.0f", g.dia) : String(format: "%.1f", g.dia)
+            let labels = Array(Set(g.labels.map { String($0.dropLast()) })).sorted { $0.count == $1.count ? $0 < $1 : $0.count < $1.count }
+            out.append(PrintedPart(name: "Strut anchor Ø\(dTxt) mm · \(g.deg)°", fileName: "strut_anchor_\(key.replacingOccurrences(of: ".", with: "_"))deg",
+                                   quantity: g.labels.count, mesh: strutAnchor(dia: g.dia, elevation: Double(g.deg) * .pi / 180),
+                                   note: "rod hole Ø\(String(format: "%.2f", g.dia + 0.25)) mm at \(g.deg)° to the foam – glue onto the \(labels.joined(separator: ", ")) pads on the plan, boss pointing along the arrow"))
+        }
+
         out.append(PrintedPart(name: "Battery tray", fileName: "battery_tray_\(c.battery.rawValue)", quantity: 1,
                                mesh: batteryTray(c.battery), note: "velcro base with side rails"))
         return out
@@ -297,6 +314,29 @@ enum PrintedParts {
         mesh.append(Mesh3D.box(min: [-len, -w / 2, 0], max: [0, w / 2, th]).rotated(a, axis: [0, 1, 0]))
         // Centre web fills the fuselage slot.
         mesh.append(.box(min: [-t / 2, -w / 2, 0], max: [t / 2, w / 2, th + 1]))
+        return mesh
+    }
+
+    /// Strut anchor: a pad glued onto the foam (z 0…1.2) with an inclined square boss (rod hole Ø d + 0.25) at the
+    /// rod's elevation, centred over the pad, and a wedge filling the gap under the boss.
+    /// Mesh frame: x along the surface towards the rod, y across, z up from the foam.
+    static func strutAnchor(dia: Double, elevation phi: Double) -> Mesh3D {
+        let padT = StrutPlanner.padThickness, Lb = StrutPlanner.bossLength, B = StrutPlanner.bossSide(dia)
+        let size = StrutPlanner.padSize(dia: dia, elevation: phi)
+        var mesh = Mesh3D.box(min: [-size.x / 2, -size.y / 2, 0], max: [size.x / 2, size.y / 2, padT])
+        // Boss: square tube along its local x, cross-section (y, z) with the rod hole, then tilted up by φ.
+        let profile = Poly.rect(center: .zero, size: Vec2(B, B))
+        let hole = [Poly.circle(.zero, (dia + 0.25) / 2, segments: 20)]
+        let boss = prism(profile, holes: hole, axis: 0, from: 0, to: Lb)          // x = 0…Lb, profile in (y, z)
+        let start = SIMD3<Double>(-Lb * cos(phi) / 2, 0, padT + B / 2 * cos(phi))
+        mesh.append(boss.rotated(-phi, axis: [0, 1, 0]).translated(start))
+        // Wedge under the boss: from the pad top up to the boss's lower edge.
+        let n = SIMD3<Double>(-sin(phi), 0, cos(phi))                          // boss "down" is −n
+        let low0 = start - n * (B / 2), low1 = low0 + SIMD3(cos(phi), 0, sin(phi)) * Lb
+        if low1.z - padT > 0.05 {
+            let tri = Poly.ccw([Vec2(low0.x, padT - 0.01), Vec2(low1.x, padT - 0.01), Vec2(low1.x, low1.z + 0.01)])
+            mesh.append(prism(tri, axis: 1, from: -B / 2, to: B / 2))
+        }
         return mesh
     }
 

@@ -262,6 +262,7 @@ enum PlanDrawer {
                 text(name, at: map(Poly.centroid(poly)) - Vec2(0, 1.5), size: 2.6, color: .gray, centered: true)
             case let .label(s, p): text(s, at: map(p) - Vec2(0, 2), size: 3.2, color: inkC.withAlphaComponent(0.35), weight: .heavy, centered: true)
             case let .cg(p): drawCG(ctx, map(p))
+            case let .strutAnchor(c, dir, size, label): drawStrutAnchor(ctx, map: map, center: c, dir: dir, size: size, label: label)
             }
         }
 
@@ -274,6 +275,31 @@ enum PlanDrawer {
         ctx.setStrokeColor(inkC.cgColor)
         ctx.setLineWidth(0.4)
         ctx.strokePath()
+    }
+
+    static let strutColor = NSColor(calibratedRed: 0.45, green: 0.25, blue: 0.85, alpha: 1)
+
+    /// Printed strut anchor: pad outline (glue area), arrow along the rod direction, label S1 … .
+    static func drawStrutAnchor(_ ctx: CGContext, map: (Vec2) -> Vec2, center c: Vec2, dir d: Vec2, size: Vec2, label: String) {
+        let w = Vec2(-d.y, d.x)
+        let hx = d * size.x / 2, hy = w * size.y / 2
+        let pad = [c - hx - hy, c + hx - hy, c + hx + hy, c - hx + hy]
+        ctx.saveGState()
+        ctx.addPath(path(pad, map)); ctx.setFillColor(strutColor.withAlphaComponent(0.12).cgColor); ctx.fillPath()
+        ctx.addPath(path(pad, map)); ctx.setStrokeColor(strutColor.cgColor); ctx.setLineWidth(0.3)
+        ctx.setLineDash(phase: 0, lengths: [1.2, 0.8]); ctx.strokePath()
+        ctx.restoreGState()
+        // Arrow from the pad centre along the rod.
+        let a = map(c), b = map(c + d * (size.x / 2 + 7))
+        line(ctx, a, b, color: strutColor, width: 0.35)
+        let u = simd_normalize(b - a), n = Vec2(-u.y, u.x)
+        line(ctx, b, b - u * 1.8 + n * 1.1, color: strutColor, width: 0.35)
+        line(ctx, b, b - u * 1.8 - n * 1.1, color: strutColor, width: 0.35)
+        ctx.saveGState(); ctx.setFillColor(strutColor.cgColor)
+        ctx.fillEllipse(in: CGRect(x: a.x - 0.7, y: a.y - 0.7, width: 1.4, height: 1.4)); ctx.restoreGState()
+        // Label beside the pad, away from the arrow.
+        let side = map(c - d * (size.x / 2 + 2.5)) + Vec2(0, -1.6)
+        text(label, at: side, size: 2.6, color: strutColor, weight: .bold, centered: true)
     }
 
     static func drawCG(_ ctx: CGContext, _ c: Vec2) {

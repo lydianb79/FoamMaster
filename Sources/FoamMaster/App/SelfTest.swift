@@ -5,6 +5,42 @@ import SwiftUI
 
 /// `FoamMaster --selftest <outdir>`: builds every model type, prints the analysis and writes PDFs/STLs.
 enum SelfTest {
+    /// Carbon struts: soft builds (EPP 6 mm) with struts off / auto, every type with struts always.
+    @MainActor static func strutReport(_ dir: URL) {
+        for kind in AircraftKind.allCases {
+            for (mode, m) in [(StrutMode.off, FoamMaterial.epp6), (.auto, .epp6), (.always, kind.recommended.material)] {
+                var c = kind.recommended; c.material = m; c.struts = mode
+                c = Project.balanced(FixFinder.evaluate(c).config)
+                let d = DesignBuilder.build(c); let a = Analysis(design: d)
+                let st = a.structure!
+                // Independent re-check of every rod: clear of everything (planner rules) and inside the airframe.
+                let planner = StrutPlanner(design: d, totalMass: a.totalMass, stallSpeed: a.stallSpeed)
+                let clear = d.struts.allSatisfy { s in planner.isClear(s, others: d.struts.filter { $0.label != s.label }) }
+                let sym = d.struts.filter { $0.label.hasSuffix("R") }.allSatisfy { r in
+                    d.struts.contains { l in l.label == String(r.label.dropLast()) + "L" && abs(l.a.rodEnd.x + r.a.rodEnd.x) < 0.01 && abs(l.length - r.length) < 0.01 } }
+                print("   struts \(kind.title) \(m.displayName) \(mode.name): \(d.struts.count) (\(d.struts.map { "\($0.label) Ø\(String(format: "%.1f", $0.diameter)) \(Int($0.length)) mm \(Int(($0.a.elevation * 180 / .pi).rounded()))°/\(Int(($0.b.elevation * 180 / .pi).rounded()))°" }.joined(separator: ", "))), "
+                      + "wing \(String(format: "%.1f", st.wingDeflectionRatio * 100)) %, twist \(st.tailTwistDeg.map { String(format: "%.1f", $0) } ?? "–")°, bend \(st.tailBendDeg.map { String(format: "%.2f", $0) } ?? "–")°, "
+                      + "max force \(String(format: "%.2f", st.maxStrutForce)) N, buckle \(st.strutsBuckle), clear \(clear), symmetric \(sym), prop gap \(String(format: "%.1f", a.propGap)) mm, AUW \(Int(a.totalMass)) g, feasible \(a.feasible)"
+                      + a.checks.filter { $0.severity == .error }.map { " [\($0.title)]" }.joined())
+                if mode != .off && !d.struts.isEmpty && (kind == .trainer || kind == .jet || kind == .nutBall || kind == .flyingWing || kind == .aerobat) {
+                    let tag = "struts_\(kind.rawValue)_\(mode.rawValue)"
+                    try? PlanPDF.render(d, a).write(to: dir.appendingPathComponent("\(tag).pdf"))
+                    for part in PrintedParts.generate(d) where part.fileName.hasPrefix("strut_anchor") {
+                        try? part.mesh.stlData(name: part.name).write(to: dir.appendingPathComponent("\(tag)_\(part.fileName).stl"))
+                    }
+                    let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+                    if let r = Renderer(view: view) {
+                        r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
+                        if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("\(tag)_3d.png")) }
+                        // From below and behind, where most struts are.
+                        r.pitch = -0.35; r.yaw = 2.3
+                        if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("\(tag)_3d_below.png")) }
+                    }
+                }
+            }
+        }
+    }
+
     @MainActor static func run(outDir: String) {
         let dir = URL(fileURLWithPath: outDir)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -106,6 +142,22 @@ enum SelfTest {
                     }
                 }
             }
+        }
+        strutReport(dir)
+        // Struts versus random variants: how many more builds become feasible.
+        do {
+            var off = 0, auto = 0, withStruts = 0
+            for i in 0..<60 {
+                let kind = AircraftKind.allCases[i % AircraftKind.allCases.count]
+                var c = AircraftConfig.random(kind: kind)
+                c.struts = .off
+                if Analysis(design: DesignBuilder.build(c)).feasible { off += 1 }
+                c.struts = .auto
+                let d = DesignBuilder.build(c)
+                if Analysis(design: d).feasible { auto += 1 }
+                if !d.struts.isEmpty { withStruts += 1 }
+            }
+            print("   random struts: feasible \(off)/60 without struts, \(auto)/60 with auto struts (\(withStruts) got struts)")
         }
         // Randomizer: rounded edges appear on tailed types and the variants still build.
         do {

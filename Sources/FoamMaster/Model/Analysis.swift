@@ -132,10 +132,8 @@ struct Analysis {
         }
 
         // --- Performance
-        let sM2 = wingArea * 1e-6
         wingLoading = totalMass / (wingArea * 1e-4)
-        let clMax = c.kind.isTailless ? 0.65 : (c.kind.isNutBall ? 0.95 : 0.8)
-        stallSpeed = sqrt(2 * totalMass / 1000 * 9.81 / (1.225 * sM2 * clMax)) * 3.6
+        stallSpeed = Analysis.stallSpeed(c, totalMass: totalMass, wingArea: wingArea)
         // A prop smaller than the motor's standard size (jet) gives proportionally less static thrust.
         thrust = c.motor.thrust(cells: c.battery.cells) * Double(c.motorCount) * c.propInches / c.motor.propInches
         thrustToWeight = thrust / max(totalMass, 1)
@@ -150,6 +148,21 @@ struct Analysis {
             achievableCG = min(a, b)...max(a, b)
         }
         runChecks(d, t: t)
+    }
+
+    static func stallSpeed(_ c: AircraftConfig, totalMass: Double, wingArea: Double) -> Double {
+        let clMax = c.kind.isTailless ? 0.65 : (c.kind.isNutBall ? 0.95 : 0.8)
+        return sqrt(2 * totalMass / 1000 * 9.81 / (1.225 * wingArea * 1e-6 * clMax)) * 3.6
+    }
+
+    /// All-up mass (g) and stall speed (km/h) of a design – the inputs of the structure load case, without the
+    /// rest of the analysis (used by the strut planner while the design is being built).
+    static func massAndStall(_ d: Design) -> (mass: Double, stall: Double) {
+        let c = d.config
+        var m = d.components.reduce(0) { $0 + $1.mass }
+        for p in d.parts { m += p.massEach * Double(p.instances.count) }
+        let area = c.kind.isNutBall ? .pi / 4 * c.rootChord * c.wingspan : (c.rootChord + c.tipChord) * c.semiSpan
+        return (m, stallSpeed(c, totalMass: m, wingArea: area))
     }
 
     static func batteryLimits(_ c: AircraftConfig) -> ClosedRange<Double> {
@@ -253,13 +266,22 @@ struct Analysis {
         }
 
         // Structure – beam physics (see StructureReport)
-        let st = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed)
+        let st = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed, struts: d.struts)
         structure = st
         let pct = st.wingDeflectionRatio * 100
-        let wingFix = c.sparEnabled ? "Use thicker foam, a bigger spar or reduce span." : "Enable the carbon spar (top + bottom)."
-        if pct >= 10 { add(.error, "Structure", "Wing far too flexible", "Tip bends \(f0(st.wingTipDeflection)) mm (\(f0(pct)) % of the half span) at 3 g. \(wingFix)") }
-        else if pct >= 4 { add(.warning, "Structure", "Wing flexes noticeably", "Tip bends \(f0(st.wingTipDeflection)) mm (\(f1(pct)) %) at 3 g. \(wingFix)") }
-        else { add(.ok, "Structure", "Wing stiffness OK", "Tip deflection \(f1(st.wingTipDeflection)) mm (\(f1(pct)) %) at 3 g\(c.sparEnabled ? " with spars top + bottom" : "").") }
+        let strutHint = c.struts == .off ? " Or switch the carbon struts on." : ""
+        let wingFix = (c.sparEnabled ? "Use thicker foam, a bigger spar or reduce span." : "Enable the carbon spar.") + strutHint
+        let wingWith = (c.sparEnabled ? " with the \(c.sparSpec.name) spar" : "") + (st.wingStruts > 0 ? " and \(st.wingStruts) carbon struts" : "")
+        if pct >= StructureReport.wingErrorPct { add(.error, "Structure", "Wing far too flexible", "Tip bends \(f0(st.wingTipDeflection)) mm (\(f0(pct)) % of the half span) at 3 g\(wingWith). \(wingFix)") }
+        else if pct >= StructureReport.wingWarnPct { add(.warning, "Structure", "Wing flexes noticeably", "Tip bends \(f0(st.wingTipDeflection)) mm (\(f1(pct)) %) at 3 g\(wingWith). \(wingFix)") }
+        else { add(.ok, "Structure", "Wing stiffness OK", "Tip deflection \(f1(st.wingTipDeflection)) mm (\(f1(pct)) %) at 3 g\(wingWith).") }
+        if !d.struts.isEmpty {
+            let rods = Dictionary(grouping: d.struts, by: \.diameter).sorted { $0.key < $1.key }
+                .map { "\($0.value.count) × \(CarbonSpar.strutRod($0.key).name)" }.joined(separator: ", ")
+            let why = c.struts == .always ? "fitted on request" : "added automatically – without them the \([st.wingStruts > 0 ? "wing" : nil, st.tailStruts > 0 ? "fuselage" : nil].compactMap { $0 }.joined(separator: " and ")) would be too flexible"
+            add(.info, "Structure", "Carbon struts", "\(rods) (\(why)), \(d.struts.count * 2) printed anchors – marked S1… on the plans. They keep clear of servos, pushrods, horns, battery, control-surface travel and the prop.")
+            if st.strutsBuckle { add(.warning, "Structure", "Strut may buckle", "Up to \(f1(st.maxStrutForce)) N in a strut at the load case – too close to its buckling load. Use a thicker foam or smaller tail surfaces.") }
+        }
         if c.material.thickness >= 8 && c.wingspan < 350 { add(.info, "Structure", "Thick foam on a small model", "\(Int(c.material.thickness)) mm sheet adds weight – 5/6 mm is usually enough.") }
 
         // Servos: hinge moment H = Ch · q · S · c at ~2.5 × stall speed (min 30 km/h), Ch ≈ 0.4 at full throw.
@@ -280,16 +302,17 @@ struct Analysis {
         if let bend = st.tailBendDeg, let twist = st.tailTwistDeg {
             let speed = f0(st.loadSpeed)
             let twistFix = c.kind.isTwinBoom ? "Increase the boom spacing (stab span) or shorten the tail arm."
-                : "Increase fuselage height, use thicker/stiffer foam or shorten the tail arm."
+                : "Increase fuselage height, use thicker/stiffer foam or shorten the tail arm." + strutHint
+            let braced = st.tailStruts > 0 ? ", \(st.tailStruts) tail struts" : ""
             // Worst case: full rudder (or, without a rudder, an equally strong side gust on the fin) at twice the stall speed.
             let load = c.hasRudder ? "full rudder" : "a strong side gust"
-            if twist >= 6 { add(.error, "Structure", "Fuselage twists too much", "\(f1(twist))° twist at \(load), \(speed) km/h – the tail will flutter\(c.hasRudder ? " and rudder input rolls the plane" : ""). \(twistFix)") }
-            else if twist >= 3 { add(.warning, "Structure", "Fuselage is soft in torsion", "\(f1(twist))° twist at \(load), \(speed) km/h. \(twistFix)") }
-            else { add(.ok, "Structure", "Torsion OK", "\(f1(twist))° twist at \(load), \(speed) km/h (\(c.kind.isTwinBoom ? "twin booms" : c.fuselageType.name)).") }
-            let bendFix = c.kind.isTwinBoom ? "Shorten the tail arm or use a smaller stabiliser." : "Increase fuselage height or shorten the tail arm."
-            if bend >= 3 { add(.error, "Structure", "Tail boom bends too much", "\(f1(bend))° tail deflection at full elevator. \(bendFix)") }
-            else if bend >= 1 { add(.warning, "Structure", "Tail boom flexes", "\(f1(bend))° tail deflection at full elevator. \(bendFix)") }
-            else { add(.ok, "Structure", "Boom bending OK", "\(String(format: "%.2f", bend))° tail deflection at full elevator.") }
+            if twist >= StructureReport.twistErrorDeg { add(.error, "Structure", "Fuselage twists too much", "\(f1(twist))° twist at \(load), \(speed) km/h\(braced) – the tail will flutter\(c.hasRudder ? " and rudder input rolls the plane" : ""). \(twistFix)") }
+            else if twist >= StructureReport.twistWarnDeg { add(.warning, "Structure", "Fuselage is soft in torsion", "\(f1(twist))° twist at \(load), \(speed) km/h\(braced). \(twistFix)") }
+            else { add(.ok, "Structure", "Torsion OK", "\(f1(twist))° twist at \(load), \(speed) km/h (\(c.kind.isTwinBoom ? "twin booms" : c.fuselageType.name)\(braced)).") }
+            let bendFix = (c.kind.isTwinBoom ? "Shorten the tail arm or use a smaller stabiliser." : "Increase fuselage height or shorten the tail arm.") + (c.kind.isTwinBoom ? "" : strutHint)
+            if bend >= StructureReport.bendErrorDeg { add(.error, "Structure", "Tail boom bends too much", "\(f1(bend))° tail deflection at full elevator\(braced). \(bendFix)") }
+            else if bend >= StructureReport.bendWarnDeg { add(.warning, "Structure", "Tail boom flexes", "\(f1(bend))° tail deflection at full elevator\(braced). \(bendFix)") }
+            else { add(.ok, "Structure", "Boom bending OK", "\(String(format: "%.2f", bend))° tail deflection at full elevator\(braced).") }
         }
 
         // Propeller clearance

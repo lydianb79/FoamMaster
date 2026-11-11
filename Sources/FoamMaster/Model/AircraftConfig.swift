@@ -222,6 +222,8 @@ struct AircraftConfig: Codable, Equatable {
     var motorLayout: MotorLayout = .single
     /// Winglets on tailed aircraft (tailless types choose winglets / centre fin via `taillessFins`).
     var tailWinglets: Bool = false
+    /// Carbon stabilisation struts: automatic (when the stiffness checks would fail), always or off.
+    var struts: StrutMode = .auto
     var hasWinglets: Bool { kind.isTailless ? taillessFins == .winglets : tailWinglets }
     var isDual: Bool { motorLayout == .dualTractor && kind.allowsDualMotors }
     var motorCount: Int { isDual ? 2 : 1 }

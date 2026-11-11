@@ -104,6 +104,21 @@ struct PropClearance {
                 }
             }
         }
+        // Carbon struts too.
+        for mx in c.motorXs {
+            for st in d.struts {
+                let a = st.a.rodEnd, b = st.b.rodEnd
+                let n = max(2, Int(simd_distance(a, b) / 1.0))
+                for k in 0...n {
+                    let p = a + (b - a) * (Double(k) / Double(n))
+                    let r = simd_length(SIMD2(p.x - mx, p.y))
+                    let sAx = (p.z - c.propPlaneZ) * (c.isPusher ? -1 : 1)
+                    let axialOut = sAx >= 0 ? max(0, sAx - c.propDepthIn) : max(0, -sAx - c.propDepthOut)
+                    let g = max(0, (axialOut * axialOut + max(0, r - c.propRadius) * max(0, r - c.propRadius)).squareRoot() - st.diameter / 2)
+                    if g < best.gap { best = PropClearance(gap: g, part: "carbon strut \(st.label)") }
+                }
+            }
+        }
         if best.gap == .greatestFiniteMagnitude { best.gap = 99 }
         return best
     }

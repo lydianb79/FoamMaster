@@ -145,8 +145,38 @@ enum DesignBuilder {
         c.fuselageHeight = max(c.fuselageHeight, c.minFuselageHeight)
         var b = Builder(c: c)
         b.run()
-        return Design(config: c, parts: b.parts, components: b.components, controls: b.controls,
-                      servoCutouts: b.servoCutouts, geometryIssues: b.issues, trussLength: b.trussLength)
+        var d = Design(config: c, parts: b.parts, components: b.components, controls: b.controls,
+                       servoCutouts: b.servoCutouts, geometryIssues: b.issues, trussLength: b.trussLength)
+        if c.struts != .off { addStruts(&d) }
+        return d
+    }
+
+    /// Carbon struts where the stiffness checks would fail (or always, on request): rods + printed anchors as
+    /// components (mass / CG), anchor marks on the plans of the parts they are glued to.
+    static func addStruts(_ d: inout Design) {
+        let loads = Analysis.massAndStall(d)
+        let struts = StrutPlanner.plan(d, totalMass: loads.mass, stallSpeed: loads.stall)
+        guard !struts.isEmpty else { return }
+        d.struts = struts
+        var marked = Set<String>()
+        for st in struts {
+            d.components.append(MassItem(name: "Carbon strut \(st.label) – \(st.rod.name)", mass: st.rodMass,
+                                         position: (st.a.rodEnd + st.b.rodEnd) / 2, category: "Hardware"))
+            for end in [st.a, st.b] {
+                let mesh = PrintedParts.strutAnchor(dia: st.diameter, elevation: end.elevation)
+                d.components.append(MassItem(name: "Strut anchor \(st.label)", mass: mesh.volume * 1.24e-3 * 0.85,
+                                             position: end.surface + end.normal * 2, category: "Printed"))
+                // One mark per spot on a plan: mirrored halves and both faces of a web share it.
+                let key = "\(end.partIndex)-\(Int((end.plan.x * 2).rounded()))-\(Int((end.plan.y * 2).rounded()))"
+                guard marked.insert(key).inserted else { continue }
+                let base = String(st.label.dropLast())
+                let part = d.parts[end.partIndex]
+                let shared = part.mirroredPair || abs(end.normal.x) > 0.9
+                // Which face: plans show horizontal parts from above, webs from the side (anchors on both faces).
+                let face = abs(end.normal.x) > 0.9 ? " L+R" : (end.normal.y < 0 ? " under" : " top")
+                d.parts[end.partIndex].features.append(.strutAnchor(end.plan, end.planDir, end.padSize, (shared ? base : st.label) + face))
+            }
+        }
     }
 
     private struct Builder {

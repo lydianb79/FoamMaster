@@ -103,7 +103,11 @@ enum PlanPDF {
         }
         PlanDrawer.drawCG(ctx, Vec2(120, ly + 2))
         PlanDrawer.text("Balance point (marked on wing & fuselage)", at: Vec2(128, ly + 6), size: 3)
-        PlanDrawer.text("V-notches = alignment marks · tabs fit matching slots", at: Vec2(110, ly + 14), size: 3)
+        // Right column below the line legend (kept clear of the long legend lines on the left).
+        PlanDrawer.drawStrutAnchor(ctx, map: { $0 }, center: Vec2(116, ly + 33), dir: Vec2(1, 0), size: Vec2(9, 7), label: "S1")
+        PlanDrawer.text("Strut anchor – glue the printed anchor on the", at: Vec2(132, ly + 29), size: 3)
+        PlanDrawer.text("pad, arrow = rod direction (S1 L/R …)", at: Vec2(132, ly + 33.5), size: 3)
+        PlanDrawer.text("V-notches = alignment marks · tabs fit matching slots", at: Vec2(110, ly + 42), size: 3)
 
         // Tile map
         let my = 262.0

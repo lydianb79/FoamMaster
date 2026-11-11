@@ -9,6 +9,12 @@ struct FoamMasterApp: App {
 
     init() {
         let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--strutstest") {
+            let dir = URL(fileURLWithPath: i + 1 < args.count ? args[i + 1] : "strutstest")
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            MainActor.assumeIsolated { SelfTest.strutReport(dir) }
+            exit(0)
+        }
         if let i = args.firstIndex(of: "--selftest") {
             MainActor.assumeIsolated { SelfTest.run(outDir: i + 1 < args.count ? args[i + 1] : "selftest") }
             exit(0)

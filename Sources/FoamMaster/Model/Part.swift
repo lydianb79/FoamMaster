@@ -36,6 +36,8 @@ enum Feature {
     /// Dashed outline for component placement (battery, receiver …).
     case zone([Vec2], String)
     case label(String, Vec2)
+    /// Printed strut anchor: pad centre, rod direction on the plan, pad size (along × across), label (S1 …).
+    case strutAnchor(Vec2, Vec2, Vec2, String)
 }
 
 enum HoleKind { case slot, servo, hornSlot, drill }
@@ -121,4 +123,6 @@ struct Design {
     var geometryIssues: [String]
     /// Carbon truss strip length (mm, both sides) for the BOM.
     var trussLength: Double = 0
+    /// Carbon stabilisation struts (rods between wing and fuselage webs).
+    var struts: [Strut] = []
 }

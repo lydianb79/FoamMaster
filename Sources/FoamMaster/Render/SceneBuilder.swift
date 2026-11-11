@@ -237,6 +237,23 @@ enum SceneBuilder {
                 }
             }
         }
+        // Carbon struts with their printed anchors (same mesh as the STL).
+        for st in d.struts {
+            scene.label = "Carbon strut \(st.label) – \(st.rod.name), \(Int(st.length.rounded())) mm"
+            let a3 = st.a.rodEnd, dir = st.direction
+            let side = simd_normalize(abs(dir.y) < 0.9 ? simd_cross(dir, [0, 1, 0]) : simd_cross(dir, [1, 0, 0]))
+            let up = simd_cross(side, dir)
+            let rod = Mesh3D.extrude(Poly.circle(.zero, st.diameter / 2, segments: 10), z0: 0, z1: st.length)
+                .transformed { p in a3 + side * p.x + up * p.y + dir * p.z }
+            scene.addMesh(rod, color: Palette.carbon)
+            for end in [st.a, st.b] {
+                let w = simd_cross(end.normal, end.along)
+                let m = PrintedParts.strutAnchor(dia: st.diameter, elevation: end.elevation)
+                    .transformed { p in end.surface + end.along * p.x + w * p.y + end.normal * p.z }
+                scene.label = "Strut anchor \(st.label) (printed) – \(Int((end.elevation * 180 / .pi).rounded()))°"
+                scene.addMesh(simd_dot(simd_cross(end.along, w), end.normal) < 0 ? m.flipped : m, color: Palette.printed)
+            }
+        }
         // Linkages: servo arm (white), pushrod, and the printed horn standing out of the surface.
         for ctrl in d.controls {
             let arm = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition

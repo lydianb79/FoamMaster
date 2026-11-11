@@ -61,7 +61,7 @@ struct ViewportView: View {
             }
             .padding(16)
             if let c = project.config {
-                VStack { HStack { Spacer(); ComponentLegend(config: c) }; Spacer() }
+                VStack { HStack { Spacer(); ComponentLegend(config: c, struts: project.design?.struts ?? []) }; Spacer() }
                     .padding(.top, 84).padding(.trailing, 20)
             }
         }
@@ -149,6 +149,7 @@ struct FeasibilityBadge: View {
 /// Colour key for the 3D view – shows only what the current design contains. Hovering an entry explains it.
 struct ComponentLegend: View {
     var config: AircraftConfig
+    var struts: [Strut] = []
     @State private var hovered: String?
 
     private func swatch(_ c: SIMD4<Float>) -> Color { Color(red: Double(c.x), green: Double(c.y), blue: Double(c.z)) }
@@ -168,8 +169,9 @@ struct ComponentLegend: View {
             ("Servo arm", Palette.linkage, "Servo arms; the white lines are the Ø1 mm carbon pushrods"),
             ("Printed parts", Palette.printed, "Motor mount, servo frames, horns, battery tray – exported as STL"),
         ]
-        if c.sparEnabled || c.kind.isTwinBoom {
-            list.append(("Carbon", Palette.carbon, [c.sparEnabled ? "\(c.sparSpec.name) wing spar" : nil, c.kind.isTwinBoom ? "\(CarbonSpar.tube4.name) tail booms" : nil].compactMap { $0 }.joined(separator: " · ")))
+        if c.sparEnabled || c.kind.isTwinBoom || !struts.isEmpty {
+            list.append(("Carbon", Palette.carbon, [c.sparEnabled ? "\(c.sparSpec.name) wing spar" : nil, c.kind.isTwinBoom ? "\(CarbonSpar.tube4.name) tail booms" : nil,
+                                                     struts.isEmpty ? nil : "\(struts.count) stabilisation struts in printed anchors"].compactMap { $0 }.joined(separator: " · ")))
         }
         list.append(("Centre of gravity", Palette.cg, "Pink ball = current CG, green line = target, faint lines = allowed range (toggle with CG)"))
         return list

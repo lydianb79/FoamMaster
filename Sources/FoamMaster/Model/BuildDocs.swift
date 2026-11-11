@@ -49,6 +49,15 @@ enum BuildDocs {
         if d.trussLength > 0 {
             items.append(BOMItem(category: "Carbon", item: "Carbon flat strip 3 × 0.5 mm", spec: "Zig-zag truss on both sides of the fuselage halves, total \(Int(ceil(d.trussLength / 10) * 10)) mm", quantity: "\(Int(ceil(d.trussLength / 1000)))× 1 m"))
         }
+        for (dia, group) in Dictionary(grouping: d.struts, by: \.diameter).sorted(by: { $0.key < $1.key }) {
+            let lengths = group.map { Int(ceil($0.length)) }
+            let total = lengths.reduce(0, +)
+            let pairs = Dictionary(grouping: group, by: { String($0.label.dropLast()) }).sorted { $0.key.count == $1.key.count ? $0.key < $1.key : $0.key.count < $1.key.count }
+                .map { "\($0.key) \(Int(ceil($0.value[0].length))) mm" }.joined(separator: ", ")
+            items.append(BOMItem(category: "Carbon", item: "\(CarbonSpar.strutRod(dia).name) (struts)",
+                                 spec: "Stabilisation struts, cut to length: \(pairs) (2× each, left + right) – total \(Int(ceil(Double(total) / 10) * 10 + 20)) mm, \(String(format: "%.1f", group.reduce(0) { $0 + $1.rodMass })) g",
+                                 quantity: "\(group.count)×"))
+        }
         let hingeLen = d.parts.reduce(0.0) { sum, p in
             sum + p.features.reduce(0.0) { s2, f in if case let .hinge(a, b) = f { return s2 + simd_distance(a, b) * Double(p.quantity) }; return s2 }
         }
@@ -116,6 +125,11 @@ enum BuildDocs {
             // Replace the single-motor step(s) with the twin-motor installation.
             s.removeAll { $0.symbol == "fanblades" }
             s.append(BuildStep(title: "Mount both motors", text: "\(c.kind.isTailless ? "Glue the centre keel under the wing with its tabs. " : "")Glue a 3 × 0.5 mm carbon strip into the leading edge between the two MOTOR marks, then push the wing-clamp motor mounts onto the leading edge at ±\(Int(c.dualMotorX)) mm and glue. Fit the CW prop on the right and the CCW prop on the left so both blow the same way, and check the props clear the fuselage.", symbol: "fanblades"))
+        }
+        if !d.struts.isEmpty {
+            let wing = d.struts.contains { $0.group == .wing }, tail = d.struts.contains { $0.group == .tail }
+            let what = [wing ? "the wing to the fuselage" : nil, tail ? "the tail boom to the wing" : nil].compactMap { $0 }.joined(separator: " and ")
+            s.append(BuildStep(title: "Fit the carbon struts", text: "The struts brace \(what). Glue the printed strut anchors onto the purple S-pads on the plans (boss pointing along the arrow; a mark on a fuselage half means both sides). Cut each rod to the length in the materials list, push it into both bosses with the plane resting flat and square, then fix it with a drop of thin CA at each end. Check every control surface moves fully without touching a strut.", symbol: "line.3.crossed.swirl.circle"))
         }
         s.append(BuildStep(title: "Install servos & linkages", text: "Glue the printed servo frames into the cutouts, push the servos in and centre them with the transmitter. Glue the horns into the horn slots (hole row over the hinge line). Make pushrods from Ø1 mm carbon with Z-bent 0.8 mm wire ends.", symbol: "gearshape.2"))
         s.append(BuildStep(title: "Electronics", text: "Connect ESC and servos to the receiver, fix the receiver with double-sided tape, route wires flat and tape them down. Fix velcro for the \(c.battery.name).", symbol: "bolt"))
