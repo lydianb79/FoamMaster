@@ -44,6 +44,17 @@ enum SelfTest {
             }
             print("   recommended set: \(String(format: "%.2f", Date().timeIntervalSince(t0))) s")
         }
+        // Servo placement report (recommended variants): servo ahead of the hinge, pushrod, balance.
+        for kind in AircraftKind.allCases {
+            for one in [false, true] where !one || kind.allowsSingleAileronServo {
+                var c = kind.recommended; if one { c.aileronServos = 1; c = FixFinder.evaluate(c).config }
+                let d = DesignBuilder.build(c); let a = Analysis(design: d)
+                let wingCtrl = d.controls.filter { $0.name.contains("aileron") || $0.name.contains("elevon") }
+                let gaps = wingCtrl.map { $0.hingeMid.z - $0.servoPosition.z }   // rough: hinge mid vs servo centre
+                let rods = d.controls.map { simd_distance($0.armPosition == .zero ? $0.servoPosition : $0.armPosition, $0.hornPosition) }
+                print("   servos \(kind.title)\(one ? " 1-servo" : ""): servo z \(wingCtrl.first.map { String(format: "%.0f", $0.servoPosition.z) } ?? "-"), hinge−servo \(gaps.first.map { String(format: "%.0f", $0) } ?? "-") mm, pushrods \(String(format: "%.0f", rods.reduce(0, +))) mm, battery \(Int(c.batteryPosition)) (\(c.battery.name)), CG \(String(format: "%.1f", a.cg.z)) / target \(String(format: "%.1f", a.recommendedCG)), AUW \(String(format: "%.1f", a.totalMass)) g, score \(a.score)" + d.geometryIssues.map { " [\($0)]" }.joined())
+            }
+        }
         let project = Project()
         project.start(.flyingWing)
         snapshotView(GalleryContent().environmentObject(project), size: CGSize(width: 1300, height: 820), to: dir.appendingPathComponent("ui_gallery.png"))
