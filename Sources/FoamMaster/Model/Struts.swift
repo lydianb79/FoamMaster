@@ -41,6 +41,17 @@ struct StrutAnchor {
     /// > 0: the boss sits on the side of a printed foot under the bottom edge of the web (depth of the foot); the
     /// end then always gets a saddle.
     var footDepth: Double = 0
+    /// Set when this end shares one printed pad with the end of another strut beside it (wing underside).
+    var shared: SharedPad? = nil
+}
+
+/// One printed anchor for two rod ends side by side: a pad covering both footprints with both bosses on it.
+struct SharedPad {
+    /// Labels of the two struts (sorted), the part / instance and the pad outline on the part plan.
+    var labels: [String]
+    var partIndex: Int
+    var instanceIndex: Int
+    var plan: [Vec2]
 }
 
 /// One-piece printed mount for a left/right strut pair at the bottom edge of the fuselage web: a side plate on each
@@ -231,7 +242,64 @@ struct StrutPlanner {
             s2.label = "S\(n)\(s.a.surface.x < 0 ? "L" : "R")"
             out.append(s2)
         }
-        return p.combineBottomMounts(out)
+        return p.combineWingEnds(p.combineBottomMounts(out))
+    }
+
+    /// Wing ends of two different struts lying side by side on the same wing face get one printed pad with both
+    /// bosses, when the joint pad fits on the fixed foam clear of slots and cutouts.
+    func combineWingEnds(_ struts: [Strut]) -> [Strut] {
+        var out = struts
+        for i in out.indices where out[i].a.shared == nil {
+            for j in out.indices where j > i && out[j].a.shared == nil {
+                let a = out[i].a, b = out[j].a
+                guard a.partIndex == b.partIndex, a.instanceIndex == b.instanceIndex, simd_dot(a.normal, b.normal) > 0.99,
+                      simd_distance(a.surface, b.surface) < 22 else { continue }
+                // Joint outline: convex hull of both pad rectangles (plan coordinates), 1 mm margin.
+                var pts: [Vec2] = []
+                for e in [a, b] {
+                    let w = Vec2(-e.planDir.y, e.planDir.x)
+                    for sx in [-1.0, 1.0] { for sy in [-1.0, 1.0] {
+                        pts.append(e.plan + e.planDir * (sx * (e.padSize.x / 2 + 1)) + w * (sy * (e.padSize.y / 2 + 1)))
+                    } }
+                }
+                let hull = Self.convexHull(pts)
+                let part = d.parts[a.partIndex]
+                let fixed = part.regions.first { !$0.isControl }?.polygon ?? part.outline
+                let holes = part.holes.map { h -> (lo: Vec2, hi: Vec2) in
+                    let bb = Poly.bounds(h.polygon); let m = h.kind == .servo ? PrintedParts.servoFrameFlange + 1.5 : 1.5
+                    return (bb.min - Vec2(m, m), bb.max + Vec2(m, m))
+                }
+                // Sample the hull edges and inside on a 2 mm grid.
+                let bb = Poly.bounds(hull)
+                var ok = true
+                var u = bb.min.x
+                while ok && u <= bb.max.x {
+                    var v = bb.min.y
+                    while v <= bb.max.y {
+                        let q = Vec2(u, v)
+                        if Poly.contains(hull, q) && (!Poly.contains(fixed, q) || !Poly.contains(part.outline, q)
+                            || holes.contains(where: { q.x > $0.lo.x && q.x < $0.hi.x && q.y > $0.lo.y && q.y < $0.hi.y })) { ok = false; break }
+                        v += 2
+                    }
+                    u += 2
+                }
+                guard ok else { continue }
+                let sp = SharedPad(labels: [out[i].label, out[j].label].sorted(), partIndex: a.partIndex, instanceIndex: a.instanceIndex, plan: hull)
+                out[i].a.shared = sp; out[j].a.shared = sp
+                break
+            }
+        }
+        return out
+    }
+
+    static func convexHull(_ points: [Vec2]) -> [Vec2] {
+        let p = points.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+        guard p.count > 2 else { return p }
+        func cross(_ o: Vec2, _ a: Vec2, _ b: Vec2) -> Double { (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x) }
+        var lower: [Vec2] = [], upper: [Vec2] = []
+        for q in p { while lower.count >= 2 && cross(lower[lower.count - 2], lower[lower.count - 1], q) <= 0 { lower.removeLast() }; lower.append(q) }
+        for q in p.reversed() { while upper.count >= 2 && cross(upper[upper.count - 2], upper[upper.count - 1], q) <= 0 { upper.removeLast() }; upper.append(q) }
+        return Array(lower.dropLast() + upper.dropLast())
     }
 
     /// Left and right rods that end side by side near the bottom edge of the same fuselage web get one printed
@@ -688,11 +756,19 @@ struct StrutPlanner {
         let s = c.semiSpan
         var fallback: (score: Double, struts: [Strut])?
         let rootClear = max(c.kind.hasFuselage ? c.fuselagePlateWidth / 2 : 0, c.isDual ? c.dualMotorX + c.propRadius + 8 : 0) + 30
+        // Spots on the wing underside: first right beside the wing ends of tail struts already placed under the wing
+        // (both rods then share one printed anchor), then the usual grid (mid span, spar line first).
+        var spots: [(x: Double, z: Double)] = []
+        for st in existing where st.a.normal.y < 0 && st.a.surface.x > 0 {
+            for dz in [-11.0, 11, -14, 14, -18, 18] { spots.append((st.a.surface.x, st.a.surface.z + dz)) }
+        }
         for f in [0.55, 0.45, 0.65, 0.38, 0.72] {
             let x = f * s
             guard x > rootClear, x < s - 25, let ch = wingChord(atX: x) else { tally?("span station unusable (x \(Int(x)), root clear \(Int(rootClear)))"); continue }
-            for q in [0.3, 0.38, 0.22, 0.46, 0.55, 0.15] {
-                let z = ch.le + q * (ch.te - ch.le)
+            for q in [0.3, 0.38, 0.22, 0.46, 0.55, 0.15] { spots.append((x, ch.le + q * (ch.te - ch.le))) }
+        }
+        for (x, z) in spots {
+            do {
                 for dz in [0.0, -14, 14, 28, -28, 42, -42] {
                     let zb = z + dz
                     var fitted = false
@@ -812,7 +888,8 @@ struct StrutPlanner {
                         }
                         return []
                     }
-                    let upper = pick(upperZ, top: true, name: "Tail strut above", others: [])
+                    // Sport Jet: tail struts only underneath (above the boom sits the prop slot).
+                    let upper = c.kind.isJet ? [] : pick(upperZ, top: true, name: "Tail strut above", others: [])
                     let lower = pick(lowerZ, top: false, name: "Tail strut below", others: upper)
                     var sets: [[Strut]] = []
                     if lower.count == 2 { sets.append(lower) }

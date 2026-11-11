@@ -40,6 +40,8 @@ enum Feature {
     case strutAnchor(Vec2, Vec2, Vec2, String)
     /// One-piece strut saddle: outline of its side plates on the web (from the bottom edge up), pair label (S1 …).
     case strutSaddle([Vec2], String)
+    /// Joint pad of a double strut anchor (two rods side by side): outline and text.
+    case strutPlate([Vec2], String)
 }
 
 enum HoleKind { case slot, servo, hornSlot, drill }

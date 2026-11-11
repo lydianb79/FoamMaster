@@ -160,7 +160,7 @@ enum SelfTest {
                     d.struts.contains { l in l.label == String(r.label.dropLast()) + "L" && abs(l.a.rodEnd.x + r.a.rodEnd.x) < 0.01 && abs(l.length - r.length) < 0.01 } }
                 print("   struts \(kind.title) \(m.displayName) \(mode.name): \(d.struts.count) (\(d.struts.map { "\($0.label) Ø\(String(format: "%.1f", $0.diameter)) \(Int($0.length)) mm \(Int(($0.a.elevation * 180 / .pi).rounded()))°/\(Int(($0.b.elevation * 180 / .pi).rounded()))°" }.joined(separator: ", "))), "
                       + "wing \(String(format: "%.1f", st.wingDeflectionRatio * 100)) %, twist \(st.tailTwistDeg.map { String(format: "%.1f", $0) } ?? "–")°, bend \(st.tailBendDeg.map { String(format: "%.2f", $0) } ?? "–")°, fin \(st.finFlexBareDeg.map { String(format: "%.1f", $0) } ?? "–")→\(st.finFlexDeg.map { String(format: "%.2f", $0) } ?? "–")°, "
-                      + "saddles \(d.struts.filter { $0.b.saddle != nil }.count / 2) (feet \(d.struts.filter { $0.b.footDepth > 0 }.count / 2)), wing below \(d.struts.filter { $0.group == .wing }.allSatisfy { $0.b.rodEnd.y < $0.a.rodEnd.y }), max force \(String(format: "%.2f", st.maxStrutForce)) N, buckle \(st.strutsBuckle), clear \(clear), symmetric \(sym), prop gap \(String(format: "%.1f", a.propGap)) mm, AUW \(Int(a.totalMass)) g, feasible \(a.feasible)"
+                      + "saddles \(d.struts.filter { $0.b.saddle != nil }.count / 2) (feet \(d.struts.filter { $0.b.footDepth > 0 }.count / 2)), wing below \(d.struts.filter { $0.group == .wing }.allSatisfy { $0.b.rodEnd.y < $0.a.rodEnd.y }), tail below \(d.struts.filter { $0.group == .tail }.allSatisfy { $0.b.rodEnd.y < 0 }), doubles \(d.struts.filter { $0.a.shared != nil }.count / 2), max force \(String(format: "%.2f", st.maxStrutForce)) N, buckle \(st.strutsBuckle), clear \(clear), symmetric \(sym), prop gap \(String(format: "%.1f", a.propGap)) mm, AUW \(Int(a.totalMass)) g, feasible \(a.feasible)"
                       + a.checks.filter { $0.severity == .error }.map { " [\($0.title)]" }.joined())
                 let sw = surfaceSweep(d)
                 // Fin struts against the tail surfaces (elevator and rudder) in particular.
@@ -198,7 +198,7 @@ enum SelfTest {
                 if mode != .off && !d.struts.isEmpty && (kind == .trainer || kind == .jet || kind == .nutBall || kind == .flyingWing || kind == .aerobat) {
                     let tag = "struts_\(kind.rawValue)_\(mode.rawValue)"
                     try? PlanPDF.render(d, a).write(to: dir.appendingPathComponent("\(tag).pdf"))
-                    for part in PrintedParts.generate(d) where part.fileName.hasPrefix("strut_anchor") || part.fileName.hasPrefix("strut_saddle") {
+                    for part in PrintedParts.generate(d) where part.fileName.hasPrefix("strut_") {
                         try? part.mesh.stlData(name: part.name).write(to: dir.appendingPathComponent("\(tag)_\(part.fileName).stl"))
                     }
                     let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())

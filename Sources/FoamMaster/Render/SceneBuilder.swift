@@ -259,6 +259,13 @@ enum SceneBuilder {
                     }
                     continue
                 }
+                if let sp = end.shared {
+                    if st.label == sp.labels[0], let other = d.struts.first(where: { $0.label == sp.labels[1] }) {
+                        scene.label = "Double strut anchor \(sp.labels.joined(separator: " + ")) (printed, one pad for both rods)"
+                        scene.addMesh(PrintedParts.strutDoubleAnchor(end, other.a, dia1: st.diameter, dia2: other.diameter, design: d), color: Palette.printed)
+                    }
+                    continue
+                }
                 scene.label = "Strut anchor \(st.label) (printed) – \(Int((end.elevation * 180 / .pi).rounded()))°"
                 scene.addMesh(PrintedParts.placedAnchor(end, dia: st.diameter, pad: true), color: Palette.printed)
             }

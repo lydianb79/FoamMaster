@@ -289,8 +289,10 @@ struct Analysis {
             let rods = Dictionary(grouping: d.struts, by: \.diameter).sorted { $0.key < $1.key }
                 .map { "\($0.value.count) × \(CarbonSpar.strutRod($0.key).name)" }.joined(separator: ", ")
             let saddles = d.struts.filter { $0.b.saddle != nil }.count / 2
-            let anchors = d.struts.count * 2 - saddles * 2
-            let mounts = [anchors > 0 ? "\(anchors) printed anchors" : nil, saddles > 0 ? "\(saddles) one-piece saddle\(saddles > 1 ? "s" : "") under the fuselage" : nil]
+            let doubles = d.struts.filter { $0.a.shared != nil }.count / 2
+            let anchors = d.struts.count * 2 - saddles * 2 - doubles * 2
+            let mounts = [anchors > 0 ? "\(anchors) printed anchors" : nil, doubles > 0 ? "\(doubles) double anchors on the wing" : nil,
+                          saddles > 0 ? "\(saddles) one-piece saddle\(saddles > 1 ? "s" : "") under the fuselage" : nil]
                 .compactMap { $0 }.joined(separator: " + ")
             // Per group: fitted on request (On) or because that part would otherwise fail (Auto).
             let groups: [(Int, StrutMode, String, String)] = [(st.wingStruts, c.wingStruts, "wing", "the wing would be too flexible"),

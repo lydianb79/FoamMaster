@@ -264,6 +264,7 @@ enum PlanDrawer {
             case let .cg(p): drawCG(ctx, map(p))
             case let .strutAnchor(c, dir, size, label): drawStrutAnchor(ctx, map: map, center: c, dir: dir, size: size, label: label)
             case let .strutSaddle(poly, label): drawStrutSaddle(ctx, map: map, poly: poly, label: label)
+            case let .strutPlate(poly, label): drawStrutSaddle(ctx, map: map, poly: poly, label: label, text: label)
             }
         }
 
@@ -304,7 +305,7 @@ enum PlanDrawer {
     }
 
     /// One-piece saddle: dashed purple outline of its side plates from the bottom edge up, "S1 saddle" below it.
-    static func drawStrutSaddle(_ ctx: CGContext, map: (Vec2) -> Vec2, poly: [Vec2], label: String) {
+    static func drawStrutSaddle(_ ctx: CGContext, map: (Vec2) -> Vec2, poly: [Vec2], label: String, text caption: String? = nil) {
         ctx.saveGState()
         ctx.addPath(path(poly, map)); ctx.setFillColor(strutColor.withAlphaComponent(0.06).cgColor); ctx.fillPath()
         ctx.addPath(path(poly, map)); ctx.setStrokeColor(strutColor.cgColor); ctx.setLineWidth(0.25)
@@ -313,7 +314,7 @@ enum PlanDrawer {
         let pts = poly.map(map)
         let lowest = pts.max { $0.y < $1.y }!.y          // page y grows downwards
         let cx = pts.reduce(0) { $0 + $1.x } / Double(pts.count)
-        text("\(label) saddle", at: Vec2(cx, lowest + 3.2), size: 2.4, color: strutColor, weight: .bold, centered: true)
+        text(caption ?? "\(label) saddle", at: Vec2(cx, lowest + 3.2), size: 2.4, color: strutColor, weight: .bold, centered: true)
     }
 
     static func drawCG(_ ctx: CGContext, _ c: Vec2) {

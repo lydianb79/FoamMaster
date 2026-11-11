@@ -191,9 +191,25 @@ enum DesignBuilder {
                     }
                     continue
                 }
-                let mesh = PrintedParts.strutAnchor(dia: st.diameter, elevation: end.elevation)
-                d.components.append(MassItem(name: "Strut anchor \(st.label)", mass: mesh.volume * 1.24e-3 * 0.85,
-                                             position: end.surface + end.normal * 2, category: "Printed"))
+                if let sp = end.shared {
+                    // Double anchor: its mass once (with the first strut of the pair), one outline on the wing plan.
+                    if st.label == sp.labels[0], let other = struts.first(where: { $0.label == sp.labels[1] }) {
+                        let mesh = PrintedParts.strutDoubleAnchor(end, other.a, dia1: st.diameter, dia2: other.diameter, design: d)
+                        d.components.append(MassItem(name: "Double strut anchor \(sp.labels.joined(separator: " + "))", mass: mesh.volume * 1.24e-3 * 0.85,
+                                                     position: (end.surface + other.a.surface) / 2 + end.normal * 2, category: "Printed"))
+                        // Mirrored halves share one outline (S1+S2); a one-piece wing gets one per side (S1R+S2R).
+                        let mirrored = d.parts[sp.partIndex].mirroredPair
+                        let names = (mirrored ? sp.labels.map { String($0.dropLast()) } : sp.labels).joined(separator: "+")
+                        let key = "plate-\(sp.partIndex)-\(names)"
+                        if marked.insert(key).inserted {
+                            d.parts[sp.partIndex].features.append(.strutPlate(sp.plan, "\(names) one anchor"))
+                        }
+                    }
+                } else {
+                    let mesh = PrintedParts.strutAnchor(dia: st.diameter, elevation: end.elevation)
+                    d.components.append(MassItem(name: "Strut anchor \(st.label)", mass: mesh.volume * 1.24e-3 * 0.85,
+                                                 position: end.surface + end.normal * 2, category: "Printed"))
+                }
                 // One mark per spot on a plan: mirrored halves and both faces of a web share it.
                 let key = "\(end.partIndex)-\(Int((end.plan.x * 2).rounded()))-\(Int((end.plan.y * 2).rounded()))"
                 guard marked.insert(key).inserted else { continue }

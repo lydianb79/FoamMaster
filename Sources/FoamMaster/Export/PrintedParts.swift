@@ -56,7 +56,7 @@ enum PrintedParts {
         // Strut anchors grouped by rod size and boss angle (left and right ends are the same part).
         var anchors: [String: (dia: Double, deg: Int, labels: [String])] = [:]
         for st in d.struts {
-            for end in [st.a, st.b] where end.saddle == nil {
+            for end in [st.a, st.b] where end.saddle == nil && end.shared == nil {
                 let deg = Int((end.elevation * 180 / .pi).rounded())
                 let key = String(format: "d%.1f_%02d", st.diameter, deg)
                 anchors[key, default: (st.diameter, deg, [])].labels.append(st.label)
@@ -68,6 +68,17 @@ enum PrintedParts {
             out.append(PrintedPart(name: "Strut anchor Ø\(dTxt) mm · \(g.deg)°", fileName: "strut_anchor_\(key.replacingOccurrences(of: ".", with: "_"))deg",
                                    quantity: g.labels.count, mesh: strutAnchor(dia: g.dia, elevation: Double(g.deg) * .pi / 180),
                                    note: "rod hole Ø\(String(format: "%.2f", g.dia + 0.25)) mm at \(g.deg)° to the foam – glue onto the \(labels.joined(separator: ", ")) pads on the plan, boss pointing along the arrow"))
+        }
+
+        // Double anchors: two rod ends side by side on the wing share one pad (left and right are mirror images).
+        var doneShared = Set<String>()
+        for st in d.struts {
+            guard let sp = st.a.shared, doneShared.insert(sp.labels.joined()).inserted,
+                  let other = d.struts.first(where: { $0.label != st.label && sp.labels.contains($0.label) }) else { continue }
+            let name = sp.labels.joined(separator: " + ")
+            out.append(PrintedPart(name: "Double strut anchor \(name)", fileName: "strut_double_\(sp.labels.joined(separator: "_").lowercased())",
+                                   quantity: 1, mesh: strutDoubleAnchorPrint(st.a, other.a, dia1: st.diameter, dia2: other.diameter, design: d),
+                                   note: "one pad for the wing ends of \(name): glue onto the \(sp.labels.map { String($0.dropLast()) }.joined(separator: "+")) mark under the \(st.a.surface.x > 0 ? "right" : "left") wing, bosses pointing along the arrows"))
         }
 
         // One-piece saddles at the bottom of the fuselage (one per left/right pair, each fitted to its spot).
@@ -390,6 +401,28 @@ enum PrintedParts {
         m.append(slab(plate, x0: -fx - T, x1: -fx))
         m.append(slab(bridge, x0: -fx - T, x1: fx + T))
         return m
+    }
+
+    /// Double anchor in the world frame: one pad (the joint outline on the wing face) with the bosses of both rods.
+    static func strutDoubleAnchor(_ e1: StrutAnchor, _ e2: StrutAnchor, dia1: Double, dia2: Double, design d: Design) -> Mesh3D {
+        guard let sp = e1.shared else { return Mesh3D() }
+        let part = d.parts[sp.partIndex], inst = part.instances[sp.instanceIndex]
+        let side = simd_dot(e1.normal, inst.normal) > 0 ? 1.0 : -1.0
+        var pad = Mesh3D.extrude(Poly.ccw(sp.plan), z0: 0, z1: StrutPlanner.padThickness)
+            .transformed { p in inst.point(Vec2(p.x, p.y), offset: side * (part.thickness / 2 + p.z)) }
+        if side < 0 { pad = pad.flipped }
+        var m = pad
+        m.append(placedAnchor(e1, dia: dia1, pad: false))
+        m.append(placedAnchor(e2, dia: dia2, pad: false))
+        return m
+    }
+
+    /// Double anchor as printed: pad flat on the bed, bosses up.
+    static func strutDoubleAnchorPrint(_ e1: StrutAnchor, _ e2: StrutAnchor, dia1: Double, dia2: Double, design d: Design) -> Mesh3D {
+        let n = e1.normal
+        let u = simd_normalize(abs(n.y) < 0.9 ? simd_cross([0, 1, 0], n) : simd_cross([1, 0, 0], n)), v = simd_cross(n, u)
+        let o = (e1.surface + e2.surface) / 2
+        return strutDoubleAnchor(e1, e2, dia1: dia1, dia2: dia2, design: d).transformed { p in let q = p - o; return [simd_dot(q, u), simd_dot(q, v), simd_dot(q, n)] }
     }
 
     /// Saddle as printed: bridge flat on the bed, side plates and bosses pointing up (proper rotation x, −z, y).
