@@ -107,14 +107,19 @@ enum SceneBuilder {
             // Carbon: wing spars (if enabled), truss strips, boom grooves, X-bracing – drawn as strips on both faces.
             for f in part.features {
                 if case let .rod(p0, p1, dia) = f {
-                    // Rod in its groove, bottom flush with the underside (visible from below).
+                    // Rod in its groove under the wing: drawn 0.3 mm proud of the underside so it shows from below
+                    // (flush it would flicker with the foam), plus a thin dark band on the top surface along the
+                    // spar line so the spar is also visible from above.
                     scene.label = "Carbon rod spar – \(d.config.sparSpec.name), groove underneath"
                     for inst in part.instances {
-                        let a3 = inst.point(p0, offset: -part.thickness / 2 + dia / 2), b3 = inst.point(p1, offset: -part.thickness / 2 + dia / 2)
+                        let off = -part.thickness / 2 + dia / 2 - 0.3
+                        let a3 = inst.point(p0, offset: off), b3 = inst.point(p1, offset: off)
                         let dir = simd_normalize(b3 - a3), up = inst.normal, side = simd_normalize(simd_cross(dir, up))
                         let rod = Mesh3D.extrude(Poly.circle(.zero, dia / 2, segments: 12), z0: 0, z1: simd_distance(a3, b3))
                             .transformed { p in a3 + side * p.x + up * p.y + dir * p.z }
                         scene.addMesh(rod, color: Palette.carbon)
+                        let ta = inst.point(p0, offset: part.thickness / 2), tb = inst.point(p1, offset: part.thickness / 2)
+                        scene.addMesh(strip(from: ta, to: tb, normal: up, width: max(dia + 1.5, 4), height: 0.25), color: SIMD4(0.12, 0.13, 0.16, 1))
                     }
                     continue
                 }
