@@ -52,6 +52,19 @@ enum SelfTest {
                 let wingCtrl = d.controls.filter { $0.name.contains("aileron") || $0.name.contains("elevon") }
                 let gaps = wingCtrl.map { $0.hingeMid.z - $0.servoPosition.z }   // rough: hinge mid vs servo centre
                 let rods = d.controls.map { simd_distance($0.armPosition == .zero ? $0.servoPosition : $0.armPosition, $0.hornPosition) }
+                // Gap between each servo cutout and the spar groove in the same part (plan coordinates).
+                var sparGaps: [String] = []
+                for part in d.parts {
+                    let rods: [(Vec2, Vec2, Double)] = part.features.compactMap { if case let .rod(a, b, dd) = $0 { return (a, b, dd) }; return nil }
+                    for h in part.holes where h.kind == .servo {
+                        let bb = Poly.bounds(h.polygon), cy = (bb.min.y + bb.max.y) / 2
+                        for (ra, rb, dd) in rods where cy >= min(ra.y, rb.y) - 1 && cy <= max(ra.y, rb.y) + 1 && abs(rb.y - ra.y) > 1e-6 {
+                            let su = ra.x + (rb.x - ra.x) * (cy - ra.y) / (rb.y - ra.y)
+                            sparGaps.append(String(format: "%@ %.1f", h.note, bb.min.x - (su + dd / 2)))
+                        }
+                    }
+                }
+                if !sparGaps.isEmpty { print("   spar→servo \(kind.title)\(one ? " 1-servo" : ""): " + sparGaps.joined(separator: ", ") + " mm") }
                 print("   servos \(kind.title)\(one ? " 1-servo" : ""): servo z \(wingCtrl.first.map { String(format: "%.0f", $0.servoPosition.z) } ?? "-"), hinge−servo \(gaps.first.map { String(format: "%.0f", $0) } ?? "-") mm, pushrods \(String(format: "%.0f", rods.reduce(0, +))) mm, battery \(Int(c.batteryPosition)) (\(c.battery.name)), CG \(String(format: "%.1f", a.cg.z)) / target \(String(format: "%.1f", a.recommendedCG)), AUW \(String(format: "%.1f", a.totalMass)) g, score \(a.score)" + d.geometryIssues.map { " [\($0)]" }.joined())
             }
         }

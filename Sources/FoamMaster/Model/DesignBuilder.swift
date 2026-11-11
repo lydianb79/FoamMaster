@@ -34,6 +34,21 @@ extension AircraftConfig {
     }
     var firewallThickness: Double { PrintedParts.firewallThickness(motor) }
 
+    /// Single central aileron servo (hangs under the plate in the lower fuselage half): 5 mm AHEAD of the spar rod
+    /// where it crosses the plate when it still sits under the wing root (best for the CG), otherwise 5 mm behind it –
+    /// never on the rod.
+    var centralAileronServoU: Double {
+        let w = TaperedPanel(rootChord: rootChord, tipChord: tipChord, sweep: sweep, semiSpan: semiSpan)
+        let hw = fuselagePlateWidth / 2, l = servo.size.l
+        let spar = w.le(hw) + 0.3 * w.chord(hw)
+        let gap = (sparEnabled ? sparSpec.widthMM / 2 : 1.5) + 5
+        let ahead = spar - gap - l / 2
+        if ahead - l / 2 >= w.le(hw) + rootChord * 0.04 { return ahead }
+        let hinge = w.te(hw) - controlChordPct * w.chord(hw)
+        return min(spar + gap + l / 2, hinge - 20 - l / 2)
+    }
+    var hasCentralAileronServo: Bool { hasAilerons && aileronServos == 1 && kind.allowsSingleAileronServo }
+
     /// Nose face (+ section) `d` mm aft of the nose: plate half width and web height above / below the plate.
     /// Matches the outlines drawn by the builder (the nose tapers to the size of the motor mount / nose cone).
     func noseFace(at d: Double) -> (halfWidth: Double, top: Double, bottom: Double) {
@@ -190,12 +205,7 @@ enum DesignBuilder {
         // under the wing (shaft down), a double-ended arm below it drives both ailerons with one short pushrod each
         // to a horn under each aileron. The upper half keeps the elevator and rudder servos.
         var centralAileron: Bool { c.hasAilerons && c.aileronServos == 1 && c.kind.allowsSingleAileronServo }
-        /// Station: about 55 mm ahead of the aileron hinge so the pushrods run mostly fore-aft.
-        var ailServoU: Double {
-            let hw = c.fuselagePlateWidth / 2, w = wing
-            let hinge = w.te(hw) - c.controlChordPct * w.chord(hw)
-            return max(c.rootChord * 0.06 + c.servo.size.l / 2, min(hinge - 55, c.rootChord * 0.55))
-        }
+        var ailServoU: Double { c.centralAileronServoU }
         var ailShaftU: Double { ailServoU + c.servo.size.l / 2 - 5 }
         /// Half length of the double arm (hole to hub) – longer for bigger servos.
         var ailArm: Double { [.g17: 7.0, .g25: 8, .g37: 9, .g5: 10][c.servo]! }
@@ -265,15 +275,17 @@ enum DesignBuilder {
             [Region(polygon: out.main, isControl: false)] + out.controls.map { Region(polygon: $0, isControl: true) }
         }
 
-        /// Gap between an aileron / elevon hinge and the wing servo's aft edge. The servo moves forward as far as this
-        /// (less pushrod-to-servo crowding at the hinge, CG further forward) but stays 4 mm behind the spar groove.
-        static let wingServoGap = 20.0
+        /// Clear gap between the spar groove and the front edge of a servo next to it (mm).
+        static let servoSparGap = 5.0
+        /// Wing servos (ailerons, elevons, Twin Boom elevator) sit as far forward as possible – front edge about
+        /// `servoSparGap` behind the spar groove (30 % chord line, also used as reference without a spar) – which
+        /// moves the CG forward and lets the battery sit further aft. Never further aft than 8 mm ahead of the hinge.
         func wingServoU(hingeU: Double, sparU: Double) -> Double {
             let l = c.servo.size.l
-            let preferred = hingeU - Self.wingServoGap - l / 2
-            let mostForward = c.sparEnabled ? sparU + c.sparSpec.widthMM / 2 + 4 + l / 2 : -Double.greatestFiniteMagnitude
-            let mostAft = hingeU - 8 - l / 2                       // the old position: never further aft than this
-            return min(mostAft, max(preferred, mostForward))
+            let sparHalf = c.sparEnabled ? c.sparSpec.widthMM / 2 : 1.5
+            let forward = sparU + sparHalf + Self.servoSparGap + l / 2
+            let mostAft = hingeU - 8 - l / 2
+            return min(mostAft, forward)
         }
 
         /// Carbon rod spar on the 30 % chord line, in a groove under the wing.
@@ -871,14 +883,9 @@ enum DesignBuilder {
             // 12 mm inboard of the boom, outside the prop disc (from the pod it would cross the spinning prop).
             let ePushX = xb - 12
             let eServoX = ePushX - armOffset
-            // Same chord position as the aileron servos (one row of servos), still clear of the spar groove.
-            let svE = c.servo.size
-            let vsA = a0 + max(14, svE.h / 2 + 6)
-            let uA = wingServoU(hingeU: w.te(vsA) - fA * w.chord(vsA), sparU: w.le(vsA) + 0.3 * w.chord(vsA))
+            // Same rule as the aileron servos: front edge 5 mm behind the spar groove (one row of servos).
             let sparE = w.le(eServoX) + 0.3 * w.chord(eServoX)
-            let eServoU = c.hasAilerons
-                ? max(uA, c.sparEnabled ? sparE + c.sparSpec.widthMM / 2 + 4 + svE.l / 2 : uA)
-                : wingServoU(hingeU: w.te(eServoX) - fA * w.chord(eServoX), sparU: sparE)
+            let eServoU = wingServoU(hingeU: w.te(eServoX) - fA * w.chord(eServoX), sparU: sparE)
             wingHoles.append(servoCut("Elevator", center: Vec2(eServoU, eServoX), size: wingServoCut, in: twinMain))
             if !c.isDual && ePushX < propRadius + AircraftConfig.propClearance + 2 {
                 issues.append("The elevator pushrod would pass through the prop disc – increase the stabiliser span (boom spacing) or use a smaller prop.")

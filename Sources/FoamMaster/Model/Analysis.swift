@@ -160,7 +160,11 @@ struct Analysis {
         if c.kind.isNutBall { return (-c.noseLength + c.battery.size.l / 2 + 8)...(c.rootChord * 0.45) }
         if c.kind.isJet { return (-c.noseLength + c.battery.size.l / 2 + 15)...(c.rootChord * 0.35) }
         if c.kind.isTwinBoom { return (-c.noseLength + c.battery.size.l / 2 + 5)...(c.rootChord * 0.6) }
-        return (-c.noseLength + c.battery.size.l / 2 + 5)...(c.rootChord)
+        // The central aileron servo pokes out of both sides of the lower fuselage half: the battery (on its side)
+        // has to stay ahead of it.
+        let aft = c.hasCentralAileronServo ? min(c.rootChord, c.centralAileronServoU - c.servo.size.l / 2 - 3 - c.battery.size.l / 2) : c.rootChord
+        let front = -c.noseLength + c.battery.size.l / 2 + 5
+        return front...max(front, aft)
     }
 
     private mutating func add(_ sev: Severity, _ cat: String, _ title: String, _ detail: String) {
