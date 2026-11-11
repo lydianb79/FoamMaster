@@ -98,10 +98,37 @@ enum SelfTest {
                 let sym = d.struts.filter { $0.label.hasSuffix("R") }.allSatisfy { r in
                     d.struts.contains { l in l.label == String(r.label.dropLast()) + "L" && abs(l.a.rodEnd.x + r.a.rodEnd.x) < 0.01 && abs(l.length - r.length) < 0.01 } }
                 print("   struts \(kind.title) \(m.displayName) \(mode.name): \(d.struts.count) (\(d.struts.map { "\($0.label) Ø\(String(format: "%.1f", $0.diameter)) \(Int($0.length)) mm \(Int(($0.a.elevation * 180 / .pi).rounded()))°/\(Int(($0.b.elevation * 180 / .pi).rounded()))°" }.joined(separator: ", "))), "
-                      + "wing \(String(format: "%.1f", st.wingDeflectionRatio * 100)) %, twist \(st.tailTwistDeg.map { String(format: "%.1f", $0) } ?? "–")°, bend \(st.tailBendDeg.map { String(format: "%.2f", $0) } ?? "–")°, "
+                      + "wing \(String(format: "%.1f", st.wingDeflectionRatio * 100)) %, twist \(st.tailTwistDeg.map { String(format: "%.1f", $0) } ?? "–")°, bend \(st.tailBendDeg.map { String(format: "%.2f", $0) } ?? "–")°, fin \(st.finFlexBareDeg.map { String(format: "%.1f", $0) } ?? "–")→\(st.finFlexDeg.map { String(format: "%.2f", $0) } ?? "–")°, "
                       + "max force \(String(format: "%.2f", st.maxStrutForce)) N, buckle \(st.strutsBuckle), clear \(clear), symmetric \(sym), prop gap \(String(format: "%.1f", a.propGap)) mm, AUW \(Int(a.totalMass)) g, feasible \(a.feasible)"
                       + a.checks.filter { $0.severity == .error }.map { " [\($0.title)]" }.joined())
                 let sw = surfaceSweep(d)
+                // Fin struts against the tail surfaces (elevator and rudder) in particular.
+                let finLabels = Set(d.struts.filter { $0.group == .fin }.map(\.label))
+                if !finLabels.isEmpty {
+                    let fs = sw.filter { finLabels.contains($0.strut) }
+                    let bySurface = Dictionary(grouping: fs, by: \.surface).map { k, v in "\(k) \(String(format: "%.1f", v.map(\.gap).min()!)) mm" }.sorted()
+                    // Pushrods (servo arm tip → horn) and horns against the fin rods: closest approach, sampled every 0.5 mm.
+                    var rodGap = Double.greatestFiniteMagnitude
+                    for s in d.struts where s.group == .fin {
+                        for ctrl in d.controls {
+                            let a0 = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition
+                            for (p0, p1) in [(a0, ctrl.hornPosition), (ctrl.hornPosition, ctrl.hornPosition - ctrl.hornAxis * 12)] {
+                                let n = max(1, Int(simd_distance(p0, p1) / 0.5))
+                                for k in 0...n {
+                                    let p = p0 + (p1 - p0) * (Double(k) / Double(n))
+                                    rodGap = min(rodGap, StrutPlanner.distance(p, segment: s.a.rodEnd, s.b.rodEnd) - s.diameter / 2 - 0.5)
+                                }
+                            }
+                        }
+                    }
+                    print("      fin struts vs tail surfaces: \(bySurface.joined(separator: ", "))\(fs.contains { $0.hitAt != nil } ? " CONTACT" : ", all free"); pushrods/horns \(String(format: "%.1f", rodGap)) mm")
+                } else if (kind.hasTail || kind.isNutBall) && !kind.isTwinBoom && !d.struts.isEmpty {
+                    print("      fin struts: NONE FITTED \(d.strutNotes.joined()) bat \(String(format: "%.0f", a.requiredBatteryPosition)) limits \(String(format: "%.0f…%.0f", a.batteryLimits.lowerBound, a.batteryLimits.upperBound)) cg \(String(format: "%.1f…%.1f", a.cgRange.lowerBound, a.cgRange.upperBound))")
+                    let loads = Analysis.massAndStall(d)
+                    let fin = StrutPlanner.plan(d, totalMass: loads.mass, stallSpeed: loads.stall).filter { $0.group == .fin }
+                    let anchors = fin.reduce(0.0) { m, s in m + [s.a, s.b].reduce(0.0) { $0 + PrintedParts.strutAnchor(dia: s.diameter, elevation: $1.elevation).volume * 1.24e-3 * 0.85 } }
+                    print("        would be \(fin.count) rods \(String(format: "%.2f", fin.reduce(0) { $0 + $1.rodMass })) g + anchors \(String(format: "%.2f", anchors)) g at z \(fin.first.map { String(format: "%.0f", $0.b.rodEnd.z) } ?? "–")")
+                }
                 if let w = sw.min(by: { $0.gap < $1.gap }) {
                     let hits = sw.filter { $0.hitAt != nil }
                     print("      surface sweep ±\(Int(c.kind.maxSurfaceThrow))°: closest \(w.surface) ↔ \(w.strut) \(String(format: "%.1f", w.gap)) mm"
@@ -124,18 +151,30 @@ enum SelfTest {
                 }
             }
         }
+        // Default designs (as opened in the editor) in EPP 6 mm on Auto and Depron on Always: fin struts fitted?
+        for kind in AircraftKind.allCases where (kind.hasTail || kind.isNutBall) && !kind.isTwinBoom {
+            for (mode, m) in [(StrutMode.auto, FoamMaterial.epp6), (.always, kind.defaults.material)] {
+                var c = kind.defaults; c.material = m; c.struts = mode
+                c = Project.balanced(c)
+                let d = DesignBuilder.build(c), a = Analysis(design: d)
+                let fin = d.struts.filter { $0.group == .fin }
+                print("   defaults fin \(kind.title) \(m.displayName) \(mode.name): \(d.struts.count) struts, \(d.struts.map { "\($0.label) Ø\(String(format: "%.1f", $0.diameter)) \(Int($0.length)) \(Int(($0.a.elevation * 180 / .pi).rounded()))°/\(Int(($0.b.elevation * 180 / .pi).rounded()))°" }.joined(separator: " ")) bend \(a.structure?.tailBendDeg.map { String(format: "%.2f", $0) } ?? "–") twist \(a.structure?.tailTwistDeg.map { String(format: "%.2f", $0) } ?? "–"), fin struts \(fin.count)\(fin.first.map { " Ø\(String(format: "%.1f", $0.diameter)) \(Int($0.length)) mm" } ?? ""), fin tilt \(a.structure?.finFlexBareDeg.map { String(format: "%.1f", $0) } ?? "–")→\(a.structure?.finFlexDeg.map { String(format: "%.2f", $0) } ?? "–")°, feasible \(a.feasible), score \(a.score)\(d.strutNotes.isEmpty ? "" : " [fin left out: CG]")" + a.checks.filter { $0.severity >= .warning }.map { " {\($0.title): \($0.detail)}" }.joined())
+            }
+        }
         // Random variants with struts (always mode, so every type gets some): no surface may touch a strut.
-        var n = 0, minGap = Double.greatestFiniteMagnitude, hits: [String] = []
+        var n = 0, minGap = Double.greatestFiniteMagnitude, hits: [String] = [], finN = 0, finMissing: [String] = []
         for i in 0..<48 {
             let kind = AircraftKind.allCases[i % AircraftKind.allCases.count]
             var c = AircraftConfig.random(kind: kind); c.struts = i % 2 == 0 ? .always : .auto
             let d = DesignBuilder.build(c)
             guard !d.struts.isEmpty else { continue }
             n += 1
+            if d.struts.contains(where: { $0.group == .fin }) { finN += 1 } else if kind.hasTail || kind.isNutBall, !kind.isTwinBoom { finMissing.append(kind.rawValue) }
             let sw = surfaceSweep(d)
             minGap = min(minGap, sw.map(\.gap).min() ?? minGap)
             for h in sw where h.hitAt != nil { hits.append("\(kind.rawValue) \(h.surface)↔\(h.strut) \(h.solid) at \(Int(h.hitAt!))°") }
         }
+        print("   random fin struts: \(finN) of \(n) strutted variants braced, missing on \(finMissing.isEmpty ? "none" : finMissing.joined(separator: ", "))")
         print("   random surface sweep (type max throw): \(n) variants with struts, closest \(String(format: "%.1f", minGap)) mm, contacts \(hits.isEmpty ? "none" : hits.joined(separator: "; "))")
     }
 

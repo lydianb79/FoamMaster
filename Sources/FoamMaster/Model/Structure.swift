@@ -31,7 +31,11 @@ struct StructureReport {
     /// Struts fitted (wing / tail) and whether any of them would buckle at the load case.
     var wingStruts = 0
     var tailStruts = 0
+    var finStruts = 0
     var strutsBuckle = false
+    /// Sideways tilt of the fin at full rudder (degrees): bare foam fin, and with the fin struts (nil without a fin).
+    var finFlexBareDeg: Double?
+    var finFlexDeg: Double?
     /// Largest axial strut force at the load case (N) and the matching buckling load.
     var maxStrutForce = 0.0
 
@@ -104,6 +108,30 @@ struct StructureReport {
             if st.b.rodEnd.y > st.a.rodEnd.y && force * Self.strutBucklingSafety > st.bucklingLoad { strutsBuckle = true }
         }
         _ = (t, E)
+
+        // Fin bracing: the fin is a foam plate cantilevered from the stabiliser/plate; full rudder (0.7·q·S) at half
+        // its height tilts it sideways about its root line (bare k = 2EI/h, I = chord·t³/12 of the fin web).
+        // Fin struts from the fixed stabiliser up to the fin side add k·((ẑ × r)·e)² each (r from the root line to
+        // the rod's fin end), like the tail struts on the boom.
+        if !c.kind.isTailless && !c.kind.isTwinBoom && c.vStabHeight > 5 {
+            let h = c.vStabHeight, fc = c.vStabChord
+            let tf = t * Double(c.fuselageType.webLayers)
+            let kBare = 2 * E * fc * tf * tf * tf / 12 / h
+            let fin = struts.filter { $0.group == .fin }
+            finStruts = fin.count
+            let root = SIMD3<Double>(0, fin.first.map { $0.a.surface.y } ?? t / 2, 0)
+            let lever = { (st: Strut) in simd_dot(simd_cross([0, 0, 1], st.b.rodEnd - root), st.direction) }
+            let kFin = kBare + fin.reduce(0) { $0 + $1.stiffness(c.material) * lever($1) * lever($1) }
+            let Mf = 0.7 * q * h * fc * h / 2
+            finFlexBareDeg = Mf / kBare * 180 / .pi
+            let th = Mf / kFin
+            finFlexDeg = th * 180 / .pi
+            for st in fin {
+                let force = st.stiffness(c.material) * abs(lever(st) * th)
+                maxStrutForce = max(maxStrutForce, force)
+                if force * Self.strutBucklingSafety > st.bucklingLoad { strutsBuckle = true }
+            }
+        }
 
         guard c.kind.hasTail else { return }
         let Sh = c.hStabSpan * c.hStabChord, Sv = c.vStabHeight * c.vStabChord * (c.kind.isTwinBoom ? 2 : 1)

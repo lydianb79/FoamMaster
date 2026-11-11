@@ -157,6 +157,22 @@ enum DesignBuilder {
         let loads = Analysis.massAndStall(d)
         let struts = StrutPlanner.plan(d, totalMass: loads.mass, stallSpeed: loads.stall)
         guard !struts.isEmpty else { return }
+        var full = d
+        apply(struts, to: &full)
+        // Fin struts add weight far aft: leave them out if the battery could no longer reach the CG with them.
+        if struts.contains(where: { $0.group == .fin }), !Analysis(design: full).cgReachable {
+            var lean = d
+            apply(struts.filter { $0.group != .fin }, to: &lean)
+            if Analysis(design: lean).cgReachable {
+                lean.strutNotes.append("Fin struts left out – their weight at the tail would put the CG beyond the battery's reach.")
+                d = lean
+                return
+            }
+        }
+        d = full
+    }
+
+    private static func apply(_ struts: [Strut], to d: inout Design) {
         d.struts = struts
         var marked = Set<String>()
         for st in struts {

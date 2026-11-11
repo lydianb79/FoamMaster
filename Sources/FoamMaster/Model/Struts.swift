@@ -18,7 +18,7 @@ enum StrutMode: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-enum StrutGroup { case wing, tail }
+enum StrutGroup { case wing, tail, fin }
 
 /// One end of a strut: a printed anchor glued onto a foam surface, the rod plugged into its inclined boss.
 struct StrutAnchor {
@@ -118,6 +118,8 @@ struct StrutPlanner {
         var struts: [Strut] = []
         if needTail { struts += p.tailStruts() }
         if needWing { struts += p.wingStruts(avoiding: struts) }
+        // Whenever struts go in, the fin is braced too: one rod each side from the fixed stabiliser up to the fin.
+        if !struts.isEmpty { struts += p.finStruts(avoiding: struts) }
         // Label S1, S2 … (left/right pairs share a number: S1 L / S1 R).
         var out: [Strut] = []
         var n = 0
@@ -436,6 +438,80 @@ struct StrutPlanner {
         return false
     }
 
+    // MARK: Fin struts
+
+    /// Horizontal tail surface: the stabiliser (or the fuselage / tail plate that carries the elevator), its
+    /// horizontal instance, the elevator hinge station (world z) and the elevator's half span.
+    var stabiliser: (part: Int, inst: Int, hingeZ: Double, halfSpan: Double)? {
+        // NutBall: the elevator runs across the disc's trailing edge, so the disc is the "stabiliser".
+        for (pi, part) in d.parts.enumerated() where part.role == .stabilizer || part.role == .fuselage || (c.kind.isNutBall && part.role == .wing) {
+            guard let ii = part.instances.indices.first(where: { abs(part.instances[$0].normal.y) > 0.7 && abs(part.instances[$0].u.z) > 0.9 }),
+                  let elev = part.regions.first(where: \.isControl), let axis = SceneBuilder.hingeAxis(part, elev.polygon) else { continue }
+            let inst = part.instances[ii]
+            let zH = inst.point((axis.0 + axis.1) / 2).z
+            let half = elev.polygon.map { abs(inst.point($0).x) }.max() ?? 0
+            guard half > 20 else { continue }
+            return (pi, ii, zH, half)
+        }
+        return nil
+    }
+
+    /// Top-face spot of a horizontal part at world (x, z).
+    func flatSite(part pi: Int, inst ii: Int, x: Double, z: Double) -> Site? {
+        let part = d.parts[pi], inst = part.instances[ii]
+        let p = Vec2(simd_dot(SIMD3(x, inst.origin.y, z) - inst.origin, inst.u), simd_dot(SIMD3(x, inst.origin.y, z) - inst.origin, inst.v))
+        guard Poly.contains(part.outline, p) else { return nil }
+        let flip: Double = inst.normal.y < 0 ? -1 : 1
+        return Site(part: pi, inst: ii, plan: p, point: inst.point(p, offset: part.thickness / 2 * flip), normal: inst.normal * flip)
+    }
+
+    /// One rod each side from the fixed part of the stabiliser (ahead of the elevator hinge, mid half-span) up to the
+    /// fixed fin (ahead of the rudder hinge): braces the fin sideways and keeps clear of elevator and rudder travel,
+    /// their horns and pushrods. Candidates in order of preference; the thinnest rod that fits and does not buckle.
+    func finStruts(avoiding existing: [Strut]) -> [Strut] {
+        guard !c.kind.isTailless, !c.kind.isTwinBoom, let st = stabiliser else { return [] }
+        let stab = d.parts[st.part], inst = stab.instances[st.inst]
+        // Only the fin rods' own buckling counts here (the wing / tail set was chosen before).
+        let alreadyBuckles = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed, struts: existing).strutsBuckle
+        // Fixed stabiliser chord at span station x: the outline interval that ends at (or behind) the hinge.
+        func stabLE(_ x: Double) -> Double? {
+            let v = simd_dot(SIMD3(x, inst.origin.y, 0) - inst.origin, inst.v)
+            let zs = Self.crossings(stab.outline, atV: v).map { inst.origin.z + inst.u.z * $0 }.sorted()
+            return zs.last { $0 < st.hingeZ - 15 }
+        }
+        for fx in [0.55, 0.45, 0.65, 0.35, 0.75, 0.25] {
+            let x = fx * st.halfSpan
+            guard let le = stabLE(x) else { continue }
+            for fz in [0.5, 0.35, 0.65, 0.2, 0.8, 0.9] {
+                let zs = le + 6 + fz * (st.hingeZ - 12 - le)
+                guard zs < st.hingeZ - 8 else { continue }
+                for dz in [0.0, -10, 10, -20, 20] {
+                    let zf = zs + dz
+                    guard zf < st.hingeZ - 8, let top = webEdge(z: zf, top: true) else { continue }
+                    let root = t / 2
+                    guard top - root > 30 else { continue }
+                    for fh in [0.6, 0.5, 0.7, 0.4] {
+                        let yf = root + fh * (top - root)
+                        for dia in CarbonSpar.strutDiameters {
+                            var pair: [Strut] = []
+                            for side in [1.0, -1.0] {
+                                guard let a = flatSite(part: st.part, inst: st.inst, x: side * x, z: zs),
+                                      let b = webSite(z: zf, y: yf, side: side),
+                                      let s = strut("Fin strut", .fin, wing: a, body: b, dia: dia) else { break }
+                                pair.append(s)
+                            }
+                            guard pair.count == 2,
+                                  isClear(pair[0], others: existing + [pair[1]]), isClear(pair[1], others: existing + [pair[0]]) else { continue }
+                            let rep = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed, struts: existing + pair)
+                            if !rep.strutsBuckle || alreadyBuckles { return pair }
+                        }
+                    }
+                }
+            }
+        }
+        return []
+    }
+
     // MARK: Wing struts
 
     /// Pairs of rods per side from the wing (underside / top) to the bottom / top edge of the fuselage webs: they
@@ -548,7 +624,8 @@ struct StrutPlanner {
                     for set in sets {
                         let rep = StructureReport(c, totalMass: totalMass + set.reduce(0) { $0 + $1.rodMass + 0.3 }, stallSpeed: stallSpeed, struts: set)
                         let tw = rep.tailTwistDeg ?? 0, bd = rep.tailBendDeg ?? 0
-                        if tw < StructureReport.twistWarnDeg && bd < StructureReport.bendWarnDeg && !rep.strutsBuckle { return set }
+                        // 10 % margin: wing and fin struts added afterwards raise the weight (and load speed) a little.
+                        if tw < 0.9 * StructureReport.twistWarnDeg && bd < 0.9 * StructureReport.bendWarnDeg && !rep.strutsBuckle { return set }
                         let score = tw / StructureReport.twistWarnDeg + bd / StructureReport.bendWarnDeg + (rep.strutsBuckle ? 100 : 0)
                         if fallback == nil || score < fallback!.score { fallback = (score, set) }
                     }

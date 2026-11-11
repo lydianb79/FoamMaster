@@ -30,7 +30,13 @@ enum PlanPDF {
 
         page { cover(ctx, d, a, layout) }
         let bom = BuildDocs.billOfMaterials(d, a)
-        page { bomPage(ctx, d, bom) }
+        // As many BOM pages as the list needs (rows grow with their wrapped spec text).
+        var rest = bom[...]
+        repeat {
+            var used = 0
+            page { used = bomPage(ctx, d, Array(rest), continued: rest.count < bom.count) }
+            rest = rest.dropFirst(max(used, 1))
+        } while !rest.isEmpty
         let steps = BuildDocs.steps(d, a)
         let half = (steps.count + 1) / 2
         page { stepsPage(ctx, d, Array(steps[..<half]), offset: 0) }
@@ -125,11 +131,18 @@ enum PlanPDF {
         }
     }
 
-    static func bomPage(_ ctx: CGContext, _ d: Design, _ items: [BOMItem]) {
-        header("Bill of Materials", d)
+    /// Draws BOM rows until the page is full; returns how many items were drawn.
+    @discardableResult
+    static func bomPage(_ ctx: CGContext, _ d: Design, _ items: [BOMItem], continued: Bool = false) -> Int {
+        header(continued ? "Bill of Materials (continued)" : "Bill of Materials", d)
         var y = 40.0
         var lastCat = ""
-        for it in items {
+        for (i, it) in items.enumerated() {
+            let spec = NSAttributedString(string: it.spec, attributes: [.font: NSFont.systemFont(ofSize: 2.8), .foregroundColor: NSColor.darkGray])
+            let specH = spec.boundingRect(with: NSSize(width: 88, height: 200), options: [.usesLineFragmentOrigin]).height
+            let rowH = max(7.5, specH + 2.5)
+            let catH = it.category != lastCat ? 9.0 : 0
+            if i > 0 && y + catH + rowH > 285 { return i }
             if it.category != lastCat {
                 y += 3
                 PlanDrawer.text(it.category.uppercased(), at: Vec2(15, y), size: 3.2, color: .gray, weight: .heavy)
@@ -137,11 +150,10 @@ enum PlanPDF {
             }
             PlanDrawer.text(it.quantity, at: Vec2(15, y), size: 3.2, weight: .semibold)
             PlanDrawer.text(it.item, at: Vec2(38, y), size: 3.2, weight: .semibold)
-            let spec = NSAttributedString(string: it.spec, attributes: [.font: NSFont.systemFont(ofSize: 2.8), .foregroundColor: NSColor.darkGray])
-            spec.draw(with: NSRect(x: 110, y: y, width: 88, height: 12), options: [.usesLineFragmentOrigin])
-            y += 7.5
-            if y > 280 { break }
+            spec.draw(with: NSRect(x: 110, y: y, width: 88, height: specH + 1), options: [.usesLineFragmentOrigin])
+            y += rowH
         }
+        return items.count
     }
 
     static func stepsPage(_ ctx: CGContext, _ d: Design, _ steps: [BuildStep], offset: Int) {

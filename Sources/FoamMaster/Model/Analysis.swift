@@ -280,6 +280,10 @@ struct Analysis {
                 .map { "\($0.value.count) × \(CarbonSpar.strutRod($0.key).name)" }.joined(separator: ", ")
             let why = c.struts == .always ? "fitted on request" : "added automatically – without them the \([st.wingStruts > 0 ? "wing" : nil, st.tailStruts > 0 ? "fuselage" : nil].compactMap { $0 }.joined(separator: " and ")) would be too flexible"
             add(.info, "Structure", "Carbon struts", "\(rods) (\(why)), \(d.struts.count * 2) printed anchors – marked S1… on the plans. They keep clear of servos, pushrods, horns, battery, control-surface travel and the prop.")
+            if st.finStruts > 0, let bare = st.finFlexBareDeg, let braced = st.finFlexDeg {
+                add(.ok, "Structure", "Fin braced", "\(st.finStruts) fin struts from the stabiliser: the fin tilts \(String(format: "%.2f", braced))° instead of \(f1(bare))° at \(c.hasRudder ? "full rudder" : "a strong side gust"), \(f0(st.loadSpeed)) km/h. They keep clear of elevator and rudder travel (±\(Int(c.kind.maxSurfaceThrow))°).")
+            }
+            for note in d.strutNotes { add(.warning, "Structure", "Fin not braced", note + " Lengthen the nose or use a heavier battery – the fin struts are then added automatically.") }
             if st.strutsBuckle { add(.warning, "Structure", "Strut may buckle", "Up to \(f1(st.maxStrutForce)) N in a strut at the load case – too close to its buckling load. Use a thicker foam or smaller tail surfaces.") }
         }
         if c.material.thickness >= 8 && c.wingspan < 350 { add(.info, "Structure", "Thick foam on a small model", "\(Int(c.material.thickness)) mm sheet adds weight – 5/6 mm is usually enough.") }

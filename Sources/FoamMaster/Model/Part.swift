@@ -125,4 +125,6 @@ struct Design {
     var trussLength: Double = 0
     /// Carbon stabilisation struts (rods between wing and fuselage webs).
     var struts: [Strut] = []
+    /// Why planned struts were left out (shown in the checks).
+    var strutNotes: [String] = []
 }

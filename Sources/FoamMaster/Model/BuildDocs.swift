@@ -127,8 +127,9 @@ enum BuildDocs {
             s.append(BuildStep(title: "Mount both motors", text: "\(c.kind.isTailless ? "Glue the centre keel under the wing with its tabs. " : "")Glue a 3 × 0.5 mm carbon strip into the leading edge between the two MOTOR marks, then push the wing-clamp motor mounts onto the leading edge at ±\(Int(c.dualMotorX)) mm and glue. Fit the CW prop on the right and the CCW prop on the left so both blow the same way, and check the props clear the fuselage.", symbol: "fanblades"))
         }
         if !d.struts.isEmpty {
-            let wing = d.struts.contains { $0.group == .wing }, tail = d.struts.contains { $0.group == .tail }
-            let what = [wing ? "the wing to the fuselage" : nil, tail ? "the tail boom to the wing" : nil].compactMap { $0 }.joined(separator: " and ")
+            let wing = d.struts.contains { $0.group == .wing }, tail = d.struts.contains { $0.group == .tail }, fin = d.struts.contains { $0.group == .fin }
+            let parts = [wing ? "the wing to the fuselage" : nil, tail ? "the tail boom to the wing" : nil, fin ? "the fin to the stabiliser" : nil].compactMap { $0 }
+            let what = parts.count > 1 ? parts.dropLast().joined(separator: ", ") + " and " + parts.last! : parts.joined()
             s.append(BuildStep(title: "Fit the carbon struts", text: "The struts brace \(what). Glue the printed strut anchors onto the purple S-pads on the plans (boss pointing along the arrow; a mark on a fuselage half means both sides). Cut each rod to the length in the materials list, push it into both bosses with the plane resting flat and square, then fix it with a drop of thin CA at each end. Move every control surface to full throw (±\(Int(c.kind.maxSurfaceThrow))°) both ways and check it clears every rod and anchor.", symbol: "line.3.crossed.swirl.circle"))
         }
         s.append(BuildStep(title: "Install servos & linkages", text: "Glue the printed servo frames into the cutouts, push the servos in and centre them with the transmitter. Glue the horns into the horn slots (hole row over the hinge line). Make pushrods from Ø1 mm carbon with Z-bent 0.8 mm wire ends.", symbol: "gearshape.2"))
