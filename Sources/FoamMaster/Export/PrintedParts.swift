@@ -77,7 +77,7 @@ enum PrintedParts {
             let deg = Int((r.b.elevation * 180 / .pi).rounded())
             out.append(PrintedPart(name: "Strut saddle \(sd.label) · Ø\(dTxt) mm", fileName: "strut_saddle_\(sd.label.lowercased())",
                                    quantity: 1, mesh: strutSaddlePrint(right: r.b, left: l.b, dia: r.diameter),
-                                   note: "one piece for \(sd.label) L + R: slide over the bottom edge of the fuselage at the \(sd.label) saddle mark and glue – rod holes Ø\(String(format: "%.2f", r.diameter + 0.25)) mm at \(deg)° to the foam"))
+                                   note: "one piece for \(sd.label) L + R: slide over the bottom edge of the fuselage at the \(sd.label) saddle mark and glue\(sd.footDepth > 0 ? " (the rods plug into the foot below the edge)" : "") – rod holes Ø\(String(format: "%.2f", r.diameter + 0.25)) mm at \(deg)° to the foam"))
         }
 
         out.append(PrintedPart(name: "Battery tray", fileName: "battery_tray_\(c.battery.rawValue)", quantity: 1,
@@ -372,6 +372,17 @@ enum PrintedParts {
         func slab(_ zy: [Vec2], x0: Double, x1: Double) -> Mesh3D {
             // (u, v, w) → (x = w, y = v, z = u) is a mirror, so the winding is flipped back.
             Mesh3D.extrude(Poly.ccw(zy), z0: x0, z1: x1).transformed { p in [p.z, p.y, p.x] }.flipped
+        }
+        if sd.footDepth > 0 {
+            // Foot: the side plates run down past the edge and a solid block fills the space under the web between
+            // them; the bosses stand on the plates beside the foot, below the fuselage.
+            let F = sd.footDepth
+            let plate = [Vec2(sd.z0, sd.edgeY0 - F), Vec2(sd.z1, sd.edgeY1 - F), Vec2(sd.z1, sd.plateTop), Vec2(sd.z0, sd.plateTop)]
+            let core = [Vec2(sd.z0, sd.edgeY0 - F), Vec2(sd.z1, sd.edgeY1 - F), Vec2(sd.z1, sd.edgeY1), Vec2(sd.z0, sd.edgeY0)]
+            m.append(slab(plate, x0: fx, x1: fx + T))
+            m.append(slab(plate, x0: -fx - T, x1: -fx))
+            m.append(slab(core, x0: -fx, x1: fx))
+            return m
         }
         let plate = [Vec2(sd.z0, sd.edgeY0), Vec2(sd.z1, sd.edgeY1), Vec2(sd.z1, sd.plateTop), Vec2(sd.z0, sd.plateTop)]
         let bridge = [Vec2(sd.z0, sd.edgeY0 - T), Vec2(sd.z1, sd.edgeY1 - T), Vec2(sd.z1, sd.edgeY1), Vec2(sd.z0, sd.edgeY0)]

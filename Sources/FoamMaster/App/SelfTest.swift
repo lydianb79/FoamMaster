@@ -88,6 +88,43 @@ enum SelfTest {
     /// Why a configuration gets no tail struts: the user's Park Trainer and close variants, with a rejection tally.
     /// Why a configuration gets no tail struts, and how long the build takes: the Park Trainer with one central
     /// aileron servo (full-span ailerons, pushrods along both boom sides) and close variants.
+    /// Scan: random variants of every type in every foam (struts on Auto). Lists builds that still fail a
+    /// stiffness check (wing / fuselage twist / boom bending), with what blocked the strut candidates.
+    @MainActor static func strutScan(count: Int = 12) {
+        var failing = 0, total = 0, strutted = 0
+        var reasons: [String: Int] = [:]
+        var examples: [String] = []
+        let stiffness: Set<String> = ["Wing far too flexible", "Fuselage twists too much", "Tail boom bends too much"]
+        for kind in AircraftKind.allCases {
+            for m in FoamMaterial.allCases {
+                for _ in 0..<count {
+                    var c = AircraftConfig.random(kind: kind)
+                    c.material = m; c.struts = .auto
+                    c = Project.balanced(c)
+                    let d = DesignBuilder.build(c), a = Analysis(design: d)
+                    total += 1
+                    if !d.struts.isEmpty { strutted += 1 }
+                    let errs = a.checks.filter { $0.severity == .error && stiffness.contains($0.title) }.map(\.title)
+                    guard !errs.isEmpty else { continue }
+                    failing += 1
+                    var why: [String: Int] = [:]
+                    var off = c; off.struts = .off
+                    let p = StrutPlanner(design: DesignBuilder.build(off), totalMass: a.totalMass, stallSpeed: a.stallSpeed)
+                    if errs.contains(where: { $0 != "Wing far too flexible" }) { _ = p.tailStruts(tally: { why["tail: " + $0, default: 0] += 1 }) }
+                    if errs.contains("Wing far too flexible") { _ = p.wingStruts(avoiding: [], tally: { why["wing: " + $0, default: 0] += 1 }) }
+                    let top = why.max { $0.value < $1.value }?.key ?? (kind.isTwinBoom ? "twin boom (no tail struts)" : "no candidates tried")
+                    reasons["\(kind.rawValue) \(errs.map { $0.split(separator: " ").first! }.joined(separator: "+")) – \(top)", default: 0] += 1
+                    if examples.count < 30 {
+                        examples.append("\(kind.rawValue) \(m.rawValue) span \(Int(c.wingspan)) fus \(c.fuselageType.name) ail \(c.hasAilerons ? c.aileronServos : 0) rudder \(c.hasRudder) dual \(c.isDual): \(errs.joined(separator: ", ")); struts \(d.struts.count); top blocker: \(top)")
+                    }
+                }
+            }
+        }
+        print("scan: \(total) builds, \(strutted) with struts, \(failing) still fail a stiffness check")
+        for (k, v) in reasons.sorted(by: { $0.value > $1.value }) { print("  \(v)× \(k)") }
+        for e in examples { print("  · " + e) }
+    }
+
     @MainActor static func strutDiagnosis() {
         for m in [FoamMaterial.depron3, .depron5, .epp3, .epp5] {
             for ail in [1, 2] {
@@ -123,7 +160,7 @@ enum SelfTest {
                     d.struts.contains { l in l.label == String(r.label.dropLast()) + "L" && abs(l.a.rodEnd.x + r.a.rodEnd.x) < 0.01 && abs(l.length - r.length) < 0.01 } }
                 print("   struts \(kind.title) \(m.displayName) \(mode.name): \(d.struts.count) (\(d.struts.map { "\($0.label) Ø\(String(format: "%.1f", $0.diameter)) \(Int($0.length)) mm \(Int(($0.a.elevation * 180 / .pi).rounded()))°/\(Int(($0.b.elevation * 180 / .pi).rounded()))°" }.joined(separator: ", "))), "
                       + "wing \(String(format: "%.1f", st.wingDeflectionRatio * 100)) %, twist \(st.tailTwistDeg.map { String(format: "%.1f", $0) } ?? "–")°, bend \(st.tailBendDeg.map { String(format: "%.2f", $0) } ?? "–")°, fin \(st.finFlexBareDeg.map { String(format: "%.1f", $0) } ?? "–")→\(st.finFlexDeg.map { String(format: "%.2f", $0) } ?? "–")°, "
-                      + "saddles \(d.struts.filter { $0.b.saddle != nil }.count / 2), max force \(String(format: "%.2f", st.maxStrutForce)) N, buckle \(st.strutsBuckle), clear \(clear), symmetric \(sym), prop gap \(String(format: "%.1f", a.propGap)) mm, AUW \(Int(a.totalMass)) g, feasible \(a.feasible)"
+                      + "saddles \(d.struts.filter { $0.b.saddle != nil }.count / 2) (feet \(d.struts.filter { $0.b.footDepth > 0 }.count / 2)), wing below \(d.struts.filter { $0.group == .wing }.allSatisfy { $0.b.rodEnd.y < $0.a.rodEnd.y }), max force \(String(format: "%.2f", st.maxStrutForce)) N, buckle \(st.strutsBuckle), clear \(clear), symmetric \(sym), prop gap \(String(format: "%.1f", a.propGap)) mm, AUW \(Int(a.totalMass)) g, feasible \(a.feasible)"
                       + a.checks.filter { $0.severity == .error }.map { " [\($0.title)]" }.joined())
                 let sw = surfaceSweep(d)
                 // Fin struts against the tail surfaces (elevator and rudder) in particular.

@@ -20,6 +20,8 @@ struct StructureReport {
     static let bendErrorDeg = 3.0, bendWarnDeg = 1.0
     /// Safety factor of a strut in compression against Euler buckling.
     static let strutBucklingSafety = 1.5
+    /// Negative load factor a model must take (inverted flight): wing struts under the wing are then in compression.
+    static func negativeG(_ c: AircraftConfig) -> Double { c.kind == .aerobat ? 3 : 1.5 }
 
     var loadSpeed = 0.0                // km/h
     var wingTipDeflection = 0.0        // mm at 3 g
@@ -107,7 +109,10 @@ struct StructureReport {
             let share = st.stiffness(c.material) * ey * ey / kWing * wd.reaction
             let force = share / max(abs(ey), 1e-3)
             maxStrutForce = max(maxStrutForce, force)
-            if st.b.rodEnd.y > st.a.rodEnd.y && force * bucklingSafety > st.bucklingLoad { strutsBuckle = true }
+            // A rod above the wing is pushed at +3 g; a rod under the wing is pushed when flying inverted / at
+            // negative g: −3 g for the 3D plane, −1.5 g for the others (same deflection model, scaled load).
+            let pushed = st.b.rodEnd.y > st.a.rodEnd.y ? force : force * Self.negativeG(c) / 3
+            if pushed * bucklingSafety > st.bucklingLoad { strutsBuckle = true }
         }
         _ = (t, E)
 

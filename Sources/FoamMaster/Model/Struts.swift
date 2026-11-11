@@ -38,6 +38,9 @@ struct StrutAnchor {
     var padSize: Vec2
     /// Set when this end shares a one-piece saddle with its mirror end (bottom of the fuselage).
     var saddle: StrutSaddle? = nil
+    /// > 0: the boss sits on the side of a printed foot under the bottom edge of the web (depth of the foot); the
+    /// end then always gets a saddle.
+    var footDepth: Double = 0
 }
 
 /// One-piece printed mount for a left/right strut pair at the bottom edge of the fuselage web: a side plate on each
@@ -54,6 +57,8 @@ struct StrutSaddle {
     var edgeY0: Double
     var edgeY1: Double
     var plateTop: Double
+    /// Depth of the solid foot under the edge carrying the bosses (0 = plain bridge, bosses on the side plates).
+    var footDepth: Double = 0
     var z0: Double
     var z1: Double
     /// Outline of the side plates on the part plan (edge up to the plate top).
@@ -120,7 +125,7 @@ struct Strut {
 }
 
 extension CarbonSpar {
-    static let strutDiameters: [Double] = [1, 1.5, 2]
+    static let strutDiameters: [Double] = [1, 1.5, 2, 2.5, 3]
     static func strutRod(_ d: Double) -> CarbonSpar {
         CarbonSpar(name: "Carbon rod Ø\(d == d.rounded() ? String(format: "%.0f", d) : String(format: "%.1f", d)) mm",
                    widthMM: d, heightMM: d, gramsPerMeter: (.pi / 4 * d * d * 1.55 * 10).rounded() / 10)
@@ -242,9 +247,10 @@ struct StrutPlanner {
                 k != i && abs(out[k].b.surface.x + out[i].b.surface.x) < 0.01 && simd_distance(SIMD2(out[k].b.surface.y, out[k].b.surface.z), SIMD2(out[i].b.surface.y, out[i].b.surface.z)) < 0.01
                     && abs(out[k].a.surface.x + out[i].a.surface.x) < 0.01 }) else { continue }
             let r = out[i].b, l = out[j].b
+            let foot = r.footDepth
             guard abs(r.normal.x) > 0.9, abs(l.normal.x) > 0.9, r.partIndex == l.partIndex, r.surface.y < 0,
                   abs(r.surface.x + l.surface.x) < 0.01, abs(r.surface.y - l.surface.y) < 0.01, abs(r.surface.z - l.surface.z) < 0.01,
-                  let edgeC = webEdge(z: r.surface.z, top: false), r.surface.y - edgeC < 20 else { continue }
+                  let edgeC = webEdge(z: r.surface.z, top: false), foot > 0 || r.surface.y - edgeC < 20 else { continue }
             // Plate = bounding box (in the web plane) of the rotated pad, extended down to the edge.
             let w = simd_cross(r.normal, r.along)
             var ys: [Double] = [], zs: [Double] = []
@@ -254,10 +260,11 @@ struct StrutPlanner {
             } }
             let z0 = zs.min()! - 1, z1 = zs.max()! + 1
             guard let e0 = webEdge(z: z0, top: false), let e1 = webEdge(z: z1, top: false) else { continue }
-            let edgeY = min(e0, e1), top = ys.max()! + 0.5
+            // With a foot the plates only clip over the edge (8 mm up the foam); otherwise they reach the pad top.
+            let edgeY = min(e0, e1), top = foot > 0 ? max(e0, e1) + 8 : ys.max()! + 0.5
             let fx = abs(r.surface.x), T = Self.padThickness
             // Clear of hardware (battery travel, servos, ESC, receiver …) and pushrods.
-            let lo = SIMD3<Double>(-fx - T, edgeY - T, z0), hi = SIMD3<Double>(fx + T, top, z1)
+            let lo = SIMD3<Double>(-fx - T, edgeY - max(T, foot), z0), hi = SIMD3<Double>(fx + T, top, z1)
             let blocked = obstacles.contains { o in all(o.hi .> lo - 1) && all(o.lo .< hi + 1) }
                 || capsules.contains { cp in
                     let c = simd_clamp((cp.a + cp.b) / 2, lo, hi)
@@ -269,7 +276,7 @@ struct StrutPlanner {
             let toPlan = { (y: Double, z: Double) in Vec2((z - inst.origin.z) / inst.u.z, (y - inst.origin.y) / inst.v.y) }
             let plan = [toPlan(e0, z0), toPlan(e1, z1), toPlan(top, z1), toPlan(top, z0)]
             let sd = StrutSaddle(label: base, partIndex: r.partIndex, instanceIndex: r.instanceIndex, faceX: fx,
-                                 edgeY0: e0, edgeY1: e1, plateTop: top, z0: z0, z1: z1, plan: plan)
+                                 edgeY0: e0, edgeY1: e1, plateTop: top, footDepth: foot, z0: z0, z1: z1, plan: plan)
             out[i].b.saddle = sd; out[j].b.saddle = sd
         }
         return out
@@ -282,6 +289,28 @@ struct StrutPlanner {
         var plan: Vec2
         var point: SIMD3<Double>
         var normal: SIMD3<Double>
+        /// Foot depth when the site is on a printed foot under the web's bottom edge (no foam there).
+        var foot: Double = 0
+    }
+
+    /// Spot on the side of a printed foot under the bottom edge of the web at station z (side +1 right, −1 left):
+    /// the rod then stays below the fuselage, clear of the battery and everything else on its sides.
+    func footSite(z: Double, side: Double, dia: Double) -> Site? {
+        guard let edge = webEdge(z: z, top: false), edge < -(t / 2 + 3) else { return nil }
+        for w in webs {
+            let part = d.parts[w.part], inst = part.instances[w.insts[0]]
+            let p = Vec2((z - inst.origin.z) / inst.u.z, (edge + 1 - inst.origin.y) / inst.v.y)
+            guard Poly.contains(part.outline, p) else { continue }
+            let xs = w.insts.map { part.instances[$0].origin.x }
+            let face = side > 0 ? xs.max()! + part.thickness / 2 : xs.min()! - part.thickness / 2
+            let ii = side > 0 ? w.insts.max { part.instances[$0].origin.x < part.instances[$1].origin.x }!
+                              : w.insts.min { part.instances[$0].origin.x < part.instances[$1].origin.x }!
+            let foot = Self.bossSide(dia) + 5
+            // The boss stands on the side plate (one plate thickness outside the web face).
+            return Site(part: w.part, inst: ii, plan: Vec2((z - inst.origin.z) / inst.u.z, (edge - foot / 2 - inst.origin.y) / inst.v.y),
+                        point: [face + side * Self.padThickness * 0, edge - foot / 2, z], normal: [side, 0, 0], foot: foot)
+        }
+        return nil
     }
 
     /// Wing surface spot at world (x, z): top or bottom face.
@@ -429,7 +458,8 @@ struct StrutPlanner {
         var a = anchor(wing, towards: body.point, dia: dia), b = anchor(body, towards: wing.point, dia: dia)
         // Second pass with the rod ends instead of the surface points (the bosses lift the rod slightly).
         a = anchor(wing, towards: b.rodEnd, dia: dia); b = anchor(body, towards: a.rodEnd, dia: dia)
-        guard padFits(wing, dir: a.planDir, size: a.padSize), padFits(body, dir: b.planDir, size: b.padSize) else { return nil }
+        guard padFits(wing, dir: a.planDir, size: a.padSize), body.foot > 0 || padFits(body, dir: b.planDir, size: b.padSize) else { return nil }
+        b.footDepth = body.foot
         return Strut(label: "", name: name, group: group, diameter: dia, a: a, b: b)
     }
 
@@ -446,8 +476,9 @@ struct StrutPlanner {
                 let s = c.battery.size
                 let size: SIMD3<Double> = c.kind.isTailless ? [s.w, s.h, s.l] : [s.h, s.w, s.l]
                 let q = c.kind.isTailless ? p + [0, 1.2, 0] : p + [1.2, 0, 0]
-                // The battery slides between its limits when the model is balanced: keep its whole travel free.
-                let z0 = min(p.z, lim.lowerBound) - s.l / 2 - 2, z1 = max(p.z, lim.upperBound) + s.l / 2 + 2
+                // The struts are re-planned on every build from the balanced battery position: keep that spot free
+                // plus ±15 mm for fine-tuning the balance on the real model (within the physical limits).
+                let z0 = max(p.z - 15, lim.lowerBound) - s.l / 2 - 2, z1 = min(p.z + 15, lim.upperBound) + s.l / 2 + 2
                 obstacles.append((SIMD3(q.x - size.x / 2 - 1.5, q.y - size.y / 2 - 1, z0), SIMD3(q.x + size.x / 2 + 1, q.y + size.y / 2 + 1, z1), "battery travel"))
                 obstacles.append((SIMD3(tw / 2, q.y - size.y / 2 - 1, z0), SIMD3(tw / 2 + 1.5, q.y + size.y / 2 + 1, z1), "battery tray"))
             case "Power" where item.name.contains("brushless"):
@@ -653,43 +684,53 @@ struct StrutPlanner {
     /// Pairs of rods per side from the wing (underside / top) to the bottom / top edge of the fuselage webs: they
     /// prop the wing at the strut station. Candidates are tried in order of preference (mid span, spar line); the
     /// first that fits and reaches the target – lightest rod set first, no buckling – wins.
-    func wingStruts(avoiding existing: [Strut]) -> [Strut] {
+    func wingStruts(avoiding existing: [Strut], tally: ((String) -> Void)? = nil) -> [Strut] {
         let s = c.semiSpan
         var fallback: (score: Double, struts: [Strut])?
         let rootClear = max(c.kind.hasFuselage ? c.fuselagePlateWidth / 2 : 0, c.isDual ? c.dualMotorX + c.propRadius + 8 : 0) + 30
         for f in [0.55, 0.45, 0.65, 0.38, 0.72] {
             let x = f * s
-            guard x > rootClear, x < s - 25, let ch = wingChord(atX: x) else { continue }
+            guard x > rootClear, x < s - 25, let ch = wingChord(atX: x) else { tally?("span station unusable (x \(Int(x)), root clear \(Int(rootClear)))"); continue }
             for q in [0.3, 0.38, 0.22, 0.46, 0.55, 0.15] {
                 let z = ch.le + q * (ch.te - ch.le)
                 for dz in [0.0, -14, 14, 28, -28, 42, -42] {
                     let zb = z + dz
                     var fitted = false
                     for dia in CarbonSpar.strutDiameters {
-                        var lower: [Strut] = [], upper: [Strut] = []
+                        // Wing struts always run UNDER the wing (wing underside → bottom edge of the fuselage / keel /
+                        // pod): in tension under positive g, in compression only when flying inverted / negative g.
+                        var lower: [Strut] = []
                         for side in [1.0, -1.0] {
-                            if let bottom = webEdge(z: zb, top: false), bottom < -(t / 2 + 14),
-                               let w = wingSite(x: side * x, z: z, top: false) {
+                            guard let bottom = webEdge(z: zb, top: false) else { tally?("no fuselage / keel below the wing"); break }
+                            guard bottom < -(t / 2 + 14) else { tally?("side face too shallow (\(Int(-bottom)) mm)"); break }
+                            if let w = wingSite(x: side * x, z: z, top: false) {
                                 for inset in [7.0, 11, 15] {
                                     if let b = webSite(z: zb, y: bottom + inset, side: side),
-                                       let st = strut("Wing strut below", .wing, wing: w, body: b, dia: dia) { lower.append(st); break }
-                                }
-                            }
-                            if let top = webEdge(z: zb, top: true), top > t / 2 + 14,
-                               let w = wingSite(x: side * x, z: z, top: true) {
-                                for inset in [7.0, 11, 15] {
-                                    if let b = webSite(z: zb, y: top - inset, side: side),
-                                       let st = strut("Wing strut above", .wing, wing: w, body: b, dia: dia) { upper.append(st); break }
+                                       let st = strut("Wing strut", .wing, wing: w, body: b, dia: dia) { lower.append(st); break }
                                 }
                             }
                         }
-                        let lowerOK = lower.count == 2 && lower.allSatisfy { isClear($0, others: existing) }
-                        let upperOK = upper.count == 2 && upper.allSatisfy { isClear($0, others: existing + (lowerOK ? lower : [])) }
-                        // Rods below the wing work in tension under positive g – lightest and buckling-free first.
+                        var lowerOK = lower.count == 2 && lower.allSatisfy { isClear($0, others: existing) }
+                        if lower.count < 2 { tally?("pad / site does not fit") }
+                        else if !lowerOK, let t = tally { t(lower.compactMap { blocker($0, others: existing) }.first ?? "?") }
+                        // Side face taken (battery travel, servos …) or too small: the bosses on a printed foot under
+                        // the bottom edge – the rods then stay below the fuselage.
+                        if !lowerOK {
+                            var foot: [Strut] = []
+                            for side in [1.0, -1.0] {
+                                guard let w = wingSite(x: side * x, z: z, top: false), let b = footSite(z: zb, side: side, dia: dia),
+                                      let st = strut("Wing strut", .wing, wing: w, body: b, dia: dia) else { break }
+                                foot.append(st)
+                            }
+                            if foot.count == 2 && foot.allSatisfy({ isClear($0, others: existing) })
+                                && combineBottomMounts(existing + foot).suffix(2).allSatisfy({ $0.b.saddle != nil }) {
+                                lower = foot; lowerOK = true
+                            } else if foot.count == 2, let t = tally {
+                                t("foot: " + (foot.compactMap { blocker($0, others: existing) }.first ?? "saddle blocked"))
+                            } else { tally?("foot: no site") }
+                        }
                         var sets: [[Strut]] = []
                         if lowerOK { sets.append(lower) }
-                        if lowerOK && upperOK { sets.append(lower + upper) }
-                        if upperOK { sets.append(upper) }
                         guard !sets.isEmpty else { break }   // a thicker rod will not fit where a thin one does not
                         fitted = true
                         for raw in sets {
@@ -699,6 +740,7 @@ struct StrutPlanner {
                             let rep = StructureReport(c, totalMass: totalMass + set.reduce(0) { $0 + $1.rodMass + 0.3 }, stallSpeed: stallSpeed, struts: all, bucklingSafety: Self.planBuckling)
                             let pct = rep.wingDeflectionRatio * 100
                             if pct < StructureReport.wingWarnPct && !rep.strutsBuckle { return set }
+                            tally?(rep.strutsBuckle ? "set buckles" : "set too soft (\(Int(pct.rounded())) %)")
                             let score = pct + (rep.strutsBuckle ? 100 : 0)
                             if fallback == nil || score < fallback!.score { fallback = (score, set) }
                         }
