@@ -122,7 +122,7 @@ enum SceneBuilder {
                             .transformed { p in a3 + side * p.x + up * p.y + dir * p.z }
                         scene.addMesh(rod, color: Palette.carbon)
                         let ta = inst.point(p0, offset: part.thickness / 2 * flip), tb = inst.point(p1, offset: part.thickness / 2 * flip)
-                        scene.addMesh(strip(from: ta, to: tb, normal: up, width: max(dia + 1.5, 4), height: 0.25), color: SIMD4(0.12, 0.13, 0.16, 1))
+                        scene.addMesh(strip(from: ta, to: tb, normal: up, width: dia, height: 0.25), color: SIMD4(0.12, 0.13, 0.16, 1))
                     }
                     continue
                 }
