@@ -6,6 +6,85 @@ import SwiftUI
 /// `FoamMaster --selftest <outdir>`: builds every model type, prints the analysis and writes PDFs/STLs.
 enum SelfTest {
     /// Carbon struts: soft builds (EPP 6 mm) with struts off / auto, every type with struts always.
+    /// Independent control-surface check: every moving surface (ailerons, elevons, elevator, rudder) is swept in 1°
+    /// steps through the type's max throw about its hinge, its outline (0.5 mm) and faces (1 mm grid) on both sides, plus its
+    /// horn tip; the smallest gap to every strut rod, anchor pad and anchor boss is returned with the throw at which
+    /// the surface would first touch (nil = free over the whole range).
+    struct SweepResult { var surface: String; var strut: String; var gap: Double; var hitAt: Double?; var solid = "" }
+    static func surfaceSweep(_ d: Design) -> [SweepResult] {
+        let maxThrow = d.config.kind.maxSurfaceThrow
+        guard !d.struts.isEmpty else { return [] }
+        // Strut solids: rod cylinder, boss (capsule over the square section), pad box.
+        func rodGap(_ p: SIMD3<Double>, _ s: Strut) -> Double { StrutPlanner.distance(p, segment: s.a.rodEnd, s.b.rodEnd) - s.diameter / 2 }
+        func bossGap(_ p: SIMD3<Double>, _ e: StrutAnchor, _ towards: SIMD3<Double>, _ dia: Double) -> Double {
+            let dir = simd_normalize(towards - e.rodEnd)
+            return StrutPlanner.distance(p, segment: e.rodEnd, e.rodEnd + dir * StrutPlanner.bossLength) - StrutPlanner.bossSide(dia) / 2 * 2.squareRoot()
+        }
+        func padGap(_ p: SIMD3<Double>, _ e: StrutAnchor) -> Double {
+            let side = simd_normalize(simd_cross(e.normal, e.along))
+            let q = p - e.surface
+            let x = abs(simd_dot(q, e.along)) - e.padSize.x / 2, y = abs(simd_dot(q, side)) - e.padSize.y / 2
+            let zn = simd_dot(q, e.normal), z = zn < 0 ? -zn : max(0, zn - StrutPlanner.padThickness)
+            return simd_length(SIMD3(max(x, 0), max(y, 0), z))
+        }
+        func gap(_ p: SIMD3<Double>, _ s: Strut) -> Double {
+            min(rodGap(p, s), bossGap(p, s.a, s.b.rodEnd, s.diameter), bossGap(p, s.b, s.a.rodEnd, s.diameter), padGap(p, s.a), padGap(p, s.b))
+        }
+        var out: [SweepResult] = []
+        for part in d.parts {
+            for r in part.regions where r.isControl {
+                guard let axis = SceneBuilder.hingeAxis(part, r.polygon) else { continue }
+                var pts: [Vec2] = []
+                for i in 0..<r.polygon.count {
+                    let a = r.polygon[i], b = r.polygon[(i + 1) % r.polygon.count]
+                    let n = max(1, Int(simd_distance(a, b) / 0.5))
+                    for k in 0..<n { pts.append(a + (b - a) * (Double(k) / Double(n))) }
+                }
+                let bb = Poly.bounds(r.polygon)
+                var u = bb.min.x
+                while u <= bb.max.x { var v = bb.min.y; while v <= bb.max.y { if Poly.contains(r.polygon, Vec2(u, v)) { pts.append(Vec2(u, v)) }; v += 1 }; u += 1 }
+                for (ii, inst) in part.instances.enumerated() {
+                    let a3 = inst.point(axis.0), b3 = inst.point(axis.1), ax = simd_normalize(b3 - a3)
+                    let base = pts.flatMap { p in [-part.thickness / 2, part.thickness / 2].map { inst.point(p, offset: $0) } }
+                    // Horn tips on this surface (the horn turns with it).
+                    let mid = (a3 + b3) / 2
+                    let horns = d.controls.filter { simd_distance($0.hornPosition, mid) < simd_distance(a3, b3) / 2 + 30 }
+                        .map { [$0.hornPosition, $0.hornPosition - $0.hornAxis * 12] }.flatMap { $0 }
+                    let surfName = part.instances.count > 1 ? "\(part.name) #\(ii + 1)" : part.name
+                    // A point's arc stays within 2·r·sin(maxThrow/2) of its neutral position (r = distance to the hinge),
+                    // so only points that could come within 20 mm of a strut are swept.
+                    let reach = 2 * sin(maxThrow / 2 * .pi / 180)
+                    let radius = { (p: SIMD3<Double>) in StrutPlanner.distance(p, segment: a3 - ax * 1e4, a3 + ax * 1e4) }
+                    for s in d.struts {
+                        let near = (base + horns).filter { gap($0, s) - reach * radius($0) < 20 }
+                        var minGap = (base + horns).map { gap($0, s) }.min() ?? .greatestFiniteMagnitude
+                        if near.isEmpty { out.append(SweepResult(surface: surfName, strut: s.label, gap: minGap, hitAt: nil)); continue }
+                        var hit: Double?, solid = ""
+                        // From neutral outwards in both directions, so hitAt is the first contact.
+                        for sign in [1.0, -1.0] {
+                            for deg in stride(from: 0.0, through: maxThrow, by: 1) {
+                                let q = simd_quatd(angle: sign * deg * .pi / 180, axis: ax)
+                                var g = Double.greatestFiniteMagnitude
+                                for p in near { g = min(g, gap(q.act(p - a3) + a3, s)) }
+                                minGap = min(minGap, g)
+                                if g < 0 {
+                                    hit = min(hit ?? .greatestFiniteMagnitude, deg)
+                                    let ps = near.map { q.act($0 - a3) + a3 }
+                                    let parts: [(String, Double)] = [("rod", ps.map { rodGap($0, s) }.min()!), ("wing boss", ps.map { bossGap($0, s.a, s.b.rodEnd, s.diameter) }.min()!),
+                                        ("body boss", ps.map { bossGap($0, s.b, s.a.rodEnd, s.diameter) }.min()!), ("wing pad", ps.map { padGap($0, s.a) }.min()!), ("body pad", ps.map { padGap($0, s.b) }.min()!)]
+                                    solid = parts.min { $0.1 < $1.1 }!.0
+                                    break
+                                }
+                            }
+                        }
+                        out.append(SweepResult(surface: surfName, strut: s.label, gap: minGap, hitAt: hit, solid: solid))
+                    }
+                }
+            }
+        }
+        return out
+    }
+
     @MainActor static func strutReport(_ dir: URL) {
         for kind in AircraftKind.allCases {
             for (mode, m) in [(StrutMode.off, FoamMaterial.epp6), (.auto, .epp6), (.always, kind.recommended.material)] {
@@ -22,6 +101,12 @@ enum SelfTest {
                       + "wing \(String(format: "%.1f", st.wingDeflectionRatio * 100)) %, twist \(st.tailTwistDeg.map { String(format: "%.1f", $0) } ?? "–")°, bend \(st.tailBendDeg.map { String(format: "%.2f", $0) } ?? "–")°, "
                       + "max force \(String(format: "%.2f", st.maxStrutForce)) N, buckle \(st.strutsBuckle), clear \(clear), symmetric \(sym), prop gap \(String(format: "%.1f", a.propGap)) mm, AUW \(Int(a.totalMass)) g, feasible \(a.feasible)"
                       + a.checks.filter { $0.severity == .error }.map { " [\($0.title)]" }.joined())
+                let sw = surfaceSweep(d)
+                if let w = sw.min(by: { $0.gap < $1.gap }) {
+                    let hits = sw.filter { $0.hitAt != nil }
+                    print("      surface sweep ±\(Int(c.kind.maxSurfaceThrow))°: closest \(w.surface) ↔ \(w.strut) \(String(format: "%.1f", w.gap)) mm"
+                          + (hits.isEmpty ? ", all free" : ", CONTACT: " + hits.map { "\($0.surface)↔\($0.strut) \($0.solid) at \(Int($0.hitAt!))°" }.joined(separator: ", ")))
+                }
                 if mode != .off && !d.struts.isEmpty && (kind == .trainer || kind == .jet || kind == .nutBall || kind == .flyingWing || kind == .aerobat) {
                     let tag = "struts_\(kind.rawValue)_\(mode.rawValue)"
                     try? PlanPDF.render(d, a).write(to: dir.appendingPathComponent("\(tag).pdf"))
@@ -39,6 +124,19 @@ enum SelfTest {
                 }
             }
         }
+        // Random variants with struts (always mode, so every type gets some): no surface may touch a strut.
+        var n = 0, minGap = Double.greatestFiniteMagnitude, hits: [String] = []
+        for i in 0..<48 {
+            let kind = AircraftKind.allCases[i % AircraftKind.allCases.count]
+            var c = AircraftConfig.random(kind: kind); c.struts = i % 2 == 0 ? .always : .auto
+            let d = DesignBuilder.build(c)
+            guard !d.struts.isEmpty else { continue }
+            n += 1
+            let sw = surfaceSweep(d)
+            minGap = min(minGap, sw.map(\.gap).min() ?? minGap)
+            for h in sw where h.hitAt != nil { hits.append("\(kind.rawValue) \(h.surface)↔\(h.strut) \(h.solid) at \(Int(h.hitAt!))°") }
+        }
+        print("   random surface sweep (type max throw): \(n) variants with struts, closest \(String(format: "%.1f", minGap)) mm, contacts \(hits.isEmpty ? "none" : hits.joined(separator: "; "))")
     }
 
     @MainActor static func run(outDir: String) {
@@ -146,7 +244,7 @@ enum SelfTest {
         strutReport(dir)
         // Struts versus random variants: how many more builds become feasible.
         do {
-            var off = 0, auto = 0, withStruts = 0
+            var off = 0, auto = 0, withStruts = 0, sweepMin = Double.greatestFiniteMagnitude, sweepHits: [String] = []
             for i in 0..<60 {
                 let kind = AircraftKind.allCases[i % AircraftKind.allCases.count]
                 var c = AircraftConfig.random(kind: kind)
@@ -155,9 +253,14 @@ enum SelfTest {
                 c.struts = .auto
                 let d = DesignBuilder.build(c)
                 if Analysis(design: d).feasible { auto += 1 }
-                if !d.struts.isEmpty { withStruts += 1 }
+                if !d.struts.isEmpty {
+                    withStruts += 1
+                    let sw = surfaceSweep(d)
+                    sweepMin = min(sweepMin, sw.map(\.gap).min() ?? .greatestFiniteMagnitude)
+                    for h in sw where h.hitAt != nil { sweepHits.append("\(kind.rawValue) \(h.surface)↔\(h.strut) \(h.solid) at \(Int(h.hitAt!))°") }
+                }
             }
-            print("   random struts: feasible \(off)/60 without struts, \(auto)/60 with auto struts (\(withStruts) got struts)")
+            print("   random struts: feasible \(off)/60 without struts, \(auto)/60 with auto struts (\(withStruts) got struts), surface sweep closest \(String(format: "%.1f", sweepMin)) mm, contacts \(sweepHits.isEmpty ? "none" : sweepHits.joined(separator: "; "))")
         }
         // Randomizer: rounded edges appear on tailed types and the variants still build.
         do {

@@ -69,6 +69,9 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
     var isNutBall: Bool { self == .nutBall }
     /// Separate horizontal + vertical tail on a boom / fuselage.
     var hasTail: Bool { !isTailless && !isNutBall }
+    /// Largest control-surface throw the build is meant for (degrees either way): 3D planes fly ±45° on all
+    /// surfaces, the others ±35°. Struts keep clear of this travel plus a margin.
+    var maxSurfaceThrow: Double { self == .aerobat ? 45 : 35 }
     /// Optional winglets (`tailWinglets`): side-mounted at the tips on tailed planes, on top of the disc on the NutBall.
     var offersWinglets: Bool { hasTail || isNutBall }
     /// Default control layout for the type.

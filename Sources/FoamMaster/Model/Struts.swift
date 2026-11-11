@@ -86,7 +86,10 @@ struct StrutPlanner {
     let t: Double
     private var obstacles: [(lo: SIMD3<Double>, hi: SIMD3<Double>)] = []
     private var capsules: [(a: SIMD3<Double>, b: SIMD3<Double>, r: Double)] = []
-    private var sweep: [SIMD3<Double>] = []
+    /// Swept control-surface points, bucketed in 6 mm cells.
+    private var sweep: [SIMD3<Int32>: [SIMD3<Double>]] = [:]
+    static let sweepCell = 6.0
+    static func cell(_ p: SIMD3<Double>) -> SIMD3<Int32> { SIMD3<Int32>((p / sweepCell).rounded(.down)) }
 
     /// Clear gap the rod keeps to every obstacle (mm, beyond the rod radius).
     static let clearance = 2.5
@@ -247,6 +250,8 @@ struct StrutPlanner {
     // MARK: Anchors & rods
 
     static let bossLength = 8.0
+    /// Extra control-surface travel kept free of struts beyond the type's maximum throw (degrees).
+    static let throwMargin = 5.0
     static let padThickness = 1.2
     static func bossSide(_ dia: Double) -> Double { dia + 2.4 }
 
@@ -327,7 +332,9 @@ struct StrutPlanner {
             capsules.append((ctrl.servoPosition, arm, 4))
             capsules.append((ctrl.hornPosition - ctrl.hornAxis * 12, ctrl.hornPosition, 6))  // horn
         }
-        // Control surfaces at full travel (±30° about their hinge lines).
+        // Control surfaces over their whole travel (the type's max throw + 5° about the hinge line, every 5°), so no
+        // rod or boss can sit inside the swept volume of an aileron, elevon, elevator or rudder.
+        let travel = c.kind.maxSurfaceThrow + Self.throwMargin
         for part in d.parts {
             for r in part.regions where r.isControl {
                 guard let axis = SceneBuilder.hingeAxis(part, r.polygon) else { continue }
@@ -336,16 +343,16 @@ struct StrutPlanner {
                 var u = b.min.x
                 while u <= b.max.x {
                     var v = b.min.y
-                    while v <= b.max.y { if Poly.contains(r.polygon, Vec2(u, v)) { pts.append(Vec2(u, v)) }; v += 5 }
-                    u += 5
+                    while v <= b.max.y { if Poly.contains(r.polygon, Vec2(u, v)) { pts.append(Vec2(u, v)) }; v += 3 }
+                    u += 3
                 }
                 for inst in part.instances {
                     let a3 = inst.point(axis.0), b3 = inst.point(axis.1)
                     let ax = simd_normalize(b3 - a3)
-                    for ang in [-32.0, -16, 0, 16, 32] {
+                    for ang in stride(from: -travel, through: travel, by: 5) {
                         let q = simd_quatd(angle: ang * .pi / 180, axis: ax)
                         for p in pts {
-                            for off in [-part.thickness / 2, part.thickness / 2] { sweep.append(q.act(inst.point(p, offset: off) - a3) + a3) }
+                            for off in [-part.thickness / 2, part.thickness / 2] { let w = q.act(inst.point(p, offset: off) - a3) + a3; sweep[Self.cell(w), default: []].append(w) }
                         }
                     }
                 }
@@ -394,8 +401,25 @@ struct StrutPlanner {
             if !nearEnd && insideFoam(p, margin: r + 0.5) { return false }
             for o in others where Self.distance(p, segment: o.a.rodEnd, o.b.rodEnd) < r + o.diameter / 2 + 1.5 && !nearEnd { return false }
         }
-        // Control-surface travel.
-        for q in sweep where Self.distance(q, segment: a, b) < need + 0.5 { return false }
+        // Control-surface travel: the rod and both anchor bosses stay out of the swept volume.
+        let bosses = [(s.a.rodEnd, s.a.rodEnd + simd_normalize(b - a) * Self.bossLength), (s.b.rodEnd, s.b.rodEnd + simd_normalize(a - b) * Self.bossLength)]
+        let bossR = Self.bossSide(s.diameter) / 2 * 2.squareRoot()
+        assert(max(need, bossR) + 0.5 + 1.5 < Self.sweepCell)
+        // Every point within m of a segment lies in a cell next to a sample taken every 3 mm along it (m + 1.5 < cell).
+        var cells = Set<SIMD3<Int32>>()
+        for (p0, p1) in [(a, b)] + bosses {
+            let k = max(1, Int(simd_distance(p0, p1) / 3))
+            for i in 0...k {
+                let c0 = Self.cell(p0 + (p1 - p0) * (Double(i) / Double(k)))
+                for dx in Int32(-1)...1 { for dy in Int32(-1)...1 { for dz in Int32(-1)...1 { cells.insert(c0 &+ SIMD3(dx, dy, dz)) } } }
+            }
+        }
+        for cl in cells {
+            for q in sweep[cl] ?? [] {
+                if Self.distance(q, segment: a, b) < need + 0.5 { return false }
+                for bs in bosses where Self.distance(q, segment: bs.0, bs.1) < bossR + 0.5 { return false }
+            }
+        }
         return true
     }
 
@@ -493,10 +517,11 @@ struct StrutPlanner {
         }
         func thin(_ zs: [Double]) -> [Double] { zs.count <= 8 ? zs : stride(from: 0, to: zs.count, by: max(1, zs.count / 8)).map { zs[$0] } }
         upperZ = thin(upperZ); lowerZ = thin(lowerZ)
-        for f in [0.4, 0.5, 0.32, 0.6] {
+        for f in [0.4, 0.5, 0.32, 0.6, 0.25] {
             let x = f * s
             guard x > rootClear, x < s - 25, let ch = wingChord(atX: x) else { continue }
-            for q in [0.6, 0.52, 0.68, 0.44] {
+            // Forward chord stations last: they give the rod room to drop clear of the aileron's travel behind the hinge.
+            for q in [0.6, 0.52, 0.68, 0.44, 0.36, 0.3] {
                 let zw = ch.le + q * (ch.te - ch.le)
                 for dia in CarbonSpar.strutDiameters {
                     func pick(_ zs: [Double], top: Bool, name: String, others: [Strut]) -> [Strut] {
