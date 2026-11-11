@@ -47,8 +47,8 @@ final class Project: ObservableObject {
         c.aileronServos = kind.allowsSingleAileronServo ? aileronServos : 2
         if let fins { c.taillessFins = fins }
         c.motorLayout = kind.allowsDualMotors ? motors : .single
-        c.tailWinglets = winglets && kind.hasTail
-        if winglets && kind.hasTail { c.wingletHeight = 45 }
+        c.tailWinglets = winglets && kind.offersWinglets
+        if winglets && kind.offersWinglets { c.wingletHeight = kind.isNutBall ? 50 : 45 }
         config = Project.balanced(c)
         inspectorTab = .analysis
     }

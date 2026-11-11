@@ -271,7 +271,8 @@ struct SetupSheet: View {
     private var candidate: AircraftConfig {
         var c = preview.kind.recommended
         c.taillessFins = fins; c.motorLayout = motors
-        if preview.kind.hasTail { c.tailWinglets = winglets; c.ailerons = layout.ailerons }
+        if preview.kind.offersWinglets { c.tailWinglets = winglets; if winglets { c.wingletHeight = preview.kind.isNutBall ? 50 : 45 } }
+        if preview.kind.hasTail { c.ailerons = layout.ailerons }
         c.rudder = layout.rudder
         c.aileronServos = preview.kind.allowsSingleAileronServo ? servos : 2
         return c
@@ -307,6 +308,8 @@ struct SetupSheet: View {
             OptionGroup(title: "Control surfaces", symbol: "slider.horizontal.below.square.filled.and.square") {
                 if kind.isNutBall {
                     Text("NutBall: rudder + elevator – 3 channels with the throttle. One-piece elevator across the trailing edge, rudder on the centre fin with a cut-out at its bottom so the elevator moves freely – the round wing turns with the rudder.").font(.system(size: 11)).foregroundStyle(.secondary)
+                    OptionTiles(selection: $winglets, options: [false, true], title: { $0 ? "Winglets" : "Plain disc" },
+                                detail: { $0 ? "Two winglets standing on top of the disc near its rounded edge – tabs into slots" : "Centre fin only" }, tint: kind.tint)
                 } else if kind.isTailless {
                     Text("Tailless: two elevons (combined aileron + elevator), one servo each.").font(.system(size: 11)).foregroundStyle(.secondary)
                     OptionTiles(selection: $fins, options: TaillessFins.allCases, title: \.name, detail: \.detail, tint: kind.tint)

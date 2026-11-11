@@ -1092,6 +1092,7 @@ enum DesignBuilder {
             let vs = S * sin(acos(min(1, max(-1, 1 - 2 * us / L)))) * 0.88
             var features: [Feature] = [.hinge(Vec2(uH, -pt(thH).y), pt(thH)), .label("NUTBALL", Vec2(L * 0.55, S * 0.35))]
             if c.sparEnabled { features.append(.rod(Vec2(us, -vs), Vec2(us, vs), c.sparSpec.widthMM)) }
+            nutBallWinglets(holes: &discHoles, features: &features, uHinge: uH)
             parts.append(Part(name: "Disc wing", role: .wing, outline: outline, holes: discHoles, features: features,
                               regions: [Region(polygon: mainRegion, isControl: false), Region(polygon: elevator, isControl: true)],
                               instances: [.horizontal(at: .zero)], material: c.material))
@@ -1113,6 +1114,22 @@ enum DesignBuilder {
                                            servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
                                            armPosition: armTip(rBody, side: -1), hornAxis: [-1, 0, 0]))
             batteryPos = [t / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
+        }
+
+        mutating func nutBallWinglets(holes: inout [Hole], features: inout [Feature], uHinge: Double) {
+            guard c.tailWinglets, c.wingletHeight > 5 else { return }
+            let st = c.nutBallWinglet
+            let fin = finOutline(chord: st.chord, height: c.wingletHeight)
+            for v in [-st.v, st.v] {
+                for tu in fin.tabs { holes.append(slot(minU: st.u0 + tu - 4, maxU: st.u0 + tu + 4, minV: v - t / 2, maxV: v + t / 2)) }
+                // Footprint on the disc plan: where the winglet stands (its two tabs go into the slots).
+                features.append(.zone(Poly.rect(minU: st.u0, maxU: st.u0 + st.chord, minV: v - t / 2, maxV: v + t / 2), "WINGLET"))
+            }
+            if st.u0 + st.chord > uHinge { issues.append("Winglets reach the elevator hinge – make the disc longer or the elevator shallower.") }
+            parts.append(Part(name: "Winglet", role: .winglet, outline: fin.outline,
+                              features: [.label("WINGLET", Vec2(st.chord * 0.45, c.wingletHeight * 0.4))],
+                              instances: [-st.v, st.v].map { Placement(origin: [$0, t / 2, st.u0], u: [0, 0, 1], v: [0, 1, 0]) },
+                              material: c.material))
         }
 
         // MARK: Electronics & hardware
@@ -1203,5 +1220,20 @@ extension Design {
         if let r = take({ $0.hasPrefix("Rudder") }) { plan.append(r) }
         plan += servos
         return plan.enumerated().map { ($0.offset + 1, $0.element) }
+    }
+}
+
+extension AircraftConfig {
+    /// NutBall winglet station: the disc edge is rounded, so the winglets stand ON TOP of the disc, inboard of
+    /// the edge (a plain fin with tabs pushed through slots in the disc, like the spine). Lateral station, base
+    /// leading edge and base chord – the base stays on the fixed disc ahead of the elevator hinge.
+    var nutBallWinglet: (v: Double, u0: Double, chord: Double) {
+        let L = rootChord, S = semiSpan
+        let v = S * 0.8
+        let cosT = (1 - pow(v / S, 2)).squareRoot()               // disc at v: u = L/2·(1 ∓ cos θ)
+        let uLE = L / 2 * (1 - cosT) + 6
+        let uEnd = min(L * (1 - controlChordPct) - 4, L / 2 * (1 + cosT) - 6)
+        let chord = max(20, min(L * 0.32, uEnd - uLE))
+        return (v, uEnd - chord, chord)
     }
 }

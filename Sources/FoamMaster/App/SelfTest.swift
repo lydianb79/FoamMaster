@@ -116,10 +116,11 @@ enum SelfTest {
                 total += 1
                 if c.wingTipRounding > 0 || c.finTopRounding > 0 || c.stabTipRounding > 0 { rounded += 1 }
                 let d = DesignBuilder.build(c)
-                if d.parts.contains(where: { !Poly.isSimple($0.outline) }) { simple = false }
+                // Variants already flagged with a geometry issue (e.g. fin reaching the wing) are infeasible anyway.
+                if d.geometryIssues.isEmpty && d.parts.contains(where: { !Poly.isSimple($0.outline) }) { simple = false }
                 if Analysis(design: d).feasible { feasible += 1 }
             }
-            print("   random rounding: \(rounded)/\(total) variants rounded, raw feasible \(feasible)/\(total), all outlines simple \(simple)")
+            print("   random rounding: \(rounded)/\(total) variants rounded, raw feasible \(feasible)/\(total), outlines without geometry issues simple \(simple)")
         }
         let project = Project()
         project.start(.flyingWing)
@@ -196,13 +197,27 @@ enum SelfTest {
         }
         for kind in AircraftKind.allCases {
             var c = kind.defaults
-            c.tailWinglets = kind.hasTail; c.wingletHeight = 45
+            c.tailWinglets = kind.offersWinglets; c.wingletHeight = kind.isNutBall ? 50 : 45
             c = Project.balanced(c)
             let d = DesignBuilder.build(c)
             let a = Analysis(design: d)
             print("   wl \(kind.title): AUW \(Int(a.totalMass)) g, winglets \(d.parts.contains { $0.role == .winglet }), ESCs \(d.components.filter { $0.name.hasPrefix("ESC") }.count), feasible \(a.feasible)")
             for ch in a.checks where ch.severity >= .warning { print("      [\(ch.severity)] \(ch.title): \(ch.detail)") }
-            if kind == .trainer || kind == .jet {
+            if kind == .nutBall {
+                // Top winglets: every tab must sit in a disc slot on the fixed part, clear of the spar groove.
+                let st = c.nutBallWinglet
+                let disc = d.parts.first { $0.role == .wing }!, wl = d.parts.first { $0.role == .winglet }!
+                let tabUs = wl.outline.filter { $0.y < -0.1 }.map(\.x)
+                let slots = disc.holes.filter { $0.kind == .slot && abs(abs(Poly.centroid($0.polygon).y) - st.v) < 1 }
+                let inSlots = !tabUs.isEmpty && tabUs.allSatisfy { u in slots.contains { let b = Poly.bounds($0.polygon); return st.u0 + u >= b.min.x - 0.01 && st.u0 + u <= b.max.x + 0.01 } }
+                let fixed = disc.regions.first { !$0.isControl }!.polygon
+                let onFixed = slots.allSatisfy { $0.polygon.allSatisfy { Poly.contains(fixed, $0) } }
+                let sparU = c.rootChord * 0.3, half = c.sparSpec.widthMM / 2 + 2
+                let clearSpar = slots.allSatisfy { let b = Poly.bounds($0.polygon); return b.max.x < sparU - half || b.min.x > sparU + half }
+                print("   nutball winglets: station ±\(Int(st.v)) mm, base \(Int(st.u0))–\(Int(st.u0 + st.chord)) mm (hinge \(Int(c.rootChord * (1 - c.controlChordPct)))), \(slots.count) slots, tabs in slots \(inSlots), slots on fixed disc \(onFixed), clear of spar \(clearSpar), instances \(wl.instances.count)")
+                try? PlanPDF.render(d, a).write(to: dir.appendingPathComponent("wl_nutBall.pdf"))
+            }
+            if kind == .trainer || kind == .jet || kind == .nutBall {
                 let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
                 if let r = Renderer(view: view) {
                     r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)

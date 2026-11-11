@@ -69,6 +69,8 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
     var isNutBall: Bool { self == .nutBall }
     /// Separate horizontal + vertical tail on a boom / fuselage.
     var hasTail: Bool { !isTailless && !isNutBall }
+    /// Optional winglets (`tailWinglets`): side-mounted at the tips on tailed planes, on top of the disc on the NutBall.
+    var offersWinglets: Bool { hasTail || isNutBall }
     /// Default control layout for the type.
     /// Flat (no dihedral) wings need ailerons for roll control.
     var defaultAilerons: Bool { hasTail }

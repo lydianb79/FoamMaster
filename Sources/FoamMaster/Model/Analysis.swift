@@ -232,7 +232,12 @@ struct Analysis {
         if c.kind.isNutBall {
             if !c.hasRudder { add(.warning, "Controls", "No rudder", "A NutBall turns with the rudder – elevator only gives no roll or yaw control.") }
             let finArea = c.vStabHeight * c.vStabChord * 0.75
-            let vv = finArea * (c.rootChord * (1 - c.controlChordPct) - 0.4 * c.vStabChord - cgRange.upperBound) / (wingArea * c.wingspan)
+            var vv = finArea * (c.rootChord * (1 - c.controlChordPct) - 0.4 * c.vStabChord - cgRange.upperBound) / (wingArea * c.wingspan)
+            if c.tailWinglets && c.wingletHeight > 5 {
+                // Both top winglets add fin area aft of the CG.
+                let w = c.nutBallWinglet
+                vv += 2 * c.wingletHeight * w.chord * 0.8 * max(0, w.u0 + w.chord * 0.4 - cgRange.upperBound) / (wingArea * c.wingspan)
+            }
             if vv < 0.012 { add(.warning, "Stability", "Small fin for the disc", "Fin volume \(String(format: "%.3f", vv)) – the NutBall will wander in yaw. Make the fin taller or longer.") }
             else { add(.ok, "Stability", "Fin size OK", "Fin volume \(String(format: "%.3f", vv)) – rudder turns the disc through its natural roll coupling.") }
         } else if !c.kind.isTailless && !c.hasAilerons {

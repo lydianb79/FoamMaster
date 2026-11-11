@@ -12,6 +12,9 @@ struct PlanLayout {
         var bmin: Vec2
         var bmax: Vec2
 
+        /// Space above the part reserved for its title (one or two lines).
+        var labelHeight: Double { PlanDrawer.titleBlock(part, width: size.x).height }
+
         /// Part plan coordinate → sheet coordinate (mm, y down).
         func map(_ p: Vec2) -> Vec2 {
             rotated ? origin + Vec2(p.y - bmin.y, p.x - bmin.x)
@@ -66,7 +69,9 @@ struct PlanLayout {
         for (part, bmin, bmax, sz) in items {
             var bestPos: (x: Double, y: Double, top: Double, rot: Bool)?
             for rot in [false, true] {
-                let w = (rot ? sz.y : sz.x) + gap, h = (rot ? sz.x : sz.y) + gap + labelSpace
+                let pw = rot ? sz.y : sz.x
+                let w = max(pw, PlanDrawer.titleBlock(part, width: pw).width) + gap
+                let h = (rot ? sz.x : sz.y) + gap + PlanDrawer.titleBlock(part, width: pw).height
                 guard w + margin <= width + gap else { continue }
                 for seg in sky {
                     let x = max(seg.x, margin)
@@ -80,9 +85,10 @@ struct PlanLayout {
             }
             guard let pos = bestPos else { return nil }
             let size = pos.rot ? Vec2(sz.y, sz.x) : sz
-            out.append(Placed(part: part, origin: Vec2(pos.x, pos.y + margin + labelSpace), rotated: pos.rot, size: size, bmin: bmin, bmax: bmax))
+            let block = PlanDrawer.titleBlock(part, width: size.x)
+            out.append(Placed(part: part, origin: Vec2(pos.x, pos.y + margin + block.height), rotated: pos.rot, size: size, bmin: bmin, bmax: bmax))
             // Update skyline with the new block.
-            let w = size.x + gap, nx = pos.x, ny = pos.top
+            let w = max(size.x, block.width) + gap, nx = pos.x, ny = pos.top
             var next: [(x: Double, y: Double, w: Double)] = []
             for seg in sky {
                 let a = seg.x, b = seg.x + seg.w
@@ -97,7 +103,7 @@ struct PlanLayout {
     }
 
     func tilesTouched(by p: Placed) -> Int {
-        let a = p.origin - Vec2(0, Self.labelSpace), b = p.origin + p.size
+        let a = p.origin - Vec2(0, p.labelHeight), b = p.origin + p.size
         let c0 = Int(floor(a.x / Self.tile.x)), c1 = Int(floor((b.x - 0.01) / Self.tile.x))
         let r0 = Int(floor(a.y / Self.tile.y)), r1 = Int(floor((b.y - 0.01) / Self.tile.y))
         return (c1 - c0 + 1) * (r1 - r0 + 1)
@@ -110,7 +116,7 @@ struct PlanLayout {
             for c in 0..<columns {
                 let lo = Vec2(Double(c) * Self.tile.x, Double(r) * Self.tile.y), hi = lo + Self.tile
                 let hit = placed.contains { p in
-                    let a = p.origin - Vec2(0, Self.labelSpace), b = p.origin + p.size
+                    let a = p.origin - Vec2(0, p.labelHeight), b = p.origin + p.size
                     return a.x < hi.x && b.x > lo.x && a.y < hi.y && b.y > lo.y
                 }
                 if hit { res.append((r, c)) }
@@ -158,14 +164,34 @@ enum PlanDrawer {
         ctx.restoreGState()
     }
 
+    /// Title lines of a part: one line when it fits the part's width, else name and "cut · material" on two lines.
+    static func titleLines(_ part: Part, width: Double) -> [String] {
+        let qty = part.mirroredPair ? "cut 2× (1 mirrored)" : (part.quantity > 1 ? "cut \(part.quantity)×" : "cut 1×")
+        let one = "\(part.name.uppercased())  ·  \(qty)  ·  \(part.material.displayName)"
+        return textWidth(one) <= width ? [one] : [part.name.uppercased(), "\(qty)  ·  \(part.material.displayName)"]
+    }
+
+    /// Space a part's title needs: a narrow part (winglet, keel) reserves the width of its title so the titles
+    /// of neighbouring parts never run into each other.
+    static func titleBlock(_ part: Part, width: Double) -> (width: Double, height: Double) {
+        let lines = titleLines(part, width: width)
+        return (min(lines.map(textWidth).max() ?? 0, PlanLayout.tile.x - 20), PlanLayout.labelSpace + Double(lines.count - 1) * 5.5)
+    }
+
+    static func textWidth(_ s: String) -> Double {
+        Double((s as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 4.2, weight: .semibold)]).width) + 2
+    }
+
     static func draw(_ pl: PlanLayout.Placed, in ctx: CGContext, cgZ: Double?, dark: Bool = false) {
         let part = pl.part
         let map = pl.map
         let inkC = dark ? NSColor.white : ink
 
         // Title
-        let qty = part.mirroredPair ? "cut 2× (1 mirrored)" : (part.quantity > 1 ? "cut \(part.quantity)×" : "cut 1×")
-        text("\(part.name.uppercased())  ·  \(qty)  ·  \(part.material.displayName)", at: pl.origin - Vec2(0, 7.5), size: 4.2, color: inkC, weight: .semibold)
+        let lines = titleLines(part, width: pl.size.x)
+        for (i, line) in lines.enumerated() {
+            text(line, at: pl.origin - Vec2(0, 7.5 + Double(lines.count - 1 - i) * 5.5), size: 4.2, color: inkC, weight: .semibold)
+        }
 
         // Outline
         let outline = path(part.outline, map)

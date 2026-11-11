@@ -122,7 +122,7 @@ struct ParameterContent: View {
                             }
                             .pickerStyle(.segmented).labelsHidden()
                         }
-                        if c.kind.hasTail {
+                        if c.kind.offersWinglets {
                             Toggle(isOn: bind(\.tailWinglets)) { Text("Winglets").font(.system(size: 12, weight: .semibold)) }
                                 .toggleStyle(.switch).tint(Theme.accent)
                             if c.tailWinglets {
