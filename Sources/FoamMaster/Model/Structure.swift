@@ -77,7 +77,9 @@ struct StructureReport {
         return (worst / L, R)
     }
 
-    init(_ c: AircraftConfig, totalMass: Double, stallSpeed: Double, struts: [Strut] = []) {
+    /// `bucklingSafety`: the strut planner checks with a little extra margin, because the finished build is a bit
+    /// heavier (anchors, saddles, fin struts) and so is loaded slightly harder than the candidate it judged.
+    init(_ c: AircraftConfig, totalMass: Double, stallSpeed: Double, struts: [Strut] = [], bucklingSafety: Double = StructureReport.strutBucklingSafety) {
         let t = c.material.thickness
         let E = c.material.modulus, G = c.material.shearModulus
         let v = max(stallSpeed * 2, 30) / 3.6
@@ -105,7 +107,7 @@ struct StructureReport {
             let share = st.stiffness(c.material) * ey * ey / kWing * wd.reaction
             let force = share / max(abs(ey), 1e-3)
             maxStrutForce = max(maxStrutForce, force)
-            if st.b.rodEnd.y > st.a.rodEnd.y && force * Self.strutBucklingSafety > st.bucklingLoad { strutsBuckle = true }
+            if st.b.rodEnd.y > st.a.rodEnd.y && force * bucklingSafety > st.bucklingLoad { strutsBuckle = true }
         }
         _ = (t, E)
 
@@ -121,15 +123,15 @@ struct StructureReport {
             finStruts = fin.count
             let root = SIMD3<Double>(0, fin.first.map { $0.a.surface.y } ?? t / 2, 0)
             let lever = { (st: Strut) in simd_dot(simd_cross([0, 0, 1], st.b.rodEnd - root), st.direction) }
-            let kFin = kBare + fin.reduce(0) { $0 + $1.stiffness(c.material) * lever($1) * lever($1) }
+            let kFin = kBare + fin.reduce(0) { $0 + $1.stiffness(c.material, symmetric: false) * lever($1) * lever($1) }
             let Mf = 0.7 * q * h * fc * h / 2
             finFlexBareDeg = Mf / kBare * 180 / .pi
             let th = Mf / kFin
             finFlexDeg = th * 180 / .pi
             for st in fin {
-                let force = st.stiffness(c.material) * abs(lever(st) * th)
+                let force = st.stiffness(c.material, symmetric: false) * abs(lever(st) * th)
                 maxStrutForce = max(maxStrutForce, force)
-                if force * Self.strutBucklingSafety > st.bucklingLoad { strutsBuckle = true }
+                if force * bucklingSafety > st.bucklingLoad { strutsBuckle = true }
             }
         }
 
@@ -175,14 +177,15 @@ struct StructureReport {
         let tail = struts.filter { $0.group == .tail }
         tailStruts = tail.count
         let pivot = SIMD3<Double>(0, 0, c.rootChord)
-        func strutK(_ omega: SIMD3<Double>, about p0: SIMD3<Double>) -> Double {
+        // Elevator load bends the boom symmetrically (left and right rods alike), rudder twist is antisymmetric.
+        func strutK(_ omega: SIMD3<Double>, about p0: SIMD3<Double>, symmetric: Bool) -> Double {
             tail.reduce(0) { k, st in
                 let lever = simd_dot(simd_cross(omega, st.b.rodEnd - p0), st.direction)
-                return k + st.stiffness(c.material) * lever * lever
+                return k + st.stiffness(c.material, symmetric: symmetric) * lever * lever
             }
         }
-        let kBend = 2 * EIv / boom + strutK([1, 0, 0], about: pivot)
-        let kTwist = GJ / boom + strutK([0, 0, 1], about: .zero)
+        let kBend = 2 * EIv / boom + strutK([1, 0, 0], about: pivot, symmetric: true)
+        let kTwist = GJ / boom + strutK([0, 0, 1], about: .zero, symmetric: false)
         let Mb = Fh * boom, zv = hBoom + c.vStabHeight / 2, Mt = Fv * zv
         let thB = Mb / kBend, thT = Mt / kTwist
         tailBendDeg = thB * 180 / .pi
@@ -191,9 +194,9 @@ struct StructureReport {
         for st in tail {
             let lb = simd_dot(simd_cross([1, 0, 0], st.b.rodEnd - pivot), st.direction)
             let lt = simd_dot(simd_cross([0, 0, 1], st.b.rodEnd), st.direction)
-            let force = st.stiffness(c.material) * (abs(lb * thB) + abs(lt * thT))
+            let force = st.stiffness(c.material, symmetric: true) * abs(lb * thB) + st.stiffness(c.material, symmetric: false) * abs(lt * thT)
             maxStrutForce = max(maxStrutForce, force)
-            if force * Self.strutBucklingSafety > st.bucklingLoad { strutsBuckle = true }
+            if force * bucklingSafety > st.bucklingLoad { strutsBuckle = true }
         }
     }
 }

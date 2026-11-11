@@ -278,8 +278,12 @@ struct Analysis {
         if !d.struts.isEmpty {
             let rods = Dictionary(grouping: d.struts, by: \.diameter).sorted { $0.key < $1.key }
                 .map { "\($0.value.count) × \(CarbonSpar.strutRod($0.key).name)" }.joined(separator: ", ")
+            let saddles = d.struts.filter { $0.b.saddle != nil }.count / 2
+            let anchors = d.struts.count * 2 - saddles * 2
+            let mounts = [anchors > 0 ? "\(anchors) printed anchors" : nil, saddles > 0 ? "\(saddles) one-piece saddle\(saddles > 1 ? "s" : "") under the fuselage" : nil]
+                .compactMap { $0 }.joined(separator: " + ")
             let why = c.struts == .always ? "fitted on request" : "added automatically – without them the \([st.wingStruts > 0 ? "wing" : nil, st.tailStruts > 0 ? "fuselage" : nil].compactMap { $0 }.joined(separator: " and ")) would be too flexible"
-            add(.info, "Structure", "Carbon struts", "\(rods) (\(why)), \(d.struts.count * 2) printed anchors – marked S1… on the plans. They keep clear of servos, pushrods, horns, battery, control-surface travel and the prop.")
+            add(.info, "Structure", "Carbon struts", "\(rods) (\(why)), \(mounts) – marked S1… on the plans. They keep clear of servos, pushrods, horns, battery, control-surface travel and the prop.")
             if st.finStruts > 0, let bare = st.finFlexBareDeg, let braced = st.finFlexDeg {
                 add(.ok, "Structure", "Fin braced", "\(st.finStruts) fin struts from the stabiliser: the fin tilts \(String(format: "%.2f", braced))° instead of \(f1(bare))° at \(c.hasRudder ? "full rudder" : "a strong side gust"), \(f0(st.loadSpeed)) km/h. They keep clear of elevator and rudder travel (±\(Int(c.kind.maxSurfaceThrow))°).")
             }

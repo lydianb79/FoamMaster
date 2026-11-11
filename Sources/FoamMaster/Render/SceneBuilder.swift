@@ -251,11 +251,16 @@ enum SceneBuilder {
             scene.addMesh(rod, color: Palette.carbon)
             scene.addLine(a3, st.b.rodEnd, color: Palette.strutLine)
             for end in [st.a, st.b] {
-                let w = simd_cross(end.normal, end.along)
-                let m = PrintedParts.strutAnchor(dia: st.diameter, elevation: end.elevation)
-                    .transformed { p in end.surface + end.along * p.x + w * p.y + end.normal * p.z }
+                if let sd = end.saddle {
+                    // Drawn once for the pair (with the right-hand strut).
+                    if st.label.hasSuffix("R"), let left = d.struts.first(where: { $0.label == sd.label + "L" }) {
+                        scene.label = "Strut saddle \(sd.label) (printed, one piece for both rods) – \(Int((end.elevation * 180 / .pi).rounded()))°"
+                        scene.addMesh(PrintedParts.strutSaddle(right: end, left: left.b, dia: st.diameter), color: Palette.printed)
+                    }
+                    continue
+                }
                 scene.label = "Strut anchor \(st.label) (printed) – \(Int((end.elevation * 180 / .pi).rounded()))°"
-                scene.addMesh(simd_dot(simd_cross(end.along, w), end.normal) < 0 ? m.flipped : m, color: Palette.printed)
+                scene.addMesh(PrintedParts.placedAnchor(end, dia: st.diameter, pad: true), color: Palette.printed)
             }
         }
         // Linkages: servo arm (white), pushrod, and the printed horn standing out of the surface.
@@ -372,7 +377,8 @@ enum SceneBuilder {
     /// Propeller: spinner + n blades with a realistic planform (narrow root, widest at ~35 % radius,
     /// rounded tip) and pitch – each blade is twisted from ~35° at the root to ~12° at the tip.
     /// `outward` = direction (±z) the spinner points (away from the motor). Pusher props are the mirror image
-    /// of tractor props (reverse rotation), so `mirrored` flips the blade handedness.
+    /// of tractor props (reverse rotation), so `mirrored` flips the blade handedness; the pitch always gives
+    /// forward thrust (trailing edge aft).
     static func propeller(radius R: Double, blades n: Int, z: Double, hub: Double, outward: Double = -1, mirrored: Bool = false) -> Mesh3D {
         var m = Mesh3D()
         let stations: [(r: Double, chord: Double)] = [(0.12, 0.13), (0.25, 0.2), (0.38, 0.22), (0.55, 0.19), (0.72, 0.15), (0.88, 0.1), (0.97, 0.06), (1.0, 0.02)]
@@ -386,8 +392,11 @@ enum SceneBuilder {
                 // Blade section in the local frame: x = radius, chord line tilted by the pitch angle about x.
                 let half = ch / 2
                 let mx: Double = mirrored ? -1 : 1
-                let le = SIMD3<Double>(r * mx, half * cos(pitch), -half * sin(pitch) * outward * -1)
-                let te = SIMD3<Double>(r * mx, -half * cos(pitch), half * sin(pitch) * outward * -1)
+                // The trailing edge always sits AFT (+z) of the leading edge: the blade throws air backwards and
+                // pulls / pushes the plane forward – for a tractor and a pusher alike (only the spinner side and the
+                // rotation sense differ).
+                let le = SIMD3<Double>(r * mx, half * cos(pitch), -half * sin(pitch))
+                let te = SIMD3<Double>(r * mx, -half * cos(pitch), half * sin(pitch))
                 lead.append(le); trail.append(te)
             }
             let rot = simd_quatd(angle: phi, axis: [0, 0, 1])

@@ -99,7 +99,7 @@ enum SelfTest {
                     d.struts.contains { l in l.label == String(r.label.dropLast()) + "L" && abs(l.a.rodEnd.x + r.a.rodEnd.x) < 0.01 && abs(l.length - r.length) < 0.01 } }
                 print("   struts \(kind.title) \(m.displayName) \(mode.name): \(d.struts.count) (\(d.struts.map { "\($0.label) Ø\(String(format: "%.1f", $0.diameter)) \(Int($0.length)) mm \(Int(($0.a.elevation * 180 / .pi).rounded()))°/\(Int(($0.b.elevation * 180 / .pi).rounded()))°" }.joined(separator: ", "))), "
                       + "wing \(String(format: "%.1f", st.wingDeflectionRatio * 100)) %, twist \(st.tailTwistDeg.map { String(format: "%.1f", $0) } ?? "–")°, bend \(st.tailBendDeg.map { String(format: "%.2f", $0) } ?? "–")°, fin \(st.finFlexBareDeg.map { String(format: "%.1f", $0) } ?? "–")→\(st.finFlexDeg.map { String(format: "%.2f", $0) } ?? "–")°, "
-                      + "max force \(String(format: "%.2f", st.maxStrutForce)) N, buckle \(st.strutsBuckle), clear \(clear), symmetric \(sym), prop gap \(String(format: "%.1f", a.propGap)) mm, AUW \(Int(a.totalMass)) g, feasible \(a.feasible)"
+                      + "saddles \(d.struts.filter { $0.b.saddle != nil }.count / 2), max force \(String(format: "%.2f", st.maxStrutForce)) N, buckle \(st.strutsBuckle), clear \(clear), symmetric \(sym), prop gap \(String(format: "%.1f", a.propGap)) mm, AUW \(Int(a.totalMass)) g, feasible \(a.feasible)"
                       + a.checks.filter { $0.severity == .error }.map { " [\($0.title)]" }.joined())
                 let sw = surfaceSweep(d)
                 // Fin struts against the tail surfaces (elevator and rudder) in particular.
@@ -137,7 +137,7 @@ enum SelfTest {
                 if mode != .off && !d.struts.isEmpty && (kind == .trainer || kind == .jet || kind == .nutBall || kind == .flyingWing || kind == .aerobat) {
                     let tag = "struts_\(kind.rawValue)_\(mode.rawValue)"
                     try? PlanPDF.render(d, a).write(to: dir.appendingPathComponent("\(tag).pdf"))
-                    for part in PrintedParts.generate(d) where part.fileName.hasPrefix("strut_anchor") {
+                    for part in PrintedParts.generate(d) where part.fileName.hasPrefix("strut_anchor") || part.fileName.hasPrefix("strut_saddle") {
                         try? part.mesh.stlData(name: part.name).write(to: dir.appendingPathComponent("\(tag)_\(part.fileName).stl"))
                     }
                     let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
@@ -147,6 +147,20 @@ enum SelfTest {
                         // From below and behind, where most struts are.
                         r.pitch = -0.35; r.yaw = 2.3
                         if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("\(tag)_3d_below.png")) }
+                        // Close-up of the first saddle from below and the side, and the saddle alone as printed.
+                        if let sd = d.struts.compactMap({ $0.b.saddle }).first {
+                            r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
+                            r.target = SIMD3<Float>(Float(sd.center.x), Float(sd.center.y), Float(sd.center.z))
+                            r.zoom = 0.12; r.pitch = -0.45; r.yaw = 0.9
+                            if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("\(tag)_3d_saddle.png")) }
+                            if let part = PrintedParts.generate(d).first(where: { $0.fileName.hasPrefix("strut_saddle") }) {
+                                var sc = SceneData()
+                                sc.addMesh(part.mesh, color: Palette.printed)
+                                r.setScene(sc, resetCamera: true)
+                                r.pitch = 0.5; r.yaw = 0.6
+                                if let img = r.snapshot(width: 800, height: 600) { savePNG(img, dir.appendingPathComponent("\(tag)_saddle_part.png")) }
+                            }
+                        }
                         // Tail close-up from behind and to the side (fin struts), like a photo of the real model.
                         if let fin = d.struts.first(where: { $0.group == .fin }) {
                             r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
@@ -182,6 +196,23 @@ enum SelfTest {
                 print("   no fin struts \(kind.title) \(m.displayName): \(d.strutNotes.isEmpty ? "" : "[CG] ")\(why.sorted { $0.value > $1.value }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))")
             }
         }
+        // Propeller pitch: every prop (tractor or pusher, either hand) must throw air aft = thrust forward (−z).
+        // Rotation sense: CCW about +z for the plain blade, CW for the mirrored one. Along the rotation the blade must
+        // move towards −z (its trailing side lies aft): covariance of z with the angle in the rotation sense < 0.
+        for (outward, mirrored, what) in [(-1.0, false, "tractor"), (-1.0, true, "tractor mirrored"), (1.0, true, "pusher"), (1.0, false, "pusher mirrored")] {
+            let m = SceneBuilder.propeller(radius: 50, blades: 1, z: 0, hub: 4, outward: outward, mirrored: mirrored)
+            let sense = mirrored ? -1.0 : 1.0
+            var pts: [(ang: Double, z: Double)] = []
+            for t in m.triangles { for p in [t.0, t.1, t.2] where simd_length(SIMD2(p.x, p.y)) > 20 {
+                pts.append((atan2(p.y, p.x) * sense, p.z))
+            } }
+            // Angles of one blade stay within ±π/2 of its mean direction: unwrap around the mean.
+            let mean = atan2(pts.map { sin($0.ang) }.reduce(0, +), pts.map { cos($0.ang) }.reduce(0, +))
+            let un = pts.map { (ang: remainder($0.ang - mean, 2 * .pi), z: $0.z) }
+            let ma = un.map(\.ang).reduce(0, +) / Double(un.count), mz = un.map(\.z).reduce(0, +) / Double(un.count)
+            let cov = un.reduce(0) { $0 + ($1.ang - ma) * ($1.z - mz) }
+            print("   prop pitch \(what): \(cov < 0 ? "forward thrust OK" : "THRUST BACKWARDS")")
+        }
         // Random variants with struts (always mode, so every type gets some): no surface may touch a strut.
         var n = 0, minGap = Double.greatestFiniteMagnitude, hits: [String] = [], finN = 0, finMissing: [String] = []
         for i in 0..<48 {
@@ -190,7 +221,8 @@ enum SelfTest {
             let d = DesignBuilder.build(c)
             guard !d.struts.isEmpty else { continue }
             n += 1
-            if d.struts.contains(where: { $0.group == .fin }) { finN += 1 } else if kind.hasTail || kind.isNutBall, !kind.isTwinBoom { finMissing.append(kind.rawValue) }
+            if d.struts.contains(where: { $0.group == .fin }) { finN += 1 }
+            else if kind.hasTail || kind.isNutBall, !kind.isTwinBoom { finMissing.append(kind.rawValue + (d.strutNotes.isEmpty ? " (NO REASON)" : " (CG)")) }
             let sw = surfaceSweep(d)
             minGap = min(minGap, sw.map(\.gap).min() ?? minGap)
             for h in sw where h.hitAt != nil { hits.append("\(kind.rawValue) \(h.surface)↔\(h.strut) \(h.solid) at \(Int(h.hitAt!))°") }
@@ -541,7 +573,7 @@ enum SelfTest {
         do {
             var c = AircraftKind.trainer.defaults; c.motorLayout = .dualTractor
             for (name, mesh, center, rad) in [("nosecap", PrintedParts.noseProtector(for: c), SIMD3<Float>(0, 0, 4), Float(28)),
-                                              ("horn", PrintedParts.controlHorn(foam: 6).transformed { SIMD3<Double>($0.x, $0.z, $0.y) }, SIMD3<Float>(0, 3, 0), Float(14))] {
+                                              ("horn", PrintedParts.controlHorn(foam: 6).transformed { SIMD3<Double>($0.x, $0.z, $0.y) }.flipped, SIMD3<Float>(0, 3, 0), Float(14))] {
                 var sc = SceneData(); sc.addMesh(mesh, color: SIMD4(0.55, 0.6, 0.68, 1)); sc.center = center; sc.radius = rad
                 let view = MTKView(frame: CGRect(x: 0, y: 0, width: 600, height: 600), device: MTLCreateSystemDefaultDevice())
                 if let r = Renderer(view: view) {

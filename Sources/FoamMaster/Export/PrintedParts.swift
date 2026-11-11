@@ -56,7 +56,7 @@ enum PrintedParts {
         // Strut anchors grouped by rod size and boss angle (left and right ends are the same part).
         var anchors: [String: (dia: Double, deg: Int, labels: [String])] = [:]
         for st in d.struts {
-            for end in [st.a, st.b] {
+            for end in [st.a, st.b] where end.saddle == nil {
                 let deg = Int((end.elevation * 180 / .pi).rounded())
                 let key = String(format: "d%.1f_%02d", st.diameter, deg)
                 anchors[key, default: (st.diameter, deg, [])].labels.append(st.label)
@@ -70,8 +70,20 @@ enum PrintedParts {
                                    note: "rod hole Ø\(String(format: "%.2f", g.dia + 0.25)) mm at \(g.deg)° to the foam – glue onto the \(labels.joined(separator: ", ")) pads on the plan, boss pointing along the arrow"))
         }
 
+        // One-piece saddles at the bottom of the fuselage (one per left/right pair, each fitted to its spot).
+        for r in d.struts where r.label.hasSuffix("R") {
+            guard let sd = r.b.saddle, let l = d.struts.first(where: { $0.label == sd.label + "L" }) else { continue }
+            let dTxt = r.diameter == r.diameter.rounded() ? String(format: "%.0f", r.diameter) : String(format: "%.1f", r.diameter)
+            let deg = Int((r.b.elevation * 180 / .pi).rounded())
+            out.append(PrintedPart(name: "Strut saddle \(sd.label) · Ø\(dTxt) mm", fileName: "strut_saddle_\(sd.label.lowercased())",
+                                   quantity: 1, mesh: strutSaddlePrint(right: r.b, left: l.b, dia: r.diameter),
+                                   note: "one piece for \(sd.label) L + R: slide over the bottom edge of the fuselage at the \(sd.label) saddle mark and glue – rod holes Ø\(String(format: "%.2f", r.diameter + 0.25)) mm at \(deg)° to the foam"))
+        }
+
         out.append(PrintedPart(name: "Battery tray", fileName: "battery_tray_\(c.battery.rawValue)", quantity: 1,
                                mesh: batteryTray(c.battery), note: "velcro base with side rails"))
+        // Safety net: every exported STL faces outward (positive signed volume).
+        for i in out.indices where out[i].mesh.signedVolume < 0 { out[i].mesh = out[i].mesh.flipped }
         return out
     }
 
@@ -320,10 +332,11 @@ enum PrintedParts {
     /// Strut anchor: a pad glued onto the foam (z 0…1.2) with an inclined square boss (rod hole Ø d + 0.25) at the
     /// rod's elevation, centred over the pad, and a wedge filling the gap under the boss.
     /// Mesh frame: x along the surface towards the rod, y across, z up from the foam.
-    static func strutAnchor(dia: Double, elevation phi: Double) -> Mesh3D {
+    static func strutAnchor(dia: Double, elevation phi: Double, pad: Bool = true) -> Mesh3D {
         let padT = StrutPlanner.padThickness, Lb = StrutPlanner.bossLength, B = StrutPlanner.bossSide(dia)
         let size = StrutPlanner.padSize(dia: dia, elevation: phi)
-        var mesh = Mesh3D.box(min: [-size.x / 2, -size.y / 2, 0], max: [size.x / 2, size.y / 2, padT])
+        // Without the pad (saddle side plates carry the boss) the boss and wedge still start on top of a 1.2 mm plate.
+        var mesh = pad ? Mesh3D.box(min: [-size.x / 2, -size.y / 2, 0], max: [size.x / 2, size.y / 2, padT]) : Mesh3D()
         // Boss: square tube along its local x, cross-section (y, z) with the rod hole, then tilted up by φ.
         let profile = Poly.rect(center: .zero, size: Vec2(B, B))
         let hole = [Poly.circle(.zero, (dia + 0.25) / 2, segments: 20)]
@@ -338,6 +351,46 @@ enum PrintedParts {
             mesh.append(prism(tri, axis: 1, from: -B / 2, to: B / 2))
         }
         return mesh
+    }
+
+    /// One anchor in the world frame (same transform as the 3D view), outward-wound.
+    static func placedAnchor(_ end: StrutAnchor, dia: Double, pad: Bool) -> Mesh3D {
+        let w = simd_cross(end.normal, end.along)
+        let m = strutAnchor(dia: dia, elevation: end.elevation, pad: pad)
+            .transformed { p in end.surface + end.along * p.x + w * p.y + end.normal * p.z }
+        return simd_dot(simd_cross(end.along, w), end.normal) < 0 ? m.flipped : m
+    }
+
+    /// One-piece strut saddle in the world frame: the left and right rod bosses on side plates over both web faces,
+    /// joined by a bridge under the bottom edge (no overlapping solids: plates start at the edge, bridge below it).
+    static func strutSaddle(right r: StrutAnchor, left l: StrutAnchor, dia: Double) -> Mesh3D {
+        guard let sd = r.saddle else { return Mesh3D() }
+        let T = StrutPlanner.padThickness, fx = sd.faceX
+        var m = placedAnchor(r, dia: dia, pad: false)
+        m.append(placedAnchor(l, dia: dia, pad: false))
+        // Side profiles in the (z, y) plane, extruded across x; the bridge follows the (sloped) bottom edge.
+        func slab(_ zy: [Vec2], x0: Double, x1: Double) -> Mesh3D {
+            // (u, v, w) → (x = w, y = v, z = u) is a mirror, so the winding is flipped back.
+            Mesh3D.extrude(Poly.ccw(zy), z0: x0, z1: x1).transformed { p in [p.z, p.y, p.x] }.flipped
+        }
+        let plate = [Vec2(sd.z0, sd.edgeY0), Vec2(sd.z1, sd.edgeY1), Vec2(sd.z1, sd.plateTop), Vec2(sd.z0, sd.plateTop)]
+        let bridge = [Vec2(sd.z0, sd.edgeY0 - T), Vec2(sd.z1, sd.edgeY1 - T), Vec2(sd.z1, sd.edgeY1), Vec2(sd.z0, sd.edgeY0)]
+        m.append(slab(plate, x0: fx, x1: fx + T))
+        m.append(slab(plate, x0: -fx - T, x1: -fx))
+        m.append(slab(bridge, x0: -fx - T, x1: fx + T))
+        return m
+    }
+
+    /// Saddle as printed: bridge flat on the bed, side plates and bosses pointing up (proper rotation x, −z, y).
+    static func strutSaddlePrint(right r: StrutAnchor, left l: StrutAnchor, dia: Double) -> Mesh3D {
+        guard let sd = r.saddle else { return Mesh3D() }
+        // Bridge underside flat on the bed: undo the edge slope first (rotate about x).
+        let slope = atan2(sd.edgeY1 - sd.edgeY0, sd.z1 - sd.z0)
+        let o = SIMD3<Double>(0, sd.edgeY - StrutPlanner.padThickness, (sd.z0 + sd.z1) / 2)
+        let rot = simd_quatd(angle: -slope, axis: [1, 0, 0])
+        let m = strutSaddle(right: r, left: l, dia: dia).transformed { p in let q = rot.act(p - o); return [q.x, -q.z, q.y] }
+        let lo = m.bounds.min
+        return m.translated([0, 0, -lo.z])
     }
 
     static func batteryTray(_ b: BatteryPack) -> Mesh3D {

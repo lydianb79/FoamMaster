@@ -36,6 +36,32 @@ struct StrutAnchor {
     /// Where the rod ends (back face of the anchor boss).
     var rodEnd: SIMD3<Double>
     var padSize: Vec2
+    /// Set when this end shares a one-piece saddle with its mirror end (bottom of the fuselage).
+    var saddle: StrutSaddle? = nil
+}
+
+/// One-piece printed mount for a left/right strut pair at the bottom edge of the fuselage web: a side plate on each
+/// face carrying that side's rod boss, joined by a bridge under the edge. World frame (the webs are symmetric about
+/// x = 0, so the saddle is too).
+struct StrutSaddle {
+    /// Pair label without the side (S1 …) and the web part / instance the plates sit on.
+    var label: String
+    var partIndex: Int
+    var instanceIndex: Int
+    /// Outer face of the web (|x|), bottom edge (top of the bridge, world y), top of the side plates, z extent.
+    var faceX: Double
+    /// Bottom edge at z0 and z1 (the bridge follows the edge's slope).
+    var edgeY0: Double
+    var edgeY1: Double
+    var plateTop: Double
+    var z0: Double
+    var z1: Double
+    /// Outline of the side plates on the part plan (edge up to the plate top).
+    var plan: [Vec2]
+    var edgeY: Double { (edgeY0 + edgeY1) / 2 }
+    var plateArea: Double { (plateTop - edgeY) * (z1 - z0) }
+    var bridgeArea: Double { 2 * faceX * (z1 - z0) }
+    var center: SIMD3<Double> { [0, (edgeY + plateTop) / 2, (z0 + z1) / 2] }
 }
 
 struct Strut {
@@ -52,17 +78,42 @@ struct Strut {
     var rodMass: Double { length / 1000 * rod.gramsPerMeter }
     /// Axial stiffness EA / L (N/mm).
     var axialStiffness: Double { StructureReport.carbonE * rod.roundArea / max(length, 1) }
-    /// Stiffness of one anchor on the foam (N/mm): a glued pad acts like a rigid punch on the foam,
-    /// k ≈ 2·a·(E·sin²φ + G·cos²φ) with a = equivalent pad radius and φ = rod angle to the surface (the rod pulls
-    /// partly normal to the foam, partly along it in shear).
-    static func anchorStiffness(_ end: StrutAnchor, _ m: FoamMaterial) -> Double {
-        let a = (end.padSize.x * end.padSize.y / .pi).squareRoot()
-        let s2 = sin(end.elevation) * sin(end.elevation)
-        return 2 * a * (m.modulus * s2 + m.shearModulus * (1 - s2))
+    /// Stiffness of one anchor on the foam along the rod (N/mm). A glued pad acts like a rigid punch on the foam:
+    /// normal to the surface k_n = 2·a·E, along it k_t = 2·a·G (a = equivalent pad radius). The rod is pinned, so the
+    /// anchor may move freely across it: the axial stiffness is the compliance along the rod,
+    /// k = 1 / (sin²φ / k_n + cos²φ / k_t), φ = rod angle to the surface.
+    ///
+    /// Saddle ends (one-piece mount wrapping the bottom edge of the web): with a symmetric load (3 g pull, elevator)
+    /// the sideways pulls of the left and right rods meet in the bridge (a PETG tie, E·A/L), and the vertical share of
+    /// both rods goes into both side plates in shear plus the bridge bearing on the edge – shared by the two rods.
+    /// With an antisymmetric load (rudder twist) both rods push the saddle the same way sideways: both plates and the
+    /// edge carry it, again shared by the two rods.
+    static func anchorStiffness(_ end: StrutAnchor, _ m: FoamMaterial, symmetric: Bool = true) -> Double {
+        let e = end.normal * sin(end.elevation) + end.along * cos(end.elevation)
+        guard let sd = end.saddle else {
+            let a = (end.padSize.x * end.padSize.y / .pi).squareRoot()
+            let s2 = sin(end.elevation) * sin(end.elevation)
+            return 1 / (s2 / (2 * a * m.modulus) + (1 - s2) / (2 * a * m.shearModulus))
+        }
+        let ap = (sd.plateArea / .pi).squareRoot(), ab = (sd.bridgeArea / .pi).squareRoot()
+        let en = simd_dot(e, end.normal), ey = e.y, ez = e.z
+        // Sideways (normal to the web).
+        let kn: Double
+        if symmetric {
+            let tie = StrutPlanner.petgModulus * StrutPlanner.padThickness * (sd.z1 - sd.z0) / (2 * sd.faceX)
+            kn = tie
+        } else {
+            kn = (2 * 2 * ap * m.modulus + 2 * ab * m.shearModulus) / 2
+        }
+        // In the web plane: both plates in shear, vertical also the bridge bearing on the edge; two rods share it.
+        let kz = 2 * 2 * ap * m.shearModulus / 2
+        let ky = (2 * 2 * ap * m.shearModulus + 2 * ab * m.modulus) / 2
+        return 1 / (en * en / kn + ey * ey / ky + ez * ez / kz)
     }
     /// Effective axial stiffness of the strut as built (N/mm): rod in series with both anchors on the foam.
-    func stiffness(_ m: FoamMaterial) -> Double {
-        1 / (1 / axialStiffness + 1 / Self.anchorStiffness(a, m) + 1 / Self.anchorStiffness(b, m))
+    /// `symmetric`: left and right rods loaded alike (wing, elevator) or opposite (rudder twist, fin).
+    func stiffness(_ m: FoamMaterial, symmetric: Bool = true) -> Double {
+        1 / (1 / axialStiffness + 1 / Self.anchorStiffness(a, m, symmetric: symmetric) + 1 / Self.anchorStiffness(b, m, symmetric: symmetric))
     }
     /// Euler buckling load, pinned ends (N).
     var bucklingLoad: Double { .pi * .pi * rod.roundEI / (length * length) }
@@ -130,6 +181,52 @@ struct StrutPlanner {
             var s2 = s
             s2.label = "S\(n)\(s.a.surface.x < 0 ? "L" : "R")"
             out.append(s2)
+        }
+        return p.combineBottomMounts(out)
+    }
+
+    /// Left and right rods that end side by side near the bottom edge of the same fuselage web get one printed
+    /// saddle instead of two anchors – when the saddle (plates + bridge under the edge) is clear of the hardware.
+    /// Pairs are found by their mirrored geometry (works before labelling, during the candidate search).
+    func combineBottomMounts(_ struts: [Strut]) -> [Strut] {
+        var out = struts
+        var used: [(part: Int, z0: Double, z1: Double)] = []
+        for i in out.indices { out[i].b.saddle = nil }
+        for i in out.indices where out[i].b.surface.x > 0 {
+            let base = out[i].label.hasSuffix("R") ? String(out[i].label.dropLast()) : out[i].label
+            guard let j = out.indices.first(where: { k in
+                k != i && abs(out[k].b.surface.x + out[i].b.surface.x) < 0.01 && simd_distance(SIMD2(out[k].b.surface.y, out[k].b.surface.z), SIMD2(out[i].b.surface.y, out[i].b.surface.z)) < 0.01
+                    && abs(out[k].a.surface.x + out[i].a.surface.x) < 0.01 }) else { continue }
+            let r = out[i].b, l = out[j].b
+            guard abs(r.normal.x) > 0.9, abs(l.normal.x) > 0.9, r.partIndex == l.partIndex, r.surface.y < 0,
+                  abs(r.surface.x + l.surface.x) < 0.01, abs(r.surface.y - l.surface.y) < 0.01, abs(r.surface.z - l.surface.z) < 0.01,
+                  let edgeC = webEdge(z: r.surface.z, top: false), r.surface.y - edgeC < 20 else { continue }
+            // Plate = bounding box (in the web plane) of the rotated pad, extended down to the edge.
+            let w = simd_cross(r.normal, r.along)
+            var ys: [Double] = [], zs: [Double] = []
+            for sx in [-1.0, 1.0] { for sy in [-1.0, 1.0] {
+                let q = r.surface + r.along * (sx * r.padSize.x / 2) + w * (sy * r.padSize.y / 2)
+                ys.append(q.y); zs.append(q.z)
+            } }
+            let z0 = zs.min()! - 1, z1 = zs.max()! + 1
+            guard let e0 = webEdge(z: z0, top: false), let e1 = webEdge(z: z1, top: false) else { continue }
+            let edgeY = min(e0, e1), top = ys.max()! + 0.5
+            let fx = abs(r.surface.x), T = Self.padThickness
+            // Clear of hardware (battery travel, servos, ESC, receiver …) and pushrods.
+            let lo = SIMD3<Double>(-fx - T, edgeY - T, z0), hi = SIMD3<Double>(fx + T, top, z1)
+            let blocked = obstacles.contains { o in all(o.hi .> lo - 1) && all(o.lo .< hi + 1) }
+                || capsules.contains { cp in
+                    let c = simd_clamp((cp.a + cp.b) / 2, lo, hi)
+                    return Self.distance(c, segment: cp.a, cp.b) < cp.r + 1 }
+            // Two saddles never share the same stretch of edge.
+            guard !blocked, !used.contains(where: { $0.part == r.partIndex && $0.z0 < z1 + 2 && z0 < $0.z1 + 2 }) else { continue }
+            used.append((r.partIndex, z0, z1))
+            let inst = d.parts[r.partIndex].instances[r.instanceIndex]
+            let toPlan = { (y: Double, z: Double) in Vec2((z - inst.origin.z) / inst.u.z, (y - inst.origin.y) / inst.v.y) }
+            let plan = [toPlan(e0, z0), toPlan(e1, z1), toPlan(top, z1), toPlan(top, z0)]
+            let sd = StrutSaddle(label: base, partIndex: r.partIndex, instanceIndex: r.instanceIndex, faceX: fx,
+                                 edgeY0: e0, edgeY1: e1, plateTop: top, z0: z0, z1: z1, plan: plan)
+            out[i].b.saddle = sd; out[j].b.saddle = sd
         }
         return out
     }
@@ -255,6 +352,10 @@ struct StrutPlanner {
     /// Extra control-surface travel kept free of struts beyond the type's maximum throw (degrees).
     static let throwMargin = 5.0
     static let padThickness = 1.2
+    /// Printed PETG/PLA (N/mm²) for the saddle bridge.
+    static let petgModulus = 2000.0
+    /// Buckling safety used while choosing rods (15 % above the check's 1.5).
+    static let planBuckling = StructureReport.strutBucklingSafety * 1.15
     static func bossSide(_ dia: Double) -> Double { dia + 2.4 }
 
     /// Pad footprint (along the rod direction × across) for a rod elevation.
@@ -473,7 +574,7 @@ struct StrutPlanner {
         guard let st = stabiliser else { tally?("no stabiliser"); return [] }
         let stab = d.parts[st.part], inst = stab.instances[st.inst]
         // Only the fin rods' own buckling counts here (the wing / tail set was chosen before).
-        let alreadyBuckles = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed, struts: existing).strutsBuckle
+        let alreadyBuckles = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed, struts: combineBottomMounts(existing), bucklingSafety: Self.planBuckling).strutsBuckle
         // Fixed stabiliser chord at span station x: the outline interval that ends at (or behind) the hinge.
         func stabLE(_ x: Double) -> Double? {
             let v = simd_dot(SIMD3(x, inst.origin.y, 0) - inst.origin, inst.v)
@@ -503,7 +604,7 @@ struct StrutPlanner {
                             }
                             guard pair.count == 2 else { continue }
                             guard isClear(pair[0], others: existing + [pair[1]]), isClear(pair[1], others: existing + [pair[0]]) else { tally?("not clear"); continue }
-                            let rep = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed, struts: existing + pair)
+                            let rep = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed, struts: combineBottomMounts(existing + pair), bucklingSafety: Self.planBuckling)
                             if !rep.strutsBuckle || alreadyBuckles { return pair }
                             tally?("buckles")
                         }
@@ -558,8 +659,11 @@ struct StrutPlanner {
                         if upperOK { sets.append(upper) }
                         guard !sets.isEmpty else { break }   // a thicker rod will not fit where a thin one does not
                         fitted = true
-                        for set in sets {
-                            let rep = StructureReport(c, totalMass: totalMass + set.reduce(0) { $0 + $1.rodMass + 0.3 }, stallSpeed: stallSpeed, struts: existing + set)
+                        for raw in sets {
+                            // As built: the bottom ends may share a saddle (also with the tail struts already placed).
+                            let all = combineBottomMounts(existing + raw)
+                            let set = Array(all.suffix(raw.count))
+                            let rep = StructureReport(c, totalMass: totalMass + set.reduce(0) { $0 + $1.rodMass + 0.3 }, stallSpeed: stallSpeed, struts: all, bucklingSafety: Self.planBuckling)
                             let pct = rep.wingDeflectionRatio * 100
                             if pct < StructureReport.wingWarnPct && !rep.strutsBuckle { return set }
                             let score = pct + (rep.strutsBuckle ? 100 : 0)
@@ -623,8 +727,10 @@ struct StrutPlanner {
                     if upper.count == 2 { sets.append(upper) }
                     if upper.count == 2 && lower.count == 2 { sets.append(upper + lower) }
                     guard !sets.isEmpty else { break }
-                    for set in sets {
-                        let rep = StructureReport(c, totalMass: totalMass + set.reduce(0) { $0 + $1.rodMass + 0.3 }, stallSpeed: stallSpeed, struts: set)
+                    for raw in sets {
+                        // Judge the set as built: bottom ends that share a saddle are stiffer (and load the rods more).
+                        let set = combineBottomMounts(raw)
+                        let rep = StructureReport(c, totalMass: totalMass + set.reduce(0) { $0 + $1.rodMass + 0.3 }, stallSpeed: stallSpeed, struts: set, bucklingSafety: Self.planBuckling)
                         let tw = rep.tailTwistDeg ?? 0, bd = rep.tailBendDeg ?? 0
                         // 10 % margin: wing and fin struts added afterwards raise the weight (and load speed) a little.
                         if tw < 0.9 * StructureReport.twistWarnDeg && bd < 0.9 * StructureReport.bendWarnDeg && !rep.strutsBuckle { return set }

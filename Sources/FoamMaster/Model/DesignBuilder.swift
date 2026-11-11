@@ -179,13 +179,24 @@ enum DesignBuilder {
             d.components.append(MassItem(name: "Carbon strut \(st.label) – \(st.rod.name)", mass: st.rodMass,
                                          position: (st.a.rodEnd + st.b.rodEnd) / 2, category: "Hardware"))
             for end in [st.a, st.b] {
+                let base = String(st.label.dropLast())
+                if let sd = end.saddle {
+                    // One-piece saddle for the pair: its mass once (with the right-hand strut), its outline on the web plan.
+                    if st.label.hasSuffix("R"), let left = struts.first(where: { $0.label == base + "L" }) {
+                        let mesh = PrintedParts.strutSaddle(right: end, left: left.b, dia: st.diameter)
+                        d.components.append(MassItem(name: "Strut saddle \(base)", mass: mesh.volume * 1.24e-3 * 0.85,
+                                                     position: sd.center, category: "Printed"))
+                        d.parts[sd.partIndex].features.append(.strutSaddle(sd.plan, base))
+                        d.parts[sd.partIndex].features.append(.strutAnchor(end.plan, end.planDir, end.padSize, base + " L+R"))
+                    }
+                    continue
+                }
                 let mesh = PrintedParts.strutAnchor(dia: st.diameter, elevation: end.elevation)
                 d.components.append(MassItem(name: "Strut anchor \(st.label)", mass: mesh.volume * 1.24e-3 * 0.85,
                                              position: end.surface + end.normal * 2, category: "Printed"))
                 // One mark per spot on a plan: mirrored halves and both faces of a web share it.
                 let key = "\(end.partIndex)-\(Int((end.plan.x * 2).rounded()))-\(Int((end.plan.y * 2).rounded()))"
                 guard marked.insert(key).inserted else { continue }
-                let base = String(st.label.dropLast())
                 let part = d.parts[end.partIndex]
                 let shared = part.mirroredPair || abs(end.normal.x) > 0.9
                 // Which face: plans show horizontal parts from above, webs from the side (anchors on both faces).

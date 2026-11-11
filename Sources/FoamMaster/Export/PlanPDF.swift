@@ -113,7 +113,8 @@ enum PlanPDF {
         PlanDrawer.drawStrutAnchor(ctx, map: { $0 }, center: Vec2(116, ly + 33), dir: Vec2(1, 0), size: Vec2(9, 7), label: "S1")
         PlanDrawer.text("Strut anchor – glue the printed anchor on the", at: Vec2(132, ly + 29), size: 3)
         PlanDrawer.text("pad, arrow = rod direction (S1 L/R …)", at: Vec2(132, ly + 33.5), size: 3)
-        PlanDrawer.text("V-notches = alignment marks · tabs fit matching slots", at: Vec2(110, ly + 42), size: 3)
+        PlanDrawer.text("Fine dashed box to the edge = one-piece saddle", at: Vec2(132, ly + 38), size: 3)
+        PlanDrawer.text("V-notches = alignment marks · tabs fit matching slots", at: Vec2(110, ly + 44), size: 3)
 
         // Tile map
         let my = 262.0
