@@ -200,7 +200,7 @@ final class Project: ObservableObject {
             c.taillessFins = current.taillessFins
             c.motorLayout = current.motorLayout
             c.tailWinglets = current.tailWinglets
-            c.struts = current.struts
+            c.wingStruts = current.wingStruts; c.tailStruts = current.tailStruts; c.finStruts = current.finStruts
             c = Project.balanced(c)
             let a = Analysis(design: DesignBuilder.build(c))
             if a.feasible && a.score > bestScore { best = c; bestScore = a.score }

@@ -10,7 +10,7 @@ enum StrutMode: String, CaseIterable, Identifiable, Codable {
     case always
     case off
     var id: String { rawValue }
-    var name: String { [.auto: "Auto", .always: "Always", .off: "Off"][self]! }
+    var name: String { [.auto: "Auto", .always: "On", .off: "Off"][self]! }
     var detail: String {
         [.auto: "Added only when the wing or fuselage would be too flexible",
          .always: "Wing and tail struts wherever they fit",
@@ -209,17 +209,17 @@ struct StrutPlanner {
         let c = d.config
         guard c.struts != .off else { return [] }
         let base = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed)
-        let always = c.struts == .always
-        let needWing = always || base.wingDeflectionRatio * 100 >= StructureReport.wingErrorPct
-        let needTail = c.kind.hasTail && !c.kind.isTwinBoom
-            && (always || (base.tailTwistDeg ?? 0) >= StructureReport.twistErrorDeg || (base.tailBendDeg ?? 0) >= StructureReport.bendErrorDeg)
-        guard needWing || needTail else { return [] }
+        let needWing = c.wingStruts == .always || (c.wingStruts == .auto && base.wingDeflectionRatio * 100 >= StructureReport.wingErrorPct)
+        let needTail = c.offersTailStruts && (c.tailStruts == .always || (c.tailStruts == .auto
+            && ((base.tailTwistDeg ?? 0) >= StructureReport.twistErrorDeg || (base.tailBendDeg ?? 0) >= StructureReport.bendErrorDeg)))
+        let wantFin = c.offersFinStruts && c.finStruts == .always
+        guard needWing || needTail || wantFin else { return [] }
         let p = StrutPlanner(design: d, totalMass: totalMass, stallSpeed: stallSpeed)
         var struts: [Strut] = []
         if needTail { struts += p.tailStruts() }
         if needWing { struts += p.wingStruts(avoiding: struts) }
-        // Whenever struts go in, the fin is braced too: one rod each side from the fixed stabiliser up to the fin.
-        if !struts.isEmpty { struts += p.finStruts(avoiding: struts) }
+        // Fin bracing: one rod each side from the fixed stabiliser up to the fin – on Auto whenever other struts go in.
+        if c.finStruts == .always || (c.finStruts == .auto && !struts.isEmpty) { struts += p.finStruts(avoiding: struts) }
         // Label S1, S2 … (left/right pairs share a number: S1 L / S1 R).
         var out: [Strut] = []
         var n = 0

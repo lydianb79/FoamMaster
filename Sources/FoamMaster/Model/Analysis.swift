@@ -269,8 +269,18 @@ struct Analysis {
         let st = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed, struts: d.struts)
         structure = st
         let pct = st.wingDeflectionRatio * 100
-        let strutHint = c.struts == .off ? " Or switch the carbon struts on." : ""
-        let wingFix = (c.sparEnabled ? "Use thicker foam, a bigger spar or reduce span." : "Enable the carbon spar.") + strutHint
+        // Strut hints per group (the warnings can be cleared by switching that group On in the editor).
+        func strutHint(_ mode: StrutMode, fitted: Int, group: String) -> String {
+            if fitted > 0 { return "" }
+            switch mode {
+            case .always: return " (No \(group.lowercased()) struts fit this layout.)"
+            case .off: return " Or switch \(group) struts on (Auto / On)."
+            case .auto: return " Or set \(group) struts to On to brace it."
+            }
+        }
+        let wingHint = strutHint(c.wingStruts, fitted: st.wingStruts, group: "Wing")
+        let tailHint = c.offersTailStruts ? strutHint(c.tailStruts, fitted: st.tailStruts, group: "Tail") : ""
+        let wingFix = (c.sparEnabled ? "Use thicker foam, a bigger spar or reduce span." : "Enable the carbon spar.") + wingHint
         let wingWith = (c.sparEnabled ? " with the \(c.sparSpec.name) spar" : "") + (st.wingStruts > 0 ? " and \(st.wingStruts) carbon struts" : "")
         if pct >= StructureReport.wingErrorPct { add(.error, "Structure", "Wing far too flexible", "Tip bends \(f0(st.wingTipDeflection)) mm (\(f0(pct)) % of the half span) at 3 g\(wingWith). \(wingFix)") }
         else if pct >= StructureReport.wingWarnPct { add(.warning, "Structure", "Wing flexes noticeably", "Tip bends \(f0(st.wingTipDeflection)) mm (\(f1(pct)) %) at 3 g\(wingWith). \(wingFix)") }
@@ -282,7 +292,11 @@ struct Analysis {
             let anchors = d.struts.count * 2 - saddles * 2
             let mounts = [anchors > 0 ? "\(anchors) printed anchors" : nil, saddles > 0 ? "\(saddles) one-piece saddle\(saddles > 1 ? "s" : "") under the fuselage" : nil]
                 .compactMap { $0 }.joined(separator: " + ")
-            let why = c.struts == .always ? "fitted on request" : "added automatically – without them the \([st.wingStruts > 0 ? "wing" : nil, st.tailStruts > 0 ? "fuselage" : nil].compactMap { $0 }.joined(separator: " and ")) would be too flexible"
+            // Per group: fitted on request (On) or because that part would otherwise fail (Auto).
+            let groups: [(Int, StrutMode, String, String)] = [(st.wingStruts, c.wingStruts, "wing", "the wing would be too flexible"),
+                                                               (st.tailStruts, c.tailStruts, "tail", "the fuselage would twist / bend too much"),
+                                                               (st.finStruts, c.finStruts, "fin", "they brace the fin with the other struts")]
+            let why = groups.filter { $0.0 > 0 }.map { "\($0.2): \($0.1 == .always ? "on request" : $0.3)" }.joined(separator: "; ")
             add(.info, "Structure", "Carbon struts", "\(rods) (\(why)), \(mounts) – marked S1… on the plans. They keep clear of servos, pushrods, horns, battery, control-surface travel and the prop.")
             if st.finStruts > 0, let bare = st.finFlexBareDeg, let braced = st.finFlexDeg {
                 add(.ok, "Structure", "Fin braced", "\(st.finStruts) fin struts from the stabiliser: the fin tilts \(String(format: "%.2f", braced))° instead of \(f1(bare))° at \(c.hasRudder ? "full rudder" : "a strong side gust"), \(f0(st.loadSpeed)) km/h. They keep clear of elevator and rudder travel (±\(Int(c.kind.maxSurfaceThrow))°).")
@@ -310,14 +324,14 @@ struct Analysis {
         if let bend = st.tailBendDeg, let twist = st.tailTwistDeg {
             let speed = f0(st.loadSpeed)
             let twistFix = c.kind.isTwinBoom ? "Increase the boom spacing (stab span) or shorten the tail arm."
-                : "Increase fuselage height, use thicker/stiffer foam or shorten the tail arm." + strutHint
+                : "Increase fuselage height, use thicker/stiffer foam or shorten the tail arm." + tailHint
             let braced = st.tailStruts > 0 ? ", \(st.tailStruts) tail struts" : ""
             // Worst case: full rudder (or, without a rudder, an equally strong side gust on the fin) at twice the stall speed.
             let load = c.hasRudder ? "full rudder" : "a strong side gust"
             if twist >= StructureReport.twistErrorDeg { add(.error, "Structure", "Fuselage twists too much", "\(f1(twist))° twist at \(load), \(speed) km/h\(braced) – the tail will flutter\(c.hasRudder ? " and rudder input rolls the plane" : ""). \(twistFix)") }
             else if twist >= StructureReport.twistWarnDeg { add(.warning, "Structure", "Fuselage is soft in torsion", "\(f1(twist))° twist at \(load), \(speed) km/h\(braced). \(twistFix)") }
             else { add(.ok, "Structure", "Torsion OK", "\(f1(twist))° twist at \(load), \(speed) km/h (\(c.kind.isTwinBoom ? "twin booms" : c.fuselageType.name)\(braced)).") }
-            let bendFix = (c.kind.isTwinBoom ? "Shorten the tail arm or use a smaller stabiliser." : "Increase fuselage height or shorten the tail arm.") + (c.kind.isTwinBoom ? "" : strutHint)
+            let bendFix = (c.kind.isTwinBoom ? "Shorten the tail arm or use a smaller stabiliser." : "Increase fuselage height or shorten the tail arm.") + (c.kind.isTwinBoom ? "" : tailHint)
             if bend >= StructureReport.bendErrorDeg { add(.error, "Structure", "Tail boom bends too much", "\(f1(bend))° tail deflection at full elevator\(braced). \(bendFix)") }
             else if bend >= StructureReport.bendWarnDeg { add(.warning, "Structure", "Tail boom flexes", "\(f1(bend))° tail deflection at full elevator\(braced). \(bendFix)") }
             else { add(.ok, "Structure", "Boom bending OK", "\(String(format: "%.2f", bend))° tail deflection at full elevator\(braced).") }

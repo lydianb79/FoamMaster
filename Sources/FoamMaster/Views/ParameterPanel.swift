@@ -190,12 +190,16 @@ struct ParameterContent: View {
                             }
                         }
                         .toggleStyle(.switch).tint(Theme.accent)
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 6) {
                             Text("Carbon struts").font(.system(size: 12, weight: .semibold))
-                            Picker("", selection: bind(\.struts)) {
-                                ForEach(StrutMode.allCases) { Text($0.name).tag($0) }
+                            // One row per group: Auto (only when its check fails), On (also to clear a warning), Off.
+                            strutRow("Wing", bind(\.wingStruts), help: "Wing underside to the bottom of the fuselage. Auto: only when the wing is far too flexible; On: also to clear a flex warning.")
+                            if c.offersTailStruts {
+                                strutRow("Tail", bind(\.tailStruts), help: "Wing to the tail boom, against twist and bending. Auto: only when the fuselage fails; On: also to clear a torsion / bending warning.")
                             }
-                            .pickerStyle(.segmented).labelsHidden()
+                            if c.offersFinStruts {
+                                strutRow("Fin", bind(\.finStruts), help: "Stabiliser up to the fin. Auto: whenever other struts are fitted; On: always.")
+                            }
                             Text(strutSummary(c)).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -221,9 +225,20 @@ struct ParameterContent: View {
         }
     }
 
+    private func strutRow(_ title: String, _ value: Binding<StrutMode>, help: String) -> some View {
+        HStack(spacing: 8) {
+            Text(title).font(.system(size: 11)).frame(width: 34, alignment: .leading)
+            Picker("", selection: value) {
+                ForEach(StrutMode.allCases) { Text($0.name).tag($0) }
+            }
+            .pickerStyle(.segmented).labelsHidden()
+        }
+        .help(help)
+    }
+
     private func strutSummary(_ c: AircraftConfig) -> String {
         let struts = project.design?.struts ?? []
-        if struts.isEmpty { return c.struts == .off ? StrutMode.off.detail : c.struts.detail + " – none needed / none fit" }
+        if struts.isEmpty { return c.struts == .off ? "No struts – stiffness from foam and spar only" : "None fitted – not needed on Auto, or none fit" }
         let wing = struts.filter { $0.group == .wing }.count, tail = struts.filter { $0.group == .tail }.count
         let fin = struts.filter { $0.group == .fin }.count
         let parts = [wing > 0 ? "\(wing) wing" : nil, tail > 0 ? "\(tail) tail" : nil, fin > 0 ? "\(fin) fin" : nil].compactMap { $0 }.joined(separator: " + ")

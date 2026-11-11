@@ -274,6 +274,24 @@ enum SelfTest {
             let cov = un.reduce(0) { $0 + ($1.ang - ma) * ($1.z - mz) }
             print("   prop pitch \(what): \(cov < 0 ? "forward thrust OK" : "THRUST BACKWARDS")")
         }
+        // Warnings cleared on request: stiffness warnings on Auto, then the matching strut group switched On.
+        let warnGroups: [(String, WritableKeyPath<AircraftConfig, StrutMode>)] = [("Wing flexes noticeably", \.wingStruts),
+            ("Fuselage is soft in torsion", \.tailStruts), ("Tail boom flexes", \.tailStruts)]
+        for kind in AircraftKind.allCases {
+            for m in [kind.defaults.material, FoamMaterial.epp6, .depron3] {
+                var c = kind.defaults; c.material = m; c.struts = .auto
+                c = Project.balanced(c)
+                let a = Analysis(design: DesignBuilder.build(c))
+                let warns = a.checks.filter { $0.severity == .warning && warnGroups.map(\.0).contains($0.title) }.map(\.title)
+                guard !warns.isEmpty else { continue }
+                var on = c
+                for (title, kp) in warnGroups where warns.contains(title) { on[keyPath: kp] = .always }
+                on = Project.balanced(on)
+                let d2 = DesignBuilder.build(on), a2 = Analysis(design: d2)
+                let left = a2.checks.filter { $0.severity >= .warning && warnGroups.map(\.0).contains($0.title) }.map(\.title)
+                print("   on request \(kind.title) \(m.displayName): \(warns.joined(separator: ", ")) → struts \(d2.struts.count), \(left.isEmpty ? "cleared" : "still: " + left.joined(separator: ", ")), score \(a.score) → \(a2.score), feasible \(a2.feasible)")
+            }
+        }
         // Random variants with struts (always mode, so every type gets some): no surface may touch a strut.
         var n = 0, minGap = Double.greatestFiniteMagnitude, hits: [String] = [], finN = 0, finMissing: [String] = []
         for i in 0..<48 {

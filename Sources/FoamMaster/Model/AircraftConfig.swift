@@ -225,8 +225,22 @@ struct AircraftConfig: Codable, Equatable {
     var motorLayout: MotorLayout = .single
     /// Winglets on tailed aircraft (tailless types choose winglets / centre fin via `taillessFins`).
     var tailWinglets: Bool = false
-    /// Carbon stabilisation struts: automatic (when the stiffness checks would fail), always or off.
-    var struts: StrutMode = .auto
+    /// Carbon stabilisation struts per group. Auto: wing / tail struts when their stiffness check would fail with
+    /// an error, fin struts whenever other struts are fitted. On: always (also to clear a warning). Off: never.
+    var wingStruts: StrutMode = .auto
+    var tailStruts: StrutMode = .auto
+    var finStruts: StrutMode = .auto
+    /// All groups at once: reads .off only when every group is off, .always only when all are on.
+    var struts: StrutMode {
+        get {
+            let all = [wingStruts, tailStruts, finStruts]
+            return all.allSatisfy { $0 == .off } ? .off : all.allSatisfy { $0 == .always } ? .always : .auto
+        }
+        set { wingStruts = newValue; tailStruts = newValue; finStruts = newValue }
+    }
+    /// Groups this airframe can have: tail struts need a boom (not the twin boom), fin struts a stabiliser and a fin.
+    var offersTailStruts: Bool { kind.hasTail && !kind.isTwinBoom }
+    var offersFinStruts: Bool { (kind.hasTail || kind.isNutBall) && !kind.isTwinBoom }
     var hasWinglets: Bool { kind.isTailless ? taillessFins == .winglets : tailWinglets }
     var isDual: Bool { motorLayout == .dualTractor && kind.allowsDualMotors }
     var motorCount: Int { isDual ? 2 : 1 }
