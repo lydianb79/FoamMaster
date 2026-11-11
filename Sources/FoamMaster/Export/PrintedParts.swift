@@ -280,9 +280,11 @@ enum PrintedParts {
         return mesh
     }
 
+    /// Width of the servo frame's flange beyond the cutout on each side.
+    static let servoFrameFlange = 2.5
     static func servoFrame(cutout: Vec2, foam t: Double) -> Mesh3D {
         let inner = Poly.rect(center: .zero, size: cutout - Vec2(1.0, 1.0))
-        var mesh = Mesh3D.extrude(Poly.rect(center: .zero, size: cutout + Vec2(5, 5)), holes: [inner], z0: 0, z1: 1.2)
+        var mesh = Mesh3D.extrude(Poly.rect(center: .zero, size: cutout + Vec2(2, 2) * servoFrameFlange), holes: [inner], z0: 0, z1: 1.2)
         let lip = Poly.rect(center: .zero, size: cutout - Vec2(0.2, 0.2))
         mesh.append(.extrude(lip, holes: [inner], z0: 1.2, z1: 1.2 + max(1.5, t - 0.5)))
         return mesh

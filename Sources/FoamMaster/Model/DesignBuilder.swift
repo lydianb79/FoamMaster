@@ -275,7 +275,8 @@ enum DesignBuilder {
             [Region(polygon: out.main, isControl: false)] + out.controls.map { Region(polygon: $0, isControl: true) }
         }
 
-        /// Clear gap between the spar groove and the front edge of a servo next to it (mm).
+        /// Clear gap between the spar groove and the front edge of a servo next to it (mm) – measured from the servo
+        /// FRAME's outer edge (the visible / glued edge), i.e. cutout edge + frame flange.
         static let servoSparGap = 5.0
         /// Wing servos (ailerons, elevons, Twin Boom elevator) sit as far forward as possible – front edge about
         /// `servoSparGap` behind the spar groove (30 % chord line, also used as reference without a spar) – which
@@ -290,7 +291,8 @@ enum DesignBuilder {
         func wingServoU(hingeU: Double, sparU: Double) -> Double {
             let l = c.servo.size.l
             let sparHalf = c.sparEnabled ? c.sparSpec.widthMM / 2 : 1.5
-            let forward = sparU + sparHalf + Self.servoSparGap + l / 2
+            // cutout = servo + 0.4 mm, frame flange around it
+            let forward = sparU + sparHalf + Self.servoSparGap + PrintedParts.servoFrameFlange + 0.2 + l / 2
             let mostAft = hingeU - 8 - l / 2
             return min(mostAft, forward)
         }
