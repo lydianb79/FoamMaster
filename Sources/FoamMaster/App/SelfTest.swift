@@ -85,6 +85,30 @@ enum SelfTest {
         return out
     }
 
+    /// Why a configuration gets no tail struts: the user's Park Trainer and close variants, with a rejection tally.
+    /// Why a configuration gets no tail struts, and how long the build takes: the Park Trainer with one central
+    /// aileron servo (full-span ailerons, pushrods along both boom sides) and close variants.
+    @MainActor static func strutDiagnosis() {
+        for m in [FoamMaterial.depron3, .depron5, .epp3, .epp5] {
+            for ail in [1, 2] {
+                var c = AircraftKind.trainer.defaults
+                c.material = m; c.motor = .m1103; c.battery = .s1_300; c.aileronServos = ail; c.struts = .auto
+                c = Project.balanced(c)
+                let t0 = Date()
+                let d = DesignBuilder.build(c)
+                let ms = Date().timeIntervalSince(t0) * 1000
+                let a = Analysis(design: d)
+                let loads = Analysis.massAndStall(d)
+                let rep = StructureReport(c, totalMass: loads.mass, stallSpeed: loads.stall)
+                var why: [String: Int] = [:]
+                let p = StrutPlanner(design: DesignBuilder.build({ var k = c; k.struts = .off; return k }()), totalMass: loads.mass, stallSpeed: loads.stall)
+                let tail = p.tailStruts(tally: { why[$0, default: 0] += 1 })
+                print("== trainer \(m.displayName) ail servos \(ail): build \(Int(ms)) ms, struts \(d.struts.count), twist bare \(String(format: "%.1f", rep.tailTwistDeg ?? 0))° → \(String(format: "%.1f", a.structure?.tailTwistDeg ?? 0))°, feasible \(a.feasible), tail candidates found \(tail.count)")
+                for (k, v) in why.sorted(by: { $0.value > $1.value }).prefix(4) { print("     \(v)× \(k)") }
+            }
+        }
+    }
+
     @MainActor static func strutReport(_ dir: URL) {
         for kind in AircraftKind.allCases {
             for (mode, m) in [(StrutMode.off, FoamMaterial.epp6), (.auto, .epp6), (.always, kind.recommended.material)] {

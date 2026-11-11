@@ -135,12 +135,56 @@ struct StrutPlanner {
     let totalMass: Double
     let stallSpeed: Double
     let t: Double
-    private var obstacles: [(lo: SIMD3<Double>, hi: SIMD3<Double>)] = []
-    private var capsules: [(a: SIMD3<Double>, b: SIMD3<Double>, r: Double)] = []
+    private var obstacles: [(lo: SIMD3<Double>, hi: SIMD3<Double>, name: String)] = []
+    private var capsules: [(a: SIMD3<Double>, b: SIMD3<Double>, r: Double, name: String)] = []
     /// Swept control-surface points, bucketed in 6 mm cells.
-    private var sweep: [SIMD3<Int32>: [SIMD3<Double>]] = [:]
-    static let sweepCell = 6.0
-    static func cell(_ p: SIMD3<Double>) -> SIMD3<Int32> { SIMD3<Int32>((p / sweepCell).rounded(.down)) }
+    /// Moving surfaces (one per part instance) for the exact swept-volume test.
+    private var swept: [SweptSurface] = []
+
+    /// A control surface in its part instance's frame: hinge line (a0, along e), the side it lies on (eo), its outline,
+    /// half thickness and travel. A point is inside the swept volume when, turned back towards the rest position by
+    /// at most the travel, it lies in the surface slab (grown by the margin).
+    struct SweptSurface {
+        var origin: SIMD3<Double>, u: SIMD3<Double>, v: SIMD3<Double>, n: SIMD3<Double>
+        var a0: Vec2, e: Vec2, eo: Vec2
+        var poly: [Vec2]
+        var half: Double
+        var travel: Double
+        var sRange: ClosedRange<Double>
+        var reach: Double
+        var center: SIMD3<Double>
+        var radius: Double
+
+        func contains(_ p: SIMD3<Double>, margin m: Double) -> Bool {
+            guard simd_distance(p, center) < radius + m else { return false }
+            let q = p - origin
+            let P = Vec2(simd_dot(q, u), simd_dot(q, v)), off = simd_dot(q, n)
+            let sAlong = simd_dot(P - a0, e)
+            guard sAlong > sRange.lowerBound - m, sAlong < sRange.upperBound + m else { return false }
+            let w = simd_dot(P - a0, eo)
+            let rho = (w * w + off * off).squareRoot()
+            guard rho < reach + m else { return false }
+            let th = atan2(off, w)
+            let th2 = th - min(max(th, -travel), travel)
+            let n2 = rho * sin(th2), w2 = rho * cos(th2)
+            guard abs(n2) <= half + m, w2 > -m else { return false }
+            let flat = a0 + e * sAlong + eo * w2
+            return Poly.contains(poly, flat) || Self.edgeDistance(poly, flat) <= m
+        }
+
+        static func edgeDistance(_ poly: [Vec2], _ q: Vec2) -> Double {
+            var best = Double.greatestFiniteMagnitude
+            for i in poly.indices {
+                let a = poly[i], b = poly[(i + 1) % poly.count], ab = b - a
+                let l2 = simd_length_squared(ab)
+                let k = l2 > 1e-12 ? min(1, max(0, simd_dot(q - a, ab) / l2)) : 0
+                best = min(best, simd_distance(q, a + ab * k))
+            }
+            return best
+        }
+    }
+
+    func inSweptVolume(_ p: SIMD3<Double>, margin: Double) -> Bool { swept.contains { $0.contains(p, margin: margin) } }
 
     /// Clear gap the rod keeps to every obstacle (mm, beyond the rod radius).
     static let clearance = 2.5
@@ -393,7 +437,7 @@ struct StrutPlanner {
 
     private mutating func buildObstacles() {
         let tw = t * Double(c.fuselageType.webLayers)
-        func box(_ p: SIMD3<Double>, _ size: SIMD3<Double>, margin m: Double = 1) { obstacles.append((p - size / 2 - m, p + size / 2 + m)) }
+        func box(_ p: SIMD3<Double>, _ size: SIMD3<Double>, margin m: Double = 1, _ name: String) { obstacles.append((p - size / 2 - m, p + size / 2 + m, name)) }
         let lim = Analysis.batteryLimits(c)
         for item in d.components {
             let p = item.position
@@ -404,36 +448,36 @@ struct StrutPlanner {
                 let q = c.kind.isTailless ? p + [0, 1.2, 0] : p + [1.2, 0, 0]
                 // The battery slides between its limits when the model is balanced: keep its whole travel free.
                 let z0 = min(p.z, lim.lowerBound) - s.l / 2 - 2, z1 = max(p.z, lim.upperBound) + s.l / 2 + 2
-                obstacles.append((SIMD3(q.x - size.x / 2 - 1.5, q.y - size.y / 2 - 1, z0), SIMD3(q.x + size.x / 2 + 1, q.y + size.y / 2 + 1, z1)))
-                obstacles.append((SIMD3(tw / 2, q.y - size.y / 2 - 1, z0), SIMD3(tw / 2 + 1.5, q.y + size.y / 2 + 1, z1)))   // tray
+                obstacles.append((SIMD3(q.x - size.x / 2 - 1.5, q.y - size.y / 2 - 1, z0), SIMD3(q.x + size.x / 2 + 1, q.y + size.y / 2 + 1, z1), "battery travel"))
+                obstacles.append((SIMD3(tw / 2, q.y - size.y / 2 - 1, z0), SIMD3(tw / 2 + 1.5, q.y + size.y / 2 + 1, z1), "battery tray"))
             case "Power" where item.name.contains("brushless"):
                 let r = c.motor.bellDiameter / 2 + 3
                 obstacles.append((SIMD3(p.x - r, -r, min(c.firewallZ, c.motorZ) - c.motorLength - 3),
-                                  SIMD3(p.x + r, r, max(c.firewallZ, c.motorZ) + c.motorLength + 3)))
+                                  SIMD3(p.x + r, r, max(c.firewallZ, c.motorZ) + c.motorLength + 3), "motor"))
             case "Power" where item.name.hasPrefix("ESC"):
                 let e: SIMD3<Double> = c.motor.escMass > 4 ? [24, 13, 5] : [18, 10, 4]
-                box(p, (c.isDual || c.kind.isTailless) ? [e.y, e.z, e.x] : [e.z, e.y, e.x], margin: 2)
+                box(p, (c.isDual || c.kind.isTailless) ? [e.y, e.z, e.x] : [e.z, e.y, e.x], margin: 2, "ESC")
             case "Radio" where item.name.hasPrefix("Receiver"):
-                box(p, c.kind.isTailless ? [10, 3, 14] : [3, 10, 14], margin: 2)
+                box(p, c.kind.isTailless ? [10, 3, 14] : [3, 10, 14], margin: 2, "receiver")
             case "Printed" where item.name.hasPrefix("Motor mount") || item.name.hasPrefix("Nose protector"):
                 let m = PrintedParts.motorMountPlate(c.motor, foam: t) / 2 + 2
-                obstacles.append((SIMD3(p.x - m, -m, p.z - PrintedParts.mountJaw - 3), SIMD3(p.x + m, m, p.z + PrintedParts.mountJaw + 3)))
+                obstacles.append((SIMD3(p.x - m, -m, p.z - PrintedParts.mountJaw - 3), SIMD3(p.x + m, m, p.z + PrintedParts.mountJaw + 3), "motor mount"))
             default:
                 if item.name.hasPrefix("Servo") {
                     let s = c.servo.size
                     let standing = item.name.contains("double arm")
-                    box(p, standing ? [s.w, s.h, s.l] : [s.h, s.w, s.l], margin: 2)
+                    box(p, standing ? [s.w, s.h, s.l] : [s.h, s.w, s.l], margin: 2, item.name)
                     // Servo frame flange on the foam.
-                    if abs(p.y) < 0.5 { box(p, [s.h + 6, s.w + 6, s.l + 6], margin: 1) }
+                    if abs(p.y) < 0.5 { box(p, [s.h + 6, s.w + 6, s.l + 6], margin: 1, item.name + " frame") }
                 }
             }
         }
         for ctrl in d.controls {
             let arm = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition
-            capsules.append((arm, ctrl.hornPosition, 3.5))                                   // pushrod (moves a little)
-            capsules.append((arm, arm, 7))                                                   // servo arm swing
-            capsules.append((ctrl.servoPosition, arm, 4))
-            capsules.append((ctrl.hornPosition - ctrl.hornAxis * 12, ctrl.hornPosition, 6))  // horn
+            capsules.append((arm, ctrl.hornPosition, 3.5, ctrl.name + " pushrod"))                     // pushrod (moves a little)
+            capsules.append((arm, arm, 7, ctrl.name + " servo arm"))                                   // servo arm swing
+            capsules.append((ctrl.servoPosition, arm, 4, ctrl.name + " servo arm"))
+            capsules.append((ctrl.hornPosition - ctrl.hornAxis * 12, ctrl.hornPosition, 6, ctrl.name + " horn"))  // horn
         }
         // Control surfaces over their whole travel (the type's max throw + 5° about the hinge line, every 5°), so no
         // rod or boss can sit inside the swept volume of an aileron, elevon, elevator or rudder.
@@ -441,23 +485,18 @@ struct StrutPlanner {
         for part in d.parts {
             for r in part.regions where r.isControl {
                 guard let axis = SceneBuilder.hingeAxis(part, r.polygon) else { continue }
-                var pts = r.polygon
-                let b = Poly.bounds(r.polygon)
-                var u = b.min.x
-                while u <= b.max.x {
-                    var v = b.min.y
-                    while v <= b.max.y { if Poly.contains(r.polygon, Vec2(u, v)) { pts.append(Vec2(u, v)) }; v += 3 }
-                    u += 3
-                }
+                let e = simd_normalize(axis.1 - axis.0)
+                var eo = Vec2(-e.y, e.x)
+                if simd_dot(Poly.centroid(r.polygon) - axis.0, eo) < 0 { eo = -eo }
+                let ss = r.polygon.map { simd_dot($0 - axis.0, e) }, ws = r.polygon.map { simd_dot($0 - axis.0, eo) }
                 for inst in part.instances {
-                    let a3 = inst.point(axis.0), b3 = inst.point(axis.1)
-                    let ax = simd_normalize(b3 - a3)
-                    for ang in stride(from: -travel, through: travel, by: 5) {
-                        let q = simd_quatd(angle: ang * .pi / 180, axis: ax)
-                        for p in pts {
-                            for off in [-part.thickness / 2, part.thickness / 2] { let w = q.act(inst.point(p, offset: off) - a3) + a3; sweep[Self.cell(w), default: []].append(w) }
-                        }
-                    }
+                    let pts3 = r.polygon.map { inst.point($0) }
+                    let ctr = pts3.reduce(SIMD3<Double>.zero, +) / Double(pts3.count)
+                    let reach = (ws.max() ?? 0) + part.thickness
+                    swept.append(SweptSurface(origin: inst.origin, u: inst.u, v: inst.v, n: inst.normal, a0: axis.0, e: e, eo: eo,
+                                              poly: r.polygon, half: part.thickness / 2, travel: travel * .pi / 180,
+                                              sRange: (ss.min() ?? 0)...(ss.max() ?? 0), reach: reach,
+                                              center: ctr, radius: (pts3.map { simd_distance($0, ctr) }.max() ?? 0) + reach))
                 }
             }
         }
@@ -485,45 +524,39 @@ struct StrutPlanner {
     }
 
     /// The rod keeps clear of hardware, prop, moving surfaces, foam and the other struts.
-    func isClear(_ s: Strut, others: [Strut]) -> Bool {
+    func isClear(_ s: Strut, others: [Strut]) -> Bool { blocker(s, others: others) == nil }
+
+    /// What the rod (or one of its bosses) runs into, nil when it is clear.
+    func blocker(_ s: Strut, others: [Strut]) -> String? {
         let a = s.a.rodEnd, b = s.b.rodEnd
         let r = s.diameter / 2
         let L = simd_distance(a, b)
         let n = max(2, Int(L / 1.5))
         let need = r + Self.clearance
+        // Control-surface travel first (exact swept-volume test, the most common blocker): the rod and both anchor
+        // bosses stay out of every surface's travel, sampled every 1 mm.
+        let bosses = [(s.a.rodEnd, s.a.rodEnd + simd_normalize(b - a) * Self.bossLength), (s.b.rodEnd, s.b.rodEnd + simd_normalize(a - b) * Self.bossLength)]
+        let bossR = Self.bossSide(s.diameter) / 2 * 2.squareRoot()
+        for (p0, p1, m, what) in [(a, b, need + 0.5, "rod")] + bosses.map({ ($0.0, $0.1, bossR + 0.5, "boss") }) {
+            let k = max(1, Int(simd_distance(p0, p1)))
+            for i in 0...k where inSweptVolume(p0 + (p1 - p0) * (Double(i) / Double(k)), margin: m) {
+                return "control-surface travel (\(what))"
+            }
+        }
         for k in 0...n {
             let p = a + (b - a) * (Double(k) / Double(n))
             let along = L * Double(k) / Double(n)
             let nearEnd = along < Self.bossLength + 3 || along > L - Self.bossLength - 3
-            if propGap(p) < Self.propClearance + r { return false }
+            if propGap(p) < Self.propClearance + r { return "prop" }
             for o in obstacles {
                 let q = simd_clamp(p, o.lo, o.hi)
-                if simd_distance(p, q) < need { return false }
+                if simd_distance(p, q) < need { return "hardware box \(o.name)" }
             }
-            for cp in capsules where Self.distance(p, segment: cp.a, cp.b) < cp.r + need - 1 { return false }
-            if !nearEnd && insideFoam(p, margin: r + 0.5) { return false }
-            for o in others where Self.distance(p, segment: o.a.rodEnd, o.b.rodEnd) < r + o.diameter / 2 + 1.5 && !nearEnd { return false }
+            for cp in capsules where Self.distance(p, segment: cp.a, cp.b) < cp.r + need - 1 { return "linkage \(cp.name)" }
+            if !nearEnd && insideFoam(p, margin: r + 0.5) { return "foam" }
+            for o in others where Self.distance(p, segment: o.a.rodEnd, o.b.rodEnd) < r + o.diameter / 2 + 1.5 && !nearEnd { return "other strut" }
         }
-        // Control-surface travel: the rod and both anchor bosses stay out of the swept volume.
-        let bosses = [(s.a.rodEnd, s.a.rodEnd + simd_normalize(b - a) * Self.bossLength), (s.b.rodEnd, s.b.rodEnd + simd_normalize(a - b) * Self.bossLength)]
-        let bossR = Self.bossSide(s.diameter) / 2 * 2.squareRoot()
-        assert(max(need, bossR) + 0.5 + 1.5 < Self.sweepCell)
-        // Every point within m of a segment lies in a cell next to a sample taken every 3 mm along it (m + 1.5 < cell).
-        var cells = Set<SIMD3<Int32>>()
-        for (p0, p1) in [(a, b)] + bosses {
-            let k = max(1, Int(simd_distance(p0, p1) / 3))
-            for i in 0...k {
-                let c0 = Self.cell(p0 + (p1 - p0) * (Double(i) / Double(k)))
-                for dx in Int32(-1)...1 { for dy in Int32(-1)...1 { for dz in Int32(-1)...1 { cells.insert(c0 &+ SIMD3(dx, dy, dz)) } } }
-            }
-        }
-        for cl in cells {
-            for q in sweep[cl] ?? [] {
-                if Self.distance(q, segment: a, b) < need + 0.5 { return false }
-                for bs in bosses where Self.distance(q, segment: bs.0, bs.1) < bossR + 0.5 { return false }
-            }
-        }
-        return true
+        return nil
     }
 
     func insideFoam(_ p: SIMD3<Double>, margin: Double) -> Bool {
@@ -683,7 +716,7 @@ struct StrutPlanner {
 
     /// Rods per side from the aft part of the wing (top and underside) to the top and bottom edges of the tail
     /// boom: they tie the tail to the wing against twisting and bending.
-    func tailStruts() -> [Strut] {
+    func tailStruts(tally: ((String) -> Void)? = nil) -> [Strut] {
         let s = c.semiSpan
         var fallback: (score: Double, struts: [Strut])?
         let rootClear = max(c.fuselagePlateWidth / 2, c.isDual ? c.dualMotorX + c.propRadius + 8 : 0) + 25
@@ -692,31 +725,48 @@ struct StrutPlanner {
         let tailEnd = c.tailArm + c.hStabChord
         var upperZ: [Double] = [], lowerZ: [Double] = []
         var z = tailEnd
-        while z > rc + 25 {
-            if let top = webEdge(z: z, top: true), top < t / 2 + c.boomTopHeight + 3, top > t / 2 + 11 { upperZ.append(z) }
+        while z > rc + 8 {
+            // Upper ends may also sit further forward where the fuselage is still taller than the boom: there they
+            // land above the elevator / rudder pushrods that run along the boom sides.
+            if let top = webEdge(z: z, top: true), top < t / 2 + c.boomTopHeight + 16, top > t / 2 + 11 { upperZ.append(z) }
             if let bot = webEdge(z: z, top: false), bot < -(t / 2 + 11) { lowerZ.append(z) }
             z -= 8
         }
-        func thin(_ zs: [Double]) -> [Double] { zs.count <= 8 ? zs : stride(from: 0, to: zs.count, by: max(1, zs.count / 8)).map { zs[$0] } }
+        func thin(_ zs: [Double]) -> [Double] { zs.count <= 14 ? zs : stride(from: 0, to: zs.count, by: max(1, zs.count / 14)).map { zs[$0] } }
         upperZ = thin(upperZ); lowerZ = thin(lowerZ)
-        for f in [0.4, 0.5, 0.32, 0.6, 0.25] {
-            let x = f * s
-            guard x > rootClear, x < s - 25, let ch = wingChord(atX: x) else { continue }
+        // Span stations: mid span first; then right next to the root clearance, where a rod clears full-span ailerons
+        // (it crosses the hinge line low and is inboard of the aileron before it rises / drops further).
+        for x in [0.4, 0.5, 0.32, 0.6, 0.25].map({ $0 * s }) + [rootClear + 2, rootClear + 10] {
+            guard x > rootClear, x < s - 25, let ch = wingChord(atX: x) else { tally?("span station x \(Int(x)) unusable (root clear \(Int(rootClear)))"); continue }
             // Forward chord stations last: they give the rod room to drop clear of the aileron's travel behind the hinge.
-            for q in [0.6, 0.52, 0.68, 0.44, 0.36, 0.3] {
+            for q in [0.6, 0.52, 0.68, 0.44, 0.36, 0.3, 0.22, 0.15] {
                 let zw = ch.le + q * (ch.te - ch.le)
+                // A spot that blocks a thin rod also blocks a thicker one (bigger rod and boss): skip it then.
+                var blockedSpots = Set<String>()
                 for dia in CarbonSpar.strutDiameters {
                     func pick(_ zs: [Double], top: Bool, name: String, others: [Strut]) -> [Strut] {
                         for zt in zs {
-                            var pair: [Strut] = []
-                            for side in [1.0, -1.0] {
-                                guard let w = wingSite(x: side * x, z: zw, top: top), let edge = webEdge(z: zt, top: top) else { break }
-                                for inset in [7.0, 10, 13] {
-                                    if let b = webSite(z: zt, y: top ? edge - inset : edge + inset, side: side),
-                                       let st = strut(name, .tail, wing: w, body: b, dia: dia) { pair.append(st); break }
+                            guard let edge = webEdge(z: zt, top: top) else { tally?("no boom edge"); continue }
+                            // Boom-end height: nearest the edge first, deeper ones below / above a pushrod along the
+                            // boom. A mirrored left + right pair that is clear wins.
+                            var fitted = false
+                            for inset in [7.0, 9, 11, 13, 16, 20, 25] {
+                                let spot = "\(top)-\(zt)-\(inset)"
+                                if blockedSpots.contains(spot) { fitted = true; continue }
+                                var pair: [Strut] = []
+                                for side in [1.0, -1.0] {
+                                    guard let w = wingSite(x: side * x, z: zw, top: top),
+                                          let b = webSite(z: zt, y: top ? edge - inset : edge + inset, side: side),
+                                          let st = strut(name, .tail, wing: w, body: b, dia: dia) else { break }
+                                    pair.append(st)
                                 }
+                                guard pair.count == 2 else { continue }
+                                fitted = true
+                                if pair.allSatisfy({ isClear($0, others: others) }) { return pair }
+                                if others.isEmpty { blockedSpots.insert(spot) }
+                                if let t = tally { t("\(top ? "upper" : "lower"): " + (pair.compactMap { blocker($0, others: others) }.first ?? "?")) }
                             }
-                            if pair.count == 2 && pair.allSatisfy({ isClear($0, others: others) }) { return pair }
+                            if !fitted { tally?("\(top ? "upper" : "lower"): pad / site does not fit") }
                         }
                         return []
                     }
@@ -726,6 +776,8 @@ struct StrutPlanner {
                     if lower.count == 2 { sets.append(lower) }
                     if upper.count == 2 { sets.append(upper) }
                     if upper.count == 2 && lower.count == 2 { sets.append(upper + lower) }
+                    if upperZ.isEmpty { tally?("no upper boom stations") }
+                    if lowerZ.isEmpty { tally?("no lower boom stations") }
                     guard !sets.isEmpty else { break }
                     for raw in sets {
                         // Judge the set as built: bottom ends that share a saddle are stiffer (and load the rods more).
@@ -734,6 +786,7 @@ struct StrutPlanner {
                         let tw = rep.tailTwistDeg ?? 0, bd = rep.tailBendDeg ?? 0
                         // 10 % margin: wing and fin struts added afterwards raise the weight (and load speed) a little.
                         if tw < 0.9 * StructureReport.twistWarnDeg && bd < 0.9 * StructureReport.bendWarnDeg && !rep.strutsBuckle { return set }
+                        tally?(rep.strutsBuckle ? "set buckles" : "set too soft (twist \(String(format: "%.1f", tw))°, bend \(String(format: "%.2f", bd))°)")
                         let score = tw / StructureReport.twistWarnDeg + bd / StructureReport.bendWarnDeg + (rep.strutsBuckle ? 100 : 0)
                         if fallback == nil || score < fallback!.score { fallback = (score, set) }
                     }
