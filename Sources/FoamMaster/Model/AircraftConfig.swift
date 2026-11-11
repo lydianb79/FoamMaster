@@ -292,6 +292,14 @@ struct AircraftConfig: Codable, Equatable {
             r(\.wingletHeight, spread: 0.3); r(\.noseLength, spread: 0.3)
         }
         c.tipChord = min(c.tipChord, c.rootChord)
+        if kind.hasTail {
+            // Rounded edges: about a quarter of the variants stay square, the others get random radii within the
+            // same ranges as the editor sliders (wing tips, fin / rudder top, elevator tips – not on the twin boom).
+            func radius(max m: Double) -> Double { Double.random(in: 0...1) < 0.25 ? 0 : Double.random(in: 0.3...1) * m }
+            c.wingTipRounding = radius(max: (c.tipChord * 0.45).rounded()).rounded()
+            c.finTopRounding = radius(max: (c.vStabChord * 0.5).rounded()).rounded()
+            c.stabTipRounding = kind.isTwinBoom ? 0 : radius(max: (c.hStabChord * 0.4).rounded()).rounded()
+        }
         let foams: [FoamMaterial] = [.depron3, .depron5, .depron6, .epp5, .epp6, .depron8, .epp8, .depron10, .epp10]
         c.material = foams.filter { $0.thickness <= (kind == .glider ? 5 : 10) }.randomElement()!
         c.sparEnabled = Bool.random() || c.material.family == .epp

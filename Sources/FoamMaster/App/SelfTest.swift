@@ -107,6 +107,20 @@ enum SelfTest {
                 }
             }
         }
+        // Randomizer: rounded edges appear on tailed types and the variants still build.
+        do {
+            var rounded = 0, total = 0, feasible = 0, simple = true
+            for _ in 0..<40 {
+                let kind = AircraftKind.allCases.filter(\.hasTail).randomElement()!
+                let c = AircraftConfig.random(kind: kind)
+                total += 1
+                if c.wingTipRounding > 0 || c.finTopRounding > 0 || c.stabTipRounding > 0 { rounded += 1 }
+                let d = DesignBuilder.build(c)
+                if d.parts.contains(where: { !Poly.isSimple($0.outline) }) { simple = false }
+                if Analysis(design: d).feasible { feasible += 1 }
+            }
+            print("   random rounding: \(rounded)/\(total) variants rounded, raw feasible \(feasible)/\(total), all outlines simple \(simple)")
+        }
         let project = Project()
         project.start(.flyingWing)
         snapshotView(GalleryContent().environmentObject(project), size: CGSize(width: 1300, height: 820), to: dir.appendingPathComponent("ui_gallery.png"))
