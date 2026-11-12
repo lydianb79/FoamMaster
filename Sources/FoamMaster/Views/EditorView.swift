@@ -103,7 +103,7 @@ struct ViewportView: View {
                 Image(systemName: "slider.horizontal.below.rectangle").foregroundStyle(.secondary)
                 Text("Surfaces").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 Slider(value: $project.deflection, in: -1...1).frame(minWidth: 80, maxWidth: 160)
-                    .help("Control-surface preview up to the full throw: right = pull + left turn (elevator up, left aileron up / right down, rudder left), left = push + right turn. Horns, pushrods and servo arms follow.")
+                    .help("Control-surface preview up to the full throw, like the stick moved sideways: right = right turn (right aileron / elevon up, left one down, rudder right, elevator up), left = left turn (left aileron / elevon up, right one down, rudder left, elevator down). Horns, pushrods and servo arms follow.")
                 Button("Center") { project.deflection = 0 }.buttonStyle(.borderless).font(.system(size: 11))
                 Spacer(minLength: 0)
                 Image(systemName: "questionmark.circle").foregroundStyle(.tertiary)

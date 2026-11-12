@@ -513,6 +513,53 @@ enum SelfTest {
         for e in examples { print("  · " + e) }
     }
 
+    /// Surface preview directions on every type: slider right must be a right turn (right aileron / elevon up, left
+    /// down, rudder right, elevator up), slider left the mirror image; and every horn must follow its surface.
+    @MainActor static func surfaceCheck() {
+        var bad = 0
+        for kind in AircraftKind.allCases {
+            for n in kind.allowsSingleAileronServo ? [1, 2] : [2] {
+                var c = kind.defaults
+                c.aileronServos = n; c = Project.balanced(c)
+                let d = DesignBuilder.build(c)
+                for defl in [1.0, -1.0] {
+                    var moves: [SurfaceMove] = []
+                    var report: [String] = []
+                    for part in d.parts {
+                        for inst in part.instances {
+                            for r in part.regions where r.isControl {
+                                guard let m = SceneBuilder.surfaceMove(d, part, inst, r.polygon, deflection: defl) else { report.append("NO HINGE \(part.name)"); bad += 1; continue }
+                                moves.append(m)
+                                let p1 = m.apply(m.probe), dp = p1 - m.probe
+                                let horizontal = abs(inst.normal.y) > 0.5
+                                let roll = horizontal && part.role == .wing && !kind.isNutBall
+                                let name = SceneBuilder.controlName(part, c)
+                                let want: Double, got: Double
+                                var label: String
+                                if horizontal {
+                                    got = dp.y
+                                    if roll { want = (m.probe.x > 0 ? 1 : -1) * defl; label = "\(m.probe.x > 0 ? "right" : "left") \(name) \(dp.y > 0 ? "up" : "down")" }
+                                    else { want = defl; label = "\(name) \(dp.y > 0 ? "up" : "down")" }
+                                } else { got = dp.x; want = defl; label = "\(name) TE \(dp.x > 0 ? "right" : "left")" }
+                                let ok = got * want > 0
+                                if !ok { bad += 1 }
+                                report.append((ok ? "" : "WRONG ") + label)
+                            }
+                        }
+                    }
+                    var unmatched: [String] = []
+                    for ctrl in d.controls {
+                        // The horn must sit on a surface that moves (and, for ailerons / elevons, on its own side).
+                        guard let m = SurfaceMove.driven(by: ctrl, in: moves) else { unmatched.append(ctrl.name); bad += 1; continue }
+                        if abs(ctrl.hornPosition.x) > 20, m.probe.x * ctrl.hornPosition.x < 0 { unmatched.append(ctrl.name + " (wrong side)"); bad += 1 }
+                    }
+                    print("\(kind.title) \(n) ail servo(s), slider \(defl > 0 ? "right" : "left"): " + report.joined(separator: ", ") + (unmatched.isEmpty ? "" : " · HORN NOT FOLLOWING: \(unmatched.joined(separator: ", "))"))
+                }
+            }
+        }
+        print("surface check: \(bad) problems")
+    }
+
     /// Surface preview at both ends of the slider for every type (seen from behind, above), plus a tail close-up.
     @MainActor static func deflectViews(_ dir: URL) {
         let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())

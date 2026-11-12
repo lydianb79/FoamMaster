@@ -86,10 +86,7 @@ enum SceneBuilder {
         var scene = SceneData()
         let base = d.config.material.family == .depron ? Palette.depron : Palette.epp
 
-        // Surface preview: the slider is one coherent control input – positive = pull and turn left: elevator and
-        // elevons trailing edge up, left aileron up / right aileron down, rudder trailing edge to the left – up to the
-        // type's maximum throw. Every moved surface is remembered so its horn, pushrod and servo arm follow.
-        let maxThrow = d.config.kind.maxSurfaceThrow * .pi / 180
+        // Surface preview (see `surfaceMove`). Every moved surface is remembered so its horn, pushrod and servo arm follow.
         var moves: [SurfaceMove] = []
         for part in d.parts {
             let regions = part.regions.isEmpty ? [Region(polygon: part.outline, isControl: false)] : part.regions
@@ -102,24 +99,9 @@ enum SceneBuilder {
                     let poly = r.isControl ? Poly.inset(r.polygon, by: 0.6) : mainOutline
                     let holes = part.holes.map(\.polygon).filter { Poly.contains(r.polygon, Poly.centroid($0)) }
                     var transform: (SIMD3<Double>) -> SIMD3<Double> = { $0 }
-                    if r.isControl, deflection != 0, let axis = hingeAxis(part, r.polygon) {
-                        let a3 = inst.point(axis.0), b3 = inst.point(axis.1)
-                        let probe = inst.point(Poly.centroid(r.polygon))
-                        let test = simd_quatd(angle: 0.1, axis: simd_normalize(b3 - a3))
-                        let moved = test.act(probe - a3) + a3
-                        // Sign of a positive rotation about this hinge line for the wanted motion.
-                        let horizontal = abs(inst.normal.y) > 0.5
-                        let aileron = horizontal && part.role == .wing && d.config.kind.hasTail && !d.config.kind.isNutBall
-                        var sense: Double
-                        if horizontal {
-                            sense = moved.y > probe.y ? 1 : -1                      // trailing edge up
-                            if aileron && probe.x > 0 { sense = -sense }            // right aileron down
-                        } else {
-                            sense = moved.x < probe.x ? 1 : -1                      // trailing edge to the left
-                        }
-                        let qq = simd_quatd(angle: sense * deflection * maxThrow, axis: simd_normalize(b3 - a3))
-                        transform = { qq.act($0 - a3) + a3 }
-                        moves.append(SurfaceMove(a: a3, b: b3, q: qq, normal: inst.normal))
+                    if r.isControl, deflection != 0, let m = surfaceMove(d, part, inst, r.polygon, deflection: deflection) {
+                        transform = m.apply
+                        moves.append(m)
                     }
                     addSlab(&scene, poly, holes: holes, placement: inst, thickness: part.thickness,
                             color: r.isControl ? Palette.control : base, transform: transform)
@@ -287,9 +269,7 @@ enum SceneBuilder {
         var drawnDoubleArm = false
         for ctrl in d.controls {
             // The surface this control drives: hinge line through its hinge point, horn standing out of its face.
-            let move = moves.filter { abs(simd_dot(simd_normalize(ctrl.hornAxis), $0.normal)) > 0.7 }
-                .min { $0.distance(to: ctrl.hingeMid) < $1.distance(to: ctrl.hingeMid) }
-                .flatMap { $0.distance(to: ctrl.hingeMid) < 3 ? $0 : nil }
+            let move = SurfaceMove.driven(by: ctrl, in: moves)
             let moveHorn: (SIMD3<Double>) -> SIMD3<Double> = { p in move.map { $0.apply(p) } ?? p }
             let rest = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition
             let horn = moveHorn(ctrl.hornPosition)
@@ -424,6 +404,8 @@ enum SceneBuilder {
 
     /// Hover name of a control surface region of a part.
     static func controlName(_ part: Part, _ c: AircraftConfig) -> String {
+        // Hinged surfaces of upright parts are rudders.
+        if let inst = part.instances.first, abs(inst.normal.y) < 0.5 { return "Rudder (control surface)" }
         switch part.role {
         case .wing: return c.kind.isTailless ? "Elevon (control surface)" : (c.kind.isNutBall ? "Elevator (control surface)" : "Aileron (control surface)")
         case .fin, .winglet: return "Rudder (control surface)"
@@ -433,6 +415,29 @@ enum SceneBuilder {
     }
 
     static func outlineWithNotches(_ part: Part, main: [Vec2]) -> [Vec2] { main }
+
+    /// Surface preview, up to the type's full throw: slider to the right = a right turn – right aileron / right elevon
+    /// trailing edge up, left one down, rudder trailing edge to the right, elevator up; to the left the mirror image
+    /// (left aileron / elevon up, right one down, rudder left, elevator down).
+    static func surfaceMove(_ d: Design, _ part: Part, _ inst: Placement, _ region: [Vec2], deflection: Double) -> SurfaceMove? {
+        guard let axis = hingeAxis(part, region) else { return nil }
+        let a3 = inst.point(axis.0), b3 = inst.point(axis.1)
+        let probe = inst.point(Poly.centroid(region))
+        let moved = simd_quatd(angle: 0.1, axis: simd_normalize(b3 - a3)).act(probe - a3) + a3
+        let k = d.config.kind
+        let horizontal = abs(inst.normal.y) > 0.5
+        // Roll surfaces: ailerons on the wing of tailed types, elevons on tailless ones (not the NutBall's elevator).
+        let roll = horizontal && part.role == .wing && !k.isNutBall
+        var sense: Double
+        if horizontal {
+            sense = moved.y > probe.y ? 1 : -1                      // + = trailing edge up
+            if roll && probe.x < 0 { sense = -sense }               // left aileron / elevon goes the other way
+        } else {
+            sense = moved.x > probe.x ? 1 : -1                      // + = trailing edge to the right
+        }
+        let q = simd_quatd(angle: sense * deflection * k.maxSurfaceThrow * .pi / 180, axis: simd_normalize(b3 - a3))
+        return SurfaceMove(a: a3, b: b3, q: q, normal: inst.normal, probe: probe)
+    }
 
     static func hingeAxis(_ part: Part, _ region: [Vec2]) -> (Vec2, Vec2)? {
         var best: (Vec2, Vec2)?
@@ -609,7 +614,17 @@ struct SurfaceMove {
     var a: SIMD3<Double>, b: SIMD3<Double>
     var q: simd_quatd
     var normal: SIMD3<Double>
+    /// Centroid of the surface before it moved.
+    var probe: SIMD3<Double> = .zero
     func apply(_ p: SIMD3<Double>) -> SIMD3<Double> { q.act(p - a) + a }
+    /// The moved surface a control's horn sits on: horn standing out of that surface's face, nearest hinge line
+    /// (the horn is a few mm behind its hinge; neighbouring surfaces are far away or face another way).
+    static func driven(by ctrl: ControlSurface, in moves: [SurfaceMove]) -> SurfaceMove? {
+        moves.filter { abs(simd_dot(simd_normalize(ctrl.hornAxis), $0.normal)) > 0.7 }
+            .map { ($0, $0.distance(to: ctrl.hornPosition)) }
+            .filter { $0.1 < 30 }
+            .min { $0.1 < $1.1 }?.0
+    }
     /// Distance of a point from the hinge segment.
     func distance(to p: SIMD3<Double>) -> Double {
         let ab = b - a
