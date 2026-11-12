@@ -280,7 +280,100 @@ enum PlanDrawer {
         ctx.setStrokeColor(inkC.cgColor)
         ctx.setLineWidth(0.4)
         ctx.strokePath()
-        drawDimensions(ctx, pl, color: dark ? NSColor(white: 0.75, alpha: 1) : NSColor(white: 0.35, alpha: 1), paper: dark ? nil : .white)
+        let dimColor = dark ? NSColor(white: 0.75, alpha: 1) : NSColor(white: 0.35, alpha: 1)
+        drawDimensions(ctx, pl, color: dimColor, paper: dark ? nil : .white)
+        drawDetailDimensions(ctx, pl, color: dimColor, paper: dark ? nil : .white)
+    }
+
+    /// Format a length in mm: whole millimetres, one decimal below 10 mm.
+    static func mm(_ v: Double) -> String { v < 9.95 ? String(format: "%.1f", v) : String(format: "%.0f", v) }
+
+    /// Text centred on `p` along the direction `angle` (kept upright), on a paper-coloured box.
+    static func alongText(_ ctx: CGContext, _ s: String, at p: Vec2, angle: Double, size: CGFloat, color: NSColor, paper: NSColor?) {
+        var a = angle
+        if a > .pi / 2 { a -= .pi } else if a < -.pi / 2 { a += .pi }
+        let w = NSAttributedString(string: s, attributes: [.font: NSFont.systemFont(ofSize: size, weight: .medium)]).size().width
+        ctx.saveGState()
+        ctx.translateBy(x: p.x, y: p.y)
+        ctx.rotate(by: a)
+        if let paper { ctx.setFillColor(paper.withAlphaComponent(0.85).cgColor); ctx.fill(CGRect(x: -w / 2 - 0.4, y: -size * 0.62, width: w + 0.8, height: size * 1.25)) }
+        text(s, at: Vec2(0, -Double(size) * 0.6), size: size, color: color, weight: .medium, centered: true)
+        ctx.restoreGState()
+    }
+
+    /// Every measurement needed to cut the part, besides its overall size: the length of each straight outline edge
+    /// (≥ 20 mm – chords, leading / trailing edges, fin heights, plate sides) written along the edge outside the
+    /// part; hinge-line lengths; size of each servo cutout; and the position of every cutout, slot and horn slot
+    /// and of the spar ends as "x · y" – mm from the part's left and top edge on the sheet (the edges the overall
+    /// dimensions start from).
+    static func drawDetailDimensions(_ ctx: CGContext, _ pl: PlanLayout.Placed, color: NSColor, paper: NSColor?) {
+        let part = pl.part, map = pl.map, o = pl.origin
+        // --- Outline edges: merge nearly collinear runs, keep the long straight ones.
+        let pts = Poly.ccw(part.outline).map(map)
+        guard pts.count > 2 else { return }
+        var corners: [Int] = []
+        for i in pts.indices {
+            let a = pts[(i + pts.count - 1) % pts.count], b = pts[i], c = pts[(i + 1) % pts.count]
+            let d1 = b - a, d2 = c - b
+            guard simd_length(d1) > 1e-6, simd_length(d2) > 1e-6 else { continue }
+            let turn = abs(atan2(d1.x * d2.y - d1.y * d2.x, simd_dot(d1, d2)))
+            if turn > 6 * .pi / 180 { corners.append(i) }
+        }
+        let centre = Poly.centroid(pts)
+        for (k, i) in corners.enumerated() {
+            let j = corners[(k + 1) % corners.count]
+            // The run from corner i to corner j must be straight (all points close to the chord).
+            let a = pts[i], b = pts[j]
+            let len = simd_distance(a, b)
+            guard len >= 20 else { continue }
+            var run: [Vec2] = []
+            var n = i
+            while n != j { run.append(pts[n]); n = (n + 1) % pts.count }
+            run.append(b)
+            let dir = (b - a) / len
+            let straight = run.allSatisfy { abs((($0 - a).x * dir.y - ($0 - a).y * dir.x)) < 0.6 }
+            guard straight else { continue }
+            var nrm = Vec2(-dir.y, dir.x)
+            let mid = (a + b) / 2
+            if Poly.contains(pts, mid + nrm * 1.5) || simd_dot(nrm, mid - centre) < 0 && !Poly.contains(pts, mid - nrm * 1.5) { nrm = -nrm }
+            // Edges along the bottom or right of the part, where the overall dimensions run: label inside.
+            let onBottom = abs(a.y - (o.y + pl.size.y)) < 1 && abs(b.y - (o.y + pl.size.y)) < 1
+            let onRight = abs(a.x - (o.x + pl.size.x)) < 1 && abs(b.x - (o.x + pl.size.x)) < 1
+            if onBottom || onRight { nrm = -nrm }
+            alongText(ctx, mm(len), at: mid + nrm * 2.2, angle: atan2(dir.y, dir.x), size: 1.9, color: color, paper: paper)
+        }
+        // --- Hinge lines.
+        for f in part.features {
+            if case let .hinge(a, b) = f {
+                let pa = map(a), pb = map(b), len = simd_distance(pa, pb)
+                guard len >= 15 else { continue }
+                let d = (pb - pa) / len
+                alongText(ctx, "HINGE \(mm(len))", at: (pa + pb) / 2 + Vec2(-d.y, d.x) * 1.8, angle: atan2(d.y, d.x), size: 1.7, color: hingeColor, paper: paper)
+            }
+            if case let .rod(a, b, _) = f {
+                for q in [a, b] {
+                    let p = map(q)
+                    text("\(mm(p.x - o.x)) · \(mm(p.y - o.y))", at: p + Vec2(1.2, 0.8), size: 1.6, color: sparColor, weight: .medium)
+                }
+            }
+        }
+        // --- Cutouts, slots, horn slots: size (servo cutouts) and position of the centre.
+        for h in part.holes {
+            let sheet = h.polygon.map(map)
+            let bb = Poly.bounds(sheet), c = (bb.min + bb.max) / 2
+            let pos = "\(mm(c.x - o.x)) · \(mm(c.y - o.y))"
+            switch h.kind {
+            case .servo:
+                // Size of the main servo opening (the arm pocket is the step on one side).
+                let pocket = Poly.cleaned(h.polygon).count > 4
+                text("\(mm(bb.max.x - bb.min.x)) × \(mm(bb.max.y - bb.min.y))\(pocket ? " with arm pocket" : "")", at: Vec2(c.x, c.y + 1.3), size: 1.6, color: color, weight: .medium, centered: true)
+                text(pos, at: Vec2(c.x, c.y + 3.2), size: 1.6, color: color, centered: true)
+            case .hornSlot:
+                text(pos, at: Vec2(bb.max.x + 1, bb.min.y - 2.2), size: 1.5, color: color)
+            case .slot, .drill:
+                text(pos, at: Vec2(bb.max.x + 0.8, bb.max.y + 0.2), size: 1.5, color: color)
+            }
+        }
     }
 
     /// Overall dimensions of a part in mm: its length under it and its height beside it (in the 14 mm gap to the

@@ -568,6 +568,15 @@ enum SelfTest {
         for e in examples { print("   · " + e) }
     }
 
+    /// Plans PDF of every type's default build (as a new model starts).
+    @MainActor static func plans(_ dir: URL) {
+        for kind in AircraftKind.allCases {
+            let c = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+            let d = DesignBuilder.build(c)
+            try? PlanPDF.render(d, Analysis(design: d)).write(to: dir.appendingPathComponent("plans_\(kind.rawValue).pdf"))
+        }
+    }
+
     /// Crash fuzz: every type × setup option, every slider of the fix finder swept from its minimum to its maximum
     /// (11 stations, alone and on random airframes), plus random airframes with sliders at their range ends – each
     /// built, analysed and drawn. A crash here is a trap; the count says how much was covered.

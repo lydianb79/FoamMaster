@@ -87,6 +87,14 @@ enum PlanPDF {
         ctx.setStrokeColor(NSColor.black.cgColor); ctx.setLineWidth(0.4)
         ctx.stroke(CGRect(x: 130, y: sy - 8, width: 50, height: 50))
         PlanDrawer.text("50 × 50 mm", at: Vec2(143, sy + 15), size: 3)
+        // How to read the measurements on the plan pages.
+        PlanDrawer.text("MEASUREMENTS (mm)", at: Vec2(15, sy + 12), size: 3.2, weight: .bold)
+        for (i, l) in ["Overall length under each part, overall height beside it.",
+                       "Edge lengths written along each straight edge; HINGE = hinge-line length.",
+                       "“x · y” = centre of a cutout / slot, or a spar end, measured from the",
+                       "part's left and top edge. Servo cutouts: width × height."].enumerated() {
+            PlanDrawer.text(l, at: Vec2(15, sy + 18 + Double(i) * 4.4), size: 3)
+        }
 
         // Legend
         let ly = 205.0
@@ -115,6 +123,7 @@ enum PlanPDF {
         PlanDrawer.text("pad, arrow = rod direction (S1 L/R …)", at: Vec2(132, ly + 33.5), size: 3)
         PlanDrawer.text("Fine dashed box to the edge = one-piece saddle", at: Vec2(132, ly + 38), size: 3)
         PlanDrawer.text("V-notches = alignment marks · tabs fit matching slots", at: Vec2(110, ly + 44), size: 3)
+
 
         // Tile map
         let my = 262.0

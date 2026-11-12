@@ -15,6 +15,12 @@ struct FoamMasterApp: App {
             MainActor.assumeIsolated { SelfTest.joinerCheck(dir) }
             exit(0)
         }
+        if let i = args.firstIndex(of: "--plans") {
+            let dir = URL(fileURLWithPath: i + 1 < args.count ? args[i + 1] : "plans")
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            MainActor.assumeIsolated { SelfTest.plans(dir) }
+            exit(0)
+        }
         if args.contains("--batterycheck") {
             MainActor.assumeIsolated { SelfTest.batteryCheck() }
             exit(0)
