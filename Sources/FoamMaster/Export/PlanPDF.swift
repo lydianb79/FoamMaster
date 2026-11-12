@@ -91,8 +91,9 @@ enum PlanPDF {
         PlanDrawer.text("MEASUREMENTS (mm)", at: Vec2(15, sy + 12), size: 3.2, weight: .bold)
         for (i, l) in ["Overall length under each part, overall height beside it.",
                        "Edge lengths written along each straight edge; HINGE = hinge-line length.",
-                       "“x · y” = centre of a cutout / slot, or a spar end, measured from the",
-                       "part's left and top edge. Servo cutouts: width × height."].enumerated() {
+                       "Every cutout / slot / horn slot: distance to the nearest part edge or cutout",
+                       "across and along (thin lines with ticks). Servo cutouts: width × height. Spar ends:",
+                       "“x · y” from the part's left and top edge."].enumerated() {
             PlanDrawer.text(l, at: Vec2(15, sy + 18 + Double(i) * 4.4), size: 3)
         }
 

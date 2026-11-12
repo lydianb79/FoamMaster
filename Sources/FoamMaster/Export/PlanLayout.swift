@@ -285,6 +285,47 @@ enum PlanDrawer {
         drawDetailDimensions(ctx, pl, color: dimColor, paper: dark ? nil : .white)
     }
 
+    /// x positions where the closed polygon crosses the horizontal line y (sheet coordinates).
+    static func crossings(_ poly: [Vec2], y: Double) -> [Double] {
+        var out: [Double] = []
+        for i in poly.indices {
+            let a = poly[i], b = poly[(i + 1) % poly.count]
+            if (a.y <= y && b.y > y) || (b.y <= y && a.y > y) { out.append(a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x)) }
+        }
+        return out
+    }
+    /// y positions where the closed polygon crosses the vertical line x.
+    static func crossings(_ poly: [Vec2], x: Double) -> [Double] {
+        var out: [Double] = []
+        for i in poly.indices {
+            let a = poly[i], b = poly[(i + 1) % poly.count]
+            if (a.x <= x && b.x > x) || (b.x <= x && a.x > x) { out.append(a.y + (x - a.x) / (b.x - a.x) * (b.y - a.y)) }
+        }
+        return out
+    }
+    /// The shorter of two optional spans (start, end).
+    static func shorter(_ a: (Double, Double)?, _ b: (Double, Double)?) -> (Double, Double)? {
+        switch (a, b) {
+        case let (x?, y?): return abs(x.1 - x.0) <= abs(y.1 - y.0) ? x : y
+        case let (x?, nil): return x
+        case let (nil, y?): return y
+        default: return nil
+        }
+    }
+    /// Dimension line from a to b with end ticks and its length written along it (beside it when it is short).
+    static func dimension(_ ctx: CGContext, _ a: Vec2, _ b: Vec2, color: NSColor, paper: NSColor?) {
+        let len = simd_distance(a, b)
+        guard len > 0.4 else { return }
+        let d = (b - a) / len, n = Vec2(-d.y, d.x)
+        line(ctx, a, b, color: color, width: 0.12)
+        for p in [a, b] { line(ctx, p - n * 0.7, p + n * 0.7, color: color, width: 0.18) }
+        let label = mm(len)
+        let w = Double(NSAttributedString(string: label, attributes: [.font: NSFont.systemFont(ofSize: 1.5, weight: .medium)]).size().width)
+        // On the line when it is long enough, otherwise just beside its far end.
+        let at = len > w + 2 ? (a + b) / 2 + n * 1.0 : b + d * (w / 2 + 1.0)
+        alongText(ctx, label, at: at, angle: atan2(d.y, d.x), size: 1.5, color: color, paper: paper)
+    }
+
     /// Format a length in mm: whole millimetres, one decimal below 10 mm.
     static func mm(_ v: Double) -> String { v < 9.95 ? String(format: "%.1f", v) : String(format: "%.0f", v) }
 
@@ -357,21 +398,30 @@ enum PlanDrawer {
                 }
             }
         }
-        // --- Cutouts, slots, horn slots: size (servo cutouts) and position of the centre.
-        for h in part.holes {
-            let sheet = h.polygon.map(map)
+        // --- Cutouts, slots, horn slots: size of the servo cutouts, and for every one its distance across and along to
+        // whatever is nearest – a part edge or the next cutout (chain dimensions through its centre).
+        let holeSheets = part.holes.map { $0.polygon.map(map) }
+        for (hi, h) in part.holes.enumerated() {
+            let sheet = holeSheets[hi]
+            let others = holeSheets.enumerated().filter { $0.offset != hi }.map(\.element)
             let bb = Poly.bounds(sheet), c = (bb.min + bb.max) / 2
-            let pos = "\(mm(c.x - o.x)) · \(mm(c.y - o.y))"
-            switch h.kind {
-            case .servo:
-                // Size of the main servo opening (the arm pocket is the step on one side).
+            if h.kind == .servo {
+                // Size of the servo opening (the arm pocket is the step on one side).
                 let pocket = Poly.cleaned(h.polygon).count > 4
                 text("\(mm(bb.max.x - bb.min.x)) × \(mm(bb.max.y - bb.min.y))\(pocket ? " with arm pocket" : "")", at: Vec2(c.x, c.y + 1.3), size: 1.6, color: color, weight: .medium, centered: true)
-                text(pos, at: Vec2(c.x, c.y + 3.2), size: 1.6, color: color, centered: true)
-            case .hornSlot:
-                text(pos, at: Vec2(bb.max.x + 1, bb.min.y - 2.2), size: 1.5, color: color)
-            case .slot, .drill:
-                text(pos, at: Vec2(bb.max.x + 0.8, bb.max.y + 0.2), size: 1.5, color: color)
+            }
+            let dimC = h.kind == .hornSlot ? hornColor : color
+            // Horizontal: from the cutout's left / right edge to the nearest edge or cutout on that side (the shorter one).
+            let xs = crossings(pts, y: c.y) + others.flatMap { crossings($0, y: c.y) }
+            let left = xs.filter { $0 < bb.min.x - 0.3 }.max(), right = xs.filter { $0 > bb.max.x + 0.3 }.min()
+            if let (x0, x1) = shorter(left.map { ($0, bb.min.x) }, right.map { (bb.max.x, $0) }) {
+                dimension(ctx, Vec2(x0, c.y), Vec2(x1, c.y), color: dimC, paper: paper)
+            }
+            // Vertical: from its top / bottom edge to the nearest edge or cutout above / below.
+            let ys = crossings(pts, x: c.x) + others.flatMap { crossings($0, x: c.x) }
+            let up = ys.filter { $0 < bb.min.y - 0.3 }.max(), down = ys.filter { $0 > bb.max.y + 0.3 }.min()
+            if let (y0, y1) = shorter(up.map { ($0, bb.min.y) }, down.map { (bb.max.y, $0) }) {
+                dimension(ctx, Vec2(c.x, y0), Vec2(c.x, y1), color: dimC, paper: paper)
             }
         }
     }
