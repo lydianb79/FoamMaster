@@ -103,6 +103,18 @@ struct MassItem: Identifiable {
     var category: String
 }
 
+extension ControlSurface {
+    var isDoubleArm: Bool { servoID.contains("double arm") }
+    /// Output shaft at the servo case face (where the arm's hub sits), from the servo centre and the arm tip: on the
+    /// side face for servos with the shaft sideways, on the bottom face for the standing (shaft-down) aileron servo.
+    func shaft(_ s: ServoClass) -> SIMD3<Double> {
+        guard armPosition != .zero else { return servoPosition }
+        if isDoubleArm { return [servoPosition.x, servoPosition.y - s.size.h / 2, armPosition.z] }
+        let side: Double = armPosition.x >= servoPosition.x ? 1 : -1
+        return [servoPosition.x + side * s.size.h / 2, servoPosition.y, armPosition.z]
+    }
+}
+
 struct ControlSurface {
     var name: String
     var hingeMid: SIMD3<Double>

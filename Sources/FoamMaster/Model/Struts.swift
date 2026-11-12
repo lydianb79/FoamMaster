@@ -266,7 +266,7 @@ struct StrutPlanner {
                 let part = d.parts[a.partIndex]
                 let fixed = part.regions.first { !$0.isControl }?.polygon ?? part.outline
                 let holes = part.holes.map { h -> (lo: Vec2, hi: Vec2) in
-                    let bb = Poly.bounds(h.polygon); let m = h.kind == .servo ? PrintedParts.servoFrameFlange + 1.5 : 1.5
+                    let bb = Poly.bounds(h.polygon); let m = h.kind == .servo ? 1.5 : 1.5
                     return (bb.min - Vec2(m, m), bb.max + Vec2(m, m))
                 }
                 // Sample the hull edges and inside on a 2 mm grid.
@@ -474,7 +474,7 @@ struct StrutPlanner {
         let w = Vec2(-dir.y, dir.x)
         let holes = part.holes.map { h -> (lo: Vec2, hi: Vec2) in
             let b = Poly.bounds(h.polygon)
-            let m = h.kind == .servo ? PrintedParts.servoFrameFlange + 1.5 : 1.5
+            let m = h.kind == .servo ? 1.5 : 1.5
             return (b.min - Vec2(m, m), b.max + Vec2(m, m))
         }
         for i in 0...4 {
@@ -566,16 +566,17 @@ struct StrutPlanner {
                     let s = c.servo.size
                     let standing = item.name.contains("double arm")
                     box(p, standing ? [s.w, s.h, s.l] : [s.h, s.w, s.l], margin: 2, item.name)
-                    // Servo frame flange on the foam.
-                    if abs(p.y) < 0.5 { box(p, [s.h + 6, s.w + 6, s.l + 6], margin: 1, item.name + " frame") }
                 }
             }
         }
         for ctrl in d.controls {
             let arm = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition
             capsules.append((arm, ctrl.hornPosition, 3.5, ctrl.name + " pushrod"))                     // pushrod (moves a little)
-            capsules.append((arm, arm, 7, ctrl.name + " servo arm"))                                   // servo arm swing
-            capsules.append((ctrl.servoPosition, arm, 4, ctrl.name + " servo arm"))
+            // Servo arm swinging about its shaft (arm length + its half width).
+            let shaft = ctrl.shaft(c.servo)
+            let swing = (ctrl.isDoubleArm ? c.servo.doubleArmHalf : c.servo.armLength) + ServoClass.armWidth / 2
+            capsules.append((shaft, shaft, swing, ctrl.name + " servo arm"))
+            capsules.append((shaft, arm, 3, ctrl.name + " servo arm"))
             capsules.append((ctrl.hornPosition - ctrl.hornAxis * 12, ctrl.hornPosition, 6, ctrl.name + " horn"))  // horn
         }
         // Control surfaces over their whole travel (the type's max throw + 5° about the hinge line, every 5°), so no

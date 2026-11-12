@@ -40,18 +40,7 @@ enum PrintedParts {
                                    mesh: controlHorn(foam: t), note: "tab for the 10 × 1.6 mm slot, \(String(format: "%.1f", t - 0.5)) mm deep for \(Int(t)) mm foam; pushrod hole above the hinge line"))
         }
 
-        // Servo frames grouped by cutout size.
-        var groups: [String: (size: Vec2, count: Int)] = [:]
-        for cut in d.servoCutouts {
-            let b = Poly.bounds(cut.rect)
-            let sz = b.max - b.min
-            let key = String(format: "%.1fx%.1f", sz.x, sz.y)
-            groups[key, default: (sz, 0)].count += 1
-        }
-        for (key, g) in groups.sorted(by: { $0.key < $1.key }) {
-            out.append(PrintedPart(name: "Servo frame \(key) mm", fileName: "servo_frame_\(key.replacingOccurrences(of: ".", with: "_"))",
-                                   quantity: g.count, mesh: servoFrame(cutout: g.size, foam: t), note: "press-fit into servo cutout"))
-        }
+        // Servos are glued straight into their flush cutouts – no printed servo frames.
 
         // Strut anchors grouped by rod size and boss angle (left and right ends are the same part).
         var anchors: [String: (dia: Double, deg: Int, labels: [String])] = [:]
@@ -317,16 +306,6 @@ enum PrintedParts {
         let plate = Mesh3D.extrude(profile, holes: hole, z0: -plateT / 2, z1: plateT / 2)
             .transformed { p in SIMD3<Double>(p.x, p.z, p.y) }                   // profile (x, z), thickness along y
         mesh.append(plate.flipped)                                              // the axis swap mirrors – restore winding
-        return mesh
-    }
-
-    /// Width of the servo frame's flange beyond the cutout on each side.
-    static let servoFrameFlange = 2.5
-    static func servoFrame(cutout: Vec2, foam t: Double) -> Mesh3D {
-        let inner = Poly.rect(center: .zero, size: cutout - Vec2(1.0, 1.0))
-        var mesh = Mesh3D.extrude(Poly.rect(center: .zero, size: cutout + Vec2(2, 2) * servoFrameFlange), holes: [inner], z0: 0, z1: 1.2)
-        let lip = Poly.rect(center: .zero, size: cutout - Vec2(0.2, 0.2))
-        mesh.append(.extrude(lip, holes: [inner], z0: 1.2, z1: 1.2 + max(1.5, t - 0.5)))
         return mesh
     }
 

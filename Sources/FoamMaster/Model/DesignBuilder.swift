@@ -45,14 +45,18 @@ extension AircraftConfig {
         return w.le(hw) + 0.3 * w.chord(hw)
     }
     var centralSparHalf: Double { sparEnabled ? sparSpec.widthMM / 2 : 1.5 }
-    /// Half length of the plate opening for a servo passing through the webs (its frame on the web faces fits in).
-    var centralWebServoHalfOpening: Double { servo.size.l / 2 + PrintedParts.servoFrameFlange + 0.5 }
-    var centralElevatorServoU: Double { centralSparU - centralSparHalf - 2 - centralWebServoHalfOpening }
-    var centralAileronServoU: Double {
-        centralElevatorServoU - centralWebServoHalfOpening - 5 - PrintedParts.servoFrameFlange - 0.2 - servo.size.l / 2
+    /// Half length of the plate opening for a servo passing through the webs (flush, 0.2 mm each end).
+    var centralWebServoHalfOpening: Double { servo.size.l / 2 + 0.2 }
+    /// Next to the spar groove, 2 mm clear of it – also its arm pocket (on the aft side of the opening).
+    var centralElevatorServoU: Double {
+        let pocketAft = servo.size.l / 2 - 5 + ServoClass.armSwingAlong(sheet: material.thickness)
+        return centralSparU - centralSparHalf - 2 - max(centralWebServoHalfOpening, pocketAft)
     }
-    /// Front edge of the foremost servo (the aileron servo's frame on the plate).
-    var centralServosFrontU: Double { centralAileronServoU - servo.size.l / 2 - PrintedParts.servoFrameFlange - 0.2 }
+    var centralAileronServoU: Double {
+        centralElevatorServoU - centralWebServoHalfOpening - 8 - 0.2 - servo.size.l / 2
+    }
+    /// Front edge of the foremost servo (the aileron servo's cutout in the plate).
+    var centralServosFrontU: Double { centralAileronServoU - servo.size.l / 2 - 0.2 }
     /// First station behind the spar for the rudder servo (the builder moves it aft if its plate opening needs it).
     var centralRudderServoU: Double { centralSparU + centralSparHalf + 2 + centralWebServoHalfOpening }
     var hasCentralAileronServo: Bool { hasAilerons && aileronServos == 1 && kind.allowsSingleAileronServo }
@@ -316,14 +320,22 @@ enum DesignBuilder {
         var ailServoU: Double { c.centralAileronServoU }
         var ailShaftU: Double { ailServoU + c.servo.size.l / 2 - 5 }
         /// Half length of the double arm (hole to hub) – longer for bigger servos.
-        var ailArm: Double { [.g17: 7.0, .g25: 8, .g37: 9, .g5: 10][c.servo]! }
-        var ailArmY: Double { -c.servo.size.h / 2 - 2 }
+        var ailArm: Double { c.servo.doubleArmHalf }
+        /// Pushrod end under the double arm (case bottom − gap − arm − rod radius).
+        var ailArmY: Double { -c.servo.size.h / 2 - ServoClass.rodOffset }
         var ailServoCenter: SIMD3<Double> { [0, 0, ailServoU] }
-        /// Notch in the lower fuselage half (below the plate) for the lower half of the servo and the arm hub, with
-        /// clearance below the arm.
+        /// Lower fuselage half (below the plate): flush notch for the lower half of the servo, and a deeper one only
+        /// where the double arm crosses the web – around the hub, ±its swing (±50°) through the web, down to 1.5 mm
+        /// below the arm. (u0, u1, depth below the plate) each.
         var ailWindow: (u0: Double, u1: Double, h: Double) {
             let sv = c.servo.size
-            return (ailServoU - sv.l / 2 - 1, ailServoU + sv.l / 2 + 1, sv.h / 2 + 2 + 1.5 + 3 - t / 2)
+            return (ailServoU - sv.l / 2 - 0.2, ailServoU + sv.l / 2 + 0.2, sv.h / 2 + 0.2 - t / 2)
+        }
+        var ailArmWindow: (u0: Double, u1: Double, h: Double) {
+            let th = 50.0 * .pi / 180, tw = t * Double(c.fuselageType.webLayers)
+            let along = ServoClass.armWidth / 2 / cos(th) + (tw / 2 + 1) * tan(th) + 1
+            let depth = c.servo.size.h / 2 + ServoClass.armGap + ServoClass.armThickness + 1.5 - t / 2
+            return (ailShaftU - along, ailShaftU + along, depth)
         }
 
         var wing: TaperedPanel {
@@ -341,8 +353,31 @@ enum DesignBuilder {
 
         // MARK: Helpers
 
-        mutating func servoCut(_ name: String, center: Vec2, size: Vec2, in region: [Vec2], avoid: [[Vec2]] = []) -> Hole {
-            let r = Poly.rect(center: center, size: size + Vec2(0.4, 0.4))
+        /// Outline of two overlapping axis-aligned rectangles (servo cutout + arm pocket), counter-clockwise.
+        static func unionRects(_ a: [Vec2], _ b: [Vec2]) -> [Vec2] {
+            let ba = Poly.bounds(a), bb = Poly.bounds(b)
+            let xs = Array(Set([ba.min.x, ba.max.x, bb.min.x, bb.max.x])).sorted()
+            var low: [Vec2] = [], high: [Vec2] = []
+            for i in 0..<(xs.count - 1) {
+                let m = (xs[i] + xs[i + 1]) / 2
+                var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
+                for r in [ba, bb] where m > r.min.x && m < r.max.x { lo = min(lo, r.min.y); hi = max(hi, r.max.y) }
+                guard lo < hi else { continue }
+                low += [Vec2(xs[i], lo), Vec2(xs[i + 1], lo)]; high += [Vec2(xs[i], hi), Vec2(xs[i + 1], hi)]
+            }
+            return Poly.ccw(Poly.cleaned(low + high.reversed()))
+        }
+
+        /// Servo cutout, flush (+0.2 mm each side). `arm`: the shaft sits in this sheet (servo lying flat in a wing, or
+        /// centred on the plate) – a pocket on the shaft side (plan side ±1) lets the arm's hub and swing clear the foam.
+        mutating func servoCut(_ name: String, center: Vec2, size: Vec2, in region: [Vec2], avoid: [[Vec2]] = [],
+                               arm: (side: Double, sheet: Double)? = nil) -> Hole {
+            var r = Poly.rect(center: center, size: size + Vec2(0.4, 0.4))
+            if let arm {
+                let pocket = armPocket(cutCenter: center, cutHalfAcross: size.y / 2 + 0.2, side: arm.side,
+                                       hubU: center.x + c.servo.size.l / 2 - 5, sheet: arm.sheet)
+                r = Self.unionRects(r, pocket)
+            }
             if !Poly.containsAll(region, r) || avoid.contains(where: { Poly.overlaps($0, r) }) {
                 issues.append("Servo cutout '\(name)' does not fit inside the part – increase chord/height or pick a smaller servo.")
             }
@@ -355,12 +390,22 @@ enum DesignBuilder {
         /// In the wing that means the servo lies FLAT (L×H cutout, only W crosses the thin foam); in a
         /// vertical fuselage web it passes through the web (L×W cutout) like on profile planes.
         /// The arm points up at neutral, so the pushrod runs straight fore-aft to a horn at the same x.
+        /// Returns the pushrod end at the arm: arm length from the shaft, on the arm's outer side.
         func armTip(_ center: SIMD3<Double>, side: Double, down: Bool = false) -> SIMD3<Double> {
             let sv = c.servo.size
-            return center + [side * (sv.h / 2 + 2), down ? -10 : 10, sv.l / 2 - 5]
+            return center + [side * (sv.h / 2 + ServoClass.rodOffset), (down ? -1 : 1) * c.servo.armLength, sv.l / 2 - 5]
         }
-        /// Sideways offset of the arm (and horn) from the servo centre so the pushrod is straight.
-        var armOffset: Double { c.servo.size.h / 2 + 2.5 }
+        /// Sideways offset of the pushrod (and horn) from the servo centre so the pushrod is straight.
+        var armOffset: Double { c.servo.size.h / 2 + ServoClass.rodOffset }
+        /// Pocket beside a servo whose shaft sits in a foam sheet (mid-plane): the arm's hub and its swing through the
+        /// sheet (±50°) need room. Plan rectangle on the shaft side: across from the cutout edge to beyond the arm,
+        /// along the sheet ± its swing where it crosses the sheet's thickness.
+        func armPocket(cutCenter: Vec2, cutHalfAcross: Double, side: Double, hubU: Double, sheet: Double) -> [Vec2] {
+            let along = ServoClass.armSwingAlong(sheet: sheet)
+            let a0 = cutHalfAcross - 0.5, a1 = c.servo.size.h / 2 + ServoClass.armGap + ServoClass.armThickness + 1.5
+            let v0 = cutCenter.y + side * a0, v1 = cutCenter.y + side * a1
+            return Poly.rect(minU: hubU - along, maxU: hubU + along, minV: min(v0, v1), maxV: max(v0, v1))
+        }
         /// Wing cutout (lying flat) and fuselage-web cutout sizes in plan coordinates (u, v).
         var wingServoCut: Vec2 { Vec2(c.servo.size.l, c.servo.size.h) }
         var webServoCut: Vec2 { Vec2(c.servo.size.l, c.servo.size.w) }
@@ -430,16 +475,22 @@ enum DesignBuilder {
         /// Spar line (30 % chord) at its most aft point across a flat wing servo's spanwise width at station `v`:
         /// on swept / tapered wings the spar runs diagonally, so the servo's outboard corner is the closest one.
         func sparAcrossServo(_ p: TaperedPanel, _ v: Double) -> Double {
-            let h = c.servo.size.h / 2 + 0.2
+            // Across the cutout and the arm pocket beside it (on either side).
+            let h = c.servo.size.h / 2 + ServoClass.armGap + ServoClass.armThickness + 1.5
             func spar(_ x: Double) -> Double { p.le(x) + 0.3 * p.chord(x) }
             return max(spar(v - h), spar(v + h))
         }
-        func wingServoU(hingeU: Double, sparU: Double) -> Double {
+        mutating func wingServoU(hingeU: Double, sparU: Double) -> Double {
             let l = c.servo.size.l
             let sparHalf = c.sparEnabled ? c.sparSpec.widthMM / 2 : 1.5
-            // cutout = servo + 0.4 mm, frame flange around it
-            let forward = sparU + sparHalf + Self.servoSparGap + PrintedParts.servoFrameFlange + 0.2 + l / 2
+            // cutout = servo + 0.4 mm (glued in flush, no frame)
+            let forward = sparU + sparHalf + Self.servoSparGap + 0.2 + l / 2
             let mostAft = hingeU - 8 - l / 2
+            // No room between the spar groove and 8 mm ahead of the hinge: the cutout would reach the groove.
+            if c.sparEnabled && mostAft < sparU + sparHalf + 0.5 + 0.2 + l / 2,
+               !issues.contains(where: { $0.hasPrefix("The wing servos do not fit") }) {
+                issues.append("The wing servos do not fit between the spar and the hinge – they would cut into the spar groove. Use a smaller servo, a larger chord or smaller control surfaces.")
+            }
             return min(mostAft, forward)
         }
 
@@ -543,7 +594,7 @@ enum DesignBuilder {
                 let hingeU = w.te(vs) - f * w.chord(vs)
                 let center = Vec2(wingServoU(hingeU: hingeU, sparU: sparAcrossServo(w, vs)), side * vs)
                 let name = side < 0 ? "Left elevon" : "Right elevon"
-                holes.append(servoCut(name, center: center, size: wingServoCut, in: mainRegion))
+                holes.append(servoCut(name, center: center, size: wingServoCut, in: mainRegion, arm: (side, t)))
                 let vh = vs + armOffset, hingeH = w.te(vh) - f * w.chord(vh)
                 holes.append(hornSlot(at: Vec2(hingeH + 6, side * vh)))
                 let body: SIMD3<Double> = [center.y, 0, center.x]
@@ -655,7 +706,7 @@ enum DesignBuilder {
                     let vs = a0 + max(14, sv.h / 2 + 6)
                     let hingeU = half.te(vs) - f * half.chord(vs)
                     let center = Vec2(wingServoU(hingeU: hingeU, sparU: sparAcrossServo(half, vs)), vs)
-                    holes.append(servoCut("Aileron", center: center, size: wingServoCut, in: main))
+                    holes.append(servoCut("Aileron", center: center, size: wingServoCut, in: main, arm: (1, t)))
                     let vh = vs + armOffset, hingeH = half.te(vh) - f * half.chord(vh)
                     holes.append(hornSlot(at: Vec2(hingeH + 6, vh)))
                     for side in [-1.0, 1.0] {
@@ -732,26 +783,31 @@ enum DesignBuilder {
             // centred on the plate – half in the upper, half in the lower fuselage half (orientation as always: aileron
             // servo shaft down, elevator / rudder servos through the web with the shaft sideways).
             let central = centralAileron
-            let svC = c.servo.size, flange = PrintedParts.servoFrameFlange
+            let svC = c.servo.size
             let twC = t * Double(c.fuselageType.webLayers)
             let webOpen = c.centralWebServoHalfOpening
-            /// Plate opening for a servo passing through the webs: long enough for its frame on the web faces.
-            func webServoOpening(_ u: Double) -> [Vec2] {
-                Poly.rect(center: Vec2(u, 0), size: Vec2(2 * webOpen, 2 * max(svC.h / 2 + 0.5, twC / 2 + 1.2 + 0.5)))
+            /// Plate opening for a servo passing through the webs: flush around the servo, with a pocket on the shaft side
+            /// for the arm (its hub sits at plate level).
+            func webServoOpening(_ u: Double, side: Double) -> [Vec2] {
+                let body = Poly.rect(center: Vec2(u, 0), size: Vec2(2 * webOpen, 2 * max(svC.h / 2 + 0.2, twC / 2 + 0.2)))
+                return Self.unionRects(body, armPocket(cutCenter: Vec2(u, 0), cutHalfAcross: svC.h / 2 + 0.2, side: side,
+                                                       hubU: u + svC.l / 2 - 5, sheet: t))
             }
             let uEC = c.centralElevatorServoU
             var uRC = c.centralRudderServoU
             if central && c.hasRudder {
                 // Behind the spar; further aft while the opening would cut into a wing-joint notch of the plate.
-                while !Poly.containsAll(Poly.inset(plateOutline, by: 1.5), webServoOpening(uRC)) && uRC < c.centralRudderServoU + 30 { uRC += 1 }
+                while !Poly.containsAll(Poly.inset(plateOutline, by: 1.5), webServoOpening(uRC, side: -1)) && uRC < c.centralRudderServoU + 30 { uRC += 1 }
             }
             // Notches: in the bottom edge of the upper half (for the servo tops and the aileron servo's frame on the
             // plate) and in the top edge of the lower half (servo bottoms, the aileron servo's arm). (u0, u1, depth)
             let webDepth = svC.w / 2 + 0.3 - t / 2
             var upNotches: [(Double, Double, Double)] = [], loNotches: [(Double, Double, Double)] = []
             if central {
-                upNotches.append((ailServoU - svC.l / 2 - flange - 0.5, ailServoU + svC.l / 2 + flange + 0.5, max(svC.h / 2 + 1 - t / 2, 2)))
+                upNotches.append((ailServoU - svC.l / 2 - 0.2, ailServoU + svC.l / 2 + 0.2, svC.h / 2 + 0.2 - t / 2))
                 loNotches.append((aw.u0, aw.u1, aw.h))
+                let aa = ailArmWindow
+                loNotches.append((aa.u0, aa.u1, aa.h))
                 var webServos = [uEC]
                 if c.hasRudder { webServos.append(uRC) }
                 for u in webServos where webDepth > 0 {
@@ -759,10 +815,21 @@ enum DesignBuilder {
                     loNotches.append((u - svC.l / 2 - 0.2, u + svC.l / 2 + 0.2, webDepth))
                 }
             }
-            upNotches.sort { $0.0 < $1.0 }; loNotches.sort { $0.0 > $1.0 }
-            // Bottom edge of the upper half runs aft, top edge of the lower half forward.
-            let upNotchPts = upNotches.flatMap { [Vec2($0.0, 0), Vec2($0.0, $0.2), Vec2($0.1, $0.2), Vec2($0.1, 0)] }
-            let ailNotch = loNotches.flatMap { [Vec2($0.1, 0), Vec2($0.1, -$0.2), Vec2($0.0, -$0.2), Vec2($0.0, 0)] }
+            // Overlapping notches merge into one stepped profile (deepest wins); the bottom edge of the upper half runs
+            // aft, the top edge of the lower half forward.
+            func profile(_ ns: [(Double, Double, Double)], sign: Double) -> [Vec2] {
+                let xs = Array(Set(ns.flatMap { [$0.0, $0.1] })).sorted()
+                var pts: [Vec2] = []
+                for i in 0..<max(xs.count - 1, 0) {
+                    let m = (xs[i] + xs[i + 1]) / 2
+                    let dep = ns.filter { m > $0.0 && m < $0.1 }.map(\.2).max() ?? 0
+                    pts += [Vec2(xs[i], sign * dep), Vec2(xs[i + 1], sign * dep)]
+                }
+                guard let f = pts.first, let l = pts.last else { return [] }
+                return Poly.cleaned([Vec2(f.x, 0)] + pts + [Vec2(l.x, 0)])
+            }
+            let upNotchPts = profile(upNotches.filter { $0.2 > 0 }, sign: 1)
+            let ailNotch = Array(profile(loNotches.filter { $0.2 > 0 }, sign: -1).reversed())
             let allNotches = upNotches + loNotches
             let clearOfAileronServo = { (u: Double) in allNotches.allSatisfy { u + 6 < $0.0 - 2 || u - 6 > $0.1 + 2 } }
             let hBoom = c.boomTopHeight
@@ -803,24 +870,23 @@ enum DesignBuilder {
             // Plate slots for both halves (all on the centre line, at different stations).
             var plateHoles = (upTabs + loTabs).map { slot(minU: $0 - 5, maxU: $0 + 5, minV: -tw / 2, maxV: tw / 2) }
             // Elevator horn beside the rudder, outside its sideways swing.
-            let eHornV = max(armOffset, tw / 2 + 10)
-            plateHoles.append(hornSlot(at: Vec2(uH + 6, eHornV), under: true))
+            var eHornV = max(armOffset, tw / 2 + 10)
 
             // Servos: in the upper half above the plate – or, with one aileron servo, all three centred on the plate.
             let sv = c.servo.size
             let s1 = Vec2(c.rootChord * 0.06 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
             var upperHoles: [Hole] = []
             if central {
-                // Aileron servo standing in the plate (L × W cutout with its printed frame on top).
+                // Aileron servo standing in the plate: flush L × W cutout (its arm is below the plate).
                 plateHoles.append(servoCut("Aileron", center: Vec2(ailServoU, 0), size: Vec2(sv.l, sv.w), in: plateOutline))
-                // Elevator / rudder servos pass through both webs (frame on the web faces) and an opening in the plate.
-                for (name, u) in [("Elevator", uEC)] + (hasRudder ? [("Rudder", uRC)] : []) {
-                    let open = webServoOpening(u)
+                // Elevator / rudder servos pass through both webs and a flush opening in the plate (arm pocket on the
+                // shaft side: elevator +x, rudder −x).
+                for (name, u, side) in [("Elevator", uEC, 1.0)] + (hasRudder ? [("Rudder", uRC, -1.0)] : []) {
+                    let open = webServoOpening(u, side: side)
                     if !Poly.containsAll(plateOutline, open) {
                         issues.append("The \(name.lowercased()) servo opening does not fit in the fuselage plate – widen the plate or pick a smaller servo.")
                     }
                     plateHoles.append(Hole(kind: .servo, polygon: open, note: name))
-                    servoCutouts.append((name, Poly.rect(center: .zero, size: webServoCut + Vec2(0.4, 0.4))))
                 }
                 if c.batteryPosition + c.battery.size.l / 2 + 3 > c.centralServosFrontU {
                     issues.append("The battery reaches the servos centred on the plate – move it forward (Auto-balance) or use a smaller battery.")
@@ -830,8 +896,27 @@ enum DesignBuilder {
                 if hasRudder { upperHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upperMain)) }
             }
             if hasRudder { upperHoles.append(hornSlot(at: Vec2(uH + 6, rHornV))) }
+            // Elevator horn under the elevator. With the servo above the plate its pushrod crosses the plate at a shallow
+            // angle: the horn moves inboard (towards the centre line, not into the web's reach) until the whole crossing
+            // – slot ± 1 mm – lies inside the plate, never beside the narrow boom's edge.
+            let eArmTip = armTip(central ? [0, 0, uEC] : [0, t / 2 + s1.y, s1.x], side: 1, down: central)
+            if !central {
+                func crossingInside(_ hx: Double) -> Bool {
+                    let h3 = SIMD3<Double>(hx, -(t / 2 + 9), uH + 2)
+                    for y in stride(from: t / 2 + 0.5, through: -(t / 2 + 0.5), by: -0.5) {
+                        let p = eArmTip + (h3 - eArmTip) * ((y - eArmTip.y) / (h3.y - eArmTip.y))
+                        for dx in [-2.5, 2.5] where !Poly.contains(plateOutline, Vec2(p.z, p.x + dx)) { return false }
+                    }
+                    return true
+                }
+                var hx = eHornV
+                while !crossingInside(hx) && hx > tw / 2 + 3.5 { hx -= 0.5 }
+                if crossingInside(hx) { eHornV = hx }
+                else { issues.append("The elevator pushrod would cross the plate beside the boom – widen the plate tail or pick a smaller servo.") }
+            }
+            plateHoles.append(hornSlot(at: Vec2(uH + 6, eHornV), under: true))
             let lowerHoles: [Hole] = []
-            if centralAileron && aw.h > hLowWing - 6 {
+            if centralAileron && ailArmWindow.h > hLowWing - 6 {
                 issues.append("The lower fuselage is too shallow for the upside-down aileron servo and its arm – increase the fuselage height.")
             }
 
@@ -927,7 +1012,7 @@ enum DesignBuilder {
                 for side in [-1.0, 1.0] {
                     let name = side < 0 ? "Left aileron" : "Right aileron"
                     let center = Vec2(wingServoU(hingeU: hingeU, sparU: sparAcrossServo(w, vs)), side * vs)
-                    wingHoles.append(servoCut(name, center: center, size: wingServoCut, in: wingMain))
+                    wingHoles.append(servoCut(name, center: center, size: wingServoCut, in: wingMain, arm: (side, t)))
                     let vh = vs + armOffset, hingeH = w.te(vh) - fA * w.chord(vh)
                     wingHoles.append(hornSlot(at: Vec2(hingeH + 6, side * vh)))
                     let body: SIMD3<Double> = [side * vs, 0, center.x]
@@ -1097,7 +1182,7 @@ enum DesignBuilder {
             // Same rule as the aileron servos: front edge 5 mm behind the spar groove (one row of servos).
             let sparE = sparAcrossServo(w, eServoX)
             let eServoU = wingServoU(hingeU: w.te(eServoX) - fA * w.chord(eServoX), sparU: sparE)
-            wingHoles.append(servoCut("Elevator", center: Vec2(eServoU, eServoX), size: wingServoCut, in: twinMain))
+            wingHoles.append(servoCut("Elevator", center: Vec2(eServoU, eServoX), size: wingServoCut, in: twinMain, arm: (1, t)))
             if !c.isDual && ePushX < propRadius + AircraftConfig.propClearance + 2 {
                 issues.append("The elevator pushrod would pass through the prop disc – increase the stabiliser span (boom spacing) or use a smaller prop.")
             }
@@ -1108,7 +1193,7 @@ enum DesignBuilder {
                 for side in [-1.0, 1.0] {
                     let name = side < 0 ? "Left aileron" : "Right aileron"
                     let center = Vec2(wingServoU(hingeU: hingeU, sparU: sparAcrossServo(w, vs)), side * vs)
-                    wingHoles.append(servoCut(name, center: center, size: wingServoCut, in: out.main))
+                    wingHoles.append(servoCut(name, center: center, size: wingServoCut, in: out.main, arm: (side, t)))
                     let vh = vs + armOffset, hingeH = w.te(vh) - fA * w.chord(vh)
                     wingHoles.append(hornSlot(at: Vec2(hingeH + 6, side * vh)))
                     let body: SIMD3<Double> = [side * vs, 0, center.x]

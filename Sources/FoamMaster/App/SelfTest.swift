@@ -256,7 +256,65 @@ enum SelfTest {
                     }
                 }
             }
-            if inside > 0.5 { out.append("\(ctrl.name) pushrod \(String(format: "%.0f", inside)) mm inside \(partsHit.sorted().joined(separator: ", "))") }
+            // (a design that reports its elevator pushrod crossing beside the boom is already flagged)
+            let flaggedRod = d.geometryIssues.contains { $0.hasPrefix("The elevator pushrod would cross") }
+            if inside > 0.5 && !flaggedRod { out.append("\(ctrl.name) pushrod \(String(format: "%.0f", inside)) mm inside \(partsHit.sorted().joined(separator: ", "))") }
+        }
+        // Servo arms swung ±50° about their shaft must stay out of the foam (0.5 mm clear), outside cut-outs.
+        let sv = d.config.servo
+        func inFoam(_ p: SIMD3<Double>, margin: Double) -> String? {
+            for part in d.parts {
+                for inst in part.instances {
+                    let q = p - inst.origin
+                    guard abs(simd_dot(q, inst.normal)) < part.thickness / 2 + margin else { continue }
+                    let pp = Vec2(simd_dot(q, inst.u), simd_dot(q, inst.v))
+                    if Poly.contains(part.outline, pp) && !part.holes.contains(where: { Poly.contains($0.polygon, pp) }) { return part.name }
+                }
+            }
+            return nil
+        }
+        for ctrl in d.controls where ctrl.armPosition != .zero {
+            let shaft = ctrl.shaft(sv), arm = ctrl.armPosition
+            let gap = ServoClass.armGap, th = ServoClass.armThickness, w2 = ServoClass.armWidth / 2
+            var hit: String?
+            if ctrl.isDoubleArm {
+                // Horizontal bar through the hub, turning about the vertical shaft.
+                let y = shaft.y - gap - th / 2, len = sv.doubleArmHalf + 2
+                for ang in stride(from: -50.0, through: 50, by: 5) where hit == nil {
+                    let q = simd_quatd(angle: ang * .pi / 180, axis: [0, 1, 0])
+                    for r in stride(from: -len, through: len, by: 1) { for wv in [-w2, 0, w2] {
+                        let p = q.act(SIMD3(r, 0, wv)) + [shaft.x, y, shaft.z]
+                        if hit == nil, let h = inFoam(p, margin: 0.5) { hit = h }
+                    } }
+                }
+            } else {
+                // Bar from the hub to beyond the hole, in the plane beside the case, turning about the sideways shaft.
+                let side: Double = arm.x >= ctrl.servoPosition.x ? 1 : -1
+                let dir = simd_normalize(SIMD3(0, arm.y - shaft.y, arm.z - shaft.z) + [0, 1e-9, 0])
+                let x = shaft.x + side * (gap + th / 2), len = sv.armLength + 2
+                for ang in stride(from: -50.0, through: 50, by: 5) where hit == nil {
+                    let q = simd_quatd(angle: ang * .pi / 180, axis: [1, 0, 0])
+                    for r in stride(from: 0, through: len, by: 1) { for wv in [-w2, 0, w2] {
+                        let d3 = q.act(dir * r + SIMD3(0, 0, wv))
+                        let p = SIMD3(x, shaft.y, shaft.z) + d3
+                        if hit == nil, let h = inFoam(p, margin: 0.5) { hit = h }
+                    } }
+                }
+            }
+            if let hit { out.append("\(ctrl.name) servo arm hits \(hit)") }
+        }
+        // No servo cutout or arm pocket may cut into a spar groove.
+        for part in d.parts {
+            for f in part.features {
+                guard case let .rod(a, b, wd) = f else { continue }
+                let dir = simd_normalize(b - a), nrm = Vec2(-dir.y, dir.x)
+                let groove = [a - nrm * wd / 2, b - nrm * wd / 2, b + nrm * wd / 2, a + nrm * wd / 2]
+                // (unless the design already reports that its wing servos do not fit between spar and hinge)
+                let flagged = d.geometryIssues.contains { $0.hasPrefix("The wing servos do not fit") }
+                for h in part.holes where !flagged && h.kind == .servo && Poly.overlaps(Poly.ccw(groove), h.polygon) {
+                    out.append("\(h.note) servo cutout cuts into the spar groove of \(part.name)")
+                }
+            }
         }
         // Pushrods of different servos must keep ≥ 2 mm between their axes (Ø1 rods, 1 mm clear).
         for (i, c1) in d.controls.enumerated() {
@@ -273,7 +331,7 @@ enum SelfTest {
     @MainActor static func pushrodCheck() {
         for kind in AircraftKind.allCases {
             for ail in (kind.allowsSingleAileronServo && kind.hasTail && !kind.isNutBall ? [1, 2] : [2]) {
-                var hits: [String: Int] = [:], n = 0
+                var hits: [String: Int] = [:], n = 0, flaggedN = 0
                 for m in FoamMaterial.allCases {
                     for variant in 0..<4 {
                         var c = variant == 0 ? kind.defaults : AircraftConfig.random(kind: kind)
@@ -281,10 +339,12 @@ enum SelfTest {
                         c = Project.balanced(c)
                         let d = DesignBuilder.build(c)
                         n += 1
-                        for h in pushrodHits(d) { hits[h.components(separatedBy: " pushrod")[0] + " pushrod into " + h.components(separatedBy: "inside ")[1], default: 0] += 1 }
+                        if d.geometryIssues.contains(where: { $0.hasPrefix("The elevator pushrod would cross") || $0.hasPrefix("The wing servos do not fit") }) { flaggedN += 1 }
+                        for h in pushrodHits(d) { hits[h.contains("inside") ? h.components(separatedBy: " pushrod")[0] + " pushrod into " + h.components(separatedBy: "inside ")[1] : h, default: 0] += 1 }
                     }
                 }
-                print("  \(kind.title), \(ail) aileron servo\(ail > 1 ? "s" : ""): \(n) builds, pushrods into foam: \(hits.isEmpty ? "none" : hits.sorted { $0.value > $1.value }.map { "\($0.value)× \($0.key)" }.joined(separator: "; "))")
+                print("  \(kind.title), \(ail) aileron servo\(ail > 1 ? "s" : ""): \(flaggedN) flagged as not buildable (pushrod / servo geometry)")
+                print("  \(kind.title), \(ail) aileron servo\(ail > 1 ? "s" : ""): \(n) builds, pushrod / arm problems: \(hits.isEmpty ? "none" : hits.sorted { $0.value > $1.value }.map { "\($0.value)× \($0.key)" }.joined(separator: "; "))")
             }
         }
     }
@@ -374,11 +434,17 @@ enum SelfTest {
             try? PlanPDF.render(d, a).write(to: dir.appendingPathComponent("central_servos.pdf"))
             let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
             if let r = Renderer(view: view) {
-                for (tag, pitch, yaw, zoom) in [("side", 0.05, Float.pi / 2, Float(0.32)), ("below", -0.5, Float(0.9), Float(0.3)), ("above", 0.6, Float(0.9), Float(0.3))] {
-                    r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
-                    r.target = SIMD3<Float>(0, 0, Float(c.centralSparU))
-                    r.pitch = Float(pitch); r.yaw = yaw; r.zoom = zoom
-                    if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("central_servos_\(tag).png")) }
+                // Close-ups of each servo: from the shaft side (slightly below) and from below.
+                for ctrl in d.controls where ctrl.name != "Left aileron" {
+                    let shaft = ctrl.shaft(c.servo)
+                    let side: Float = ctrl.armPosition.x >= ctrl.servoPosition.x ? 1 : -1
+                    for (tag, pitch, yaw) in [("side", Float(-0.15), side * Float.pi / 2 - side * 0.35), ("below", Float(-0.9), side * Float.pi / 2 - side * 0.6)] {
+                        r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
+                        r.target = SIMD3<Float>(Float(shaft.x), Float(shaft.y), Float(shaft.z))
+                        r.pitch = pitch; r.yaw = yaw; r.zoom = 0.07
+                        let name = ctrl.name.replacingOccurrences(of: " ", with: "_").lowercased()
+                        if let img = r.snapshot(width: 800, height: 600) { savePNG(img, dir.appendingPathComponent("servo_\(name)_\(tag).png")) }
+                    }
                 }
             }
         }
@@ -625,11 +691,11 @@ enum SelfTest {
                         let bb = Poly.bounds(h.polygon), cy = (bb.min.y + bb.max.y) / 2
                         for (ra, rb, dd) in rods where cy >= min(ra.y, rb.y) - 1 && cy <= max(ra.y, rb.y) + 1 && abs(rb.y - ra.y) > 1e-6 {
                             let su = [bb.min.y, bb.max.y].map { y in ra.x + (rb.x - ra.x) * (y - ra.y) / (rb.y - ra.y) }.max()!
-                            sparGaps.append(String(format: "%@ %.1f", h.note, bb.min.x - PrintedParts.servoFrameFlange - (su + dd / 2)))
+                            sparGaps.append(String(format: "%@ %.1f", h.note, bb.min.x - (su + dd / 2)))
                         }
                     }
                 }
-                if !sparGaps.isEmpty { print("   spar→servo frame \(kind.title)\(one ? " 1-servo" : ""): " + sparGaps.joined(separator: ", ") + " mm") }
+                if !sparGaps.isEmpty { print("   spar→servo cutout \(kind.title)\(one ? " 1-servo" : ""): " + sparGaps.joined(separator: ", ") + " mm") }
                 print("   servos \(kind.title)\(one ? " 1-servo" : ""): servo z \(wingCtrl.first.map { String(format: "%.0f", $0.servoPosition.z) } ?? "-"), hinge−servo \(gaps.first.map { String(format: "%.0f", $0) } ?? "-") mm, pushrods \(String(format: "%.0f", rods.reduce(0, +))) mm, battery \(Int(c.batteryPosition)) (\(c.battery.name)), CG \(String(format: "%.1f", a.cg.z)) / target \(String(format: "%.1f", a.recommendedCG)), AUW \(String(format: "%.1f", a.totalMass)) g, score \(a.score)" + d.geometryIssues.map { " [\($0)]" }.joined())
             }
         }

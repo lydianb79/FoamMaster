@@ -125,6 +125,20 @@ enum ServoClass: String, CaseIterable, Identifiable, Codable {
     /// Body size without flanges: length, width, height (mm).
     var size: (l: Double, w: Double, h: Double) { [.g17: (16, 7, 15), .g25: (18, 8, 17), .g37: (20, 8.5, 18), .g5: (22, 9, 20)][self]! }
     var torque: Double { [.g17: 0.12, .g25: 0.25, .g37: 0.4, .g5: 0.6][self]! } // kg·cm
+    /// Servo arm (horn) as fitted: shaft → pushrod hole, the arm 2 mm off the case on the spline, 1.6 mm thick,
+    /// 4 mm wide; the pushrod's Z-bend goes through the hole from the arm's OUTER side. Typical micro-servo arms.
+    var armLength: Double { [.g17: 11.0, .g25: 12, .g37: 13, .g5: 14][self]! }
+    /// Half length of a double-ended arm (hub → each pushrod hole).
+    var doubleArmHalf: Double { [.g17: 10.0, .g25: 11, .g37: 12, .g5: 13][self]! }
+    static let armGap = 2.0, armThickness = 1.6, armWidth = 4.0
+    /// The pushrod lies outside the arm: offset of the rod axis from the case face (gap + arm + rod radius).
+    static var rodOffset: Double { armGap + armThickness + 0.5 }
+    /// Half length (along the sheet) of the pocket an arm needs where its hub sits in a foam sheet of thickness
+    /// `sheet`: the arm swinging ±50° crosses the sheet over this distance either side of the hub.
+    static func armSwingAlong(sheet: Double) -> Double {
+        let th = 50.0 * .pi / 180
+        return max(armWidth / 2 / cos(th) + (sheet / 2 + 1) * tan(th) + 1, 3.5)
+    }
 }
 
 /// Carbon reinforcement options the generator picks from.

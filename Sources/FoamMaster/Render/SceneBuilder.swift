@@ -226,15 +226,7 @@ enum SceneBuilder {
                     let size: SIMD3<Double> = standing ? [s.w, s.h, s.l] : [s.h, s.w, s.l]
                     scene.label = "\(item.name) – \(c.servo.name)"
                     scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.servo)
-                    // Printed servo frame flange around the cutout.
-                    let inWing = abs(p.y) < 0.5
-                    let cut = inWing ? Vec2(s.l + 0.4, s.h + 0.4) : Vec2(s.l + 0.4, s.w + 0.4)
-                    let ring = Mesh3D.extrude(Poly.rect(center: .zero, size: cut + Vec2(5, 5)), holes: [Poly.rect(center: .zero, size: cut)], z0: 0, z1: 1.2)
-                    let placed = inWing ? ring.transformed { q in SIMD3<Double>(p.x + q.y, t / 2 + q.z, p.z + q.x) }
-                                        : ring.transformed { q in SIMD3<Double>(tw / 2 + q.z, p.y + q.y, p.z + q.x) }
-                    scene.label = "Servo frame (printed)"
-                    // The upside-down aileron servo is glued into its notch in the lower fuselage – no frame.
-                    if !standing { scene.addMesh(placed, color: Palette.printed) }
+                    // Servos are glued straight into their flush cutouts – no frames.
                 }
             }
         }
@@ -273,18 +265,26 @@ enum SceneBuilder {
         // Linkages: servo arm (white), pushrod, and the printed horn standing out of the surface.
         for ctrl in d.controls {
             let arm = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition
-            if ctrl.servoID.contains("double arm") {
-                // Double-ended arm on the standing servo: hub on the shaft, one half towards each aileron pushrod.
-                let hub = SIMD3<Double>(0, arm.y, arm.z)
-                scene.label = "Double servo arm – both ailerons"
-                scene.addMesh(.box(min: simd_min(hub, arm) - [0, 0.8, 2], max: simd_max(hub, arm) + [0, 0.8, 2]), color: Palette.linkage)
-                let hc = hub + [0, 1.5, 0]           // hub between the servo (above) and the arm
-                scene.addMesh(cylinder(center: hc, radius: 2.6, length: 3).transformed { q in
-                    SIMD3<Double>(q.x, hc.y + (q.z - hc.z), hc.z + (q.y - hc.y)) }, color: Palette.linkage)
-            } else {
-                let shaft = arm - [0, 10, 0]
-                scene.label = "Servo arm – \(ctrl.name)"
-                scene.addMesh(.box(min: simd_min(shaft, arm) - [0.8, 0, 2], max: simd_max(shaft, arm) + [0.8, 0, 2]), color: Palette.linkage)
+            if ctrl.armPosition != .zero {
+                // The arm sits on the servo's output shaft, `armGap` off the case; the pushrod hangs on its outer side.
+                let shaft = ctrl.shaft(c.servo)
+                let gap = ServoClass.armGap, th = ServoClass.armThickness, hw2 = ServoClass.armWidth / 2
+                if ctrl.isDoubleArm {
+                    // Shaft down: hub from the case bottom to the arm, the arm horizontal, rods below its ends.
+                    let yTop = shaft.y - gap, yBot = yTop - th
+                    scene.label = "Double servo arm – both ailerons"
+                    scene.addMesh(.box(min: [-abs(arm.x) - hw2, yBot, arm.z - hw2], max: [abs(arm.x) + hw2, yTop, arm.z + hw2]), color: Palette.linkage)
+                    scene.addMesh(.box(min: [shaft.x - 2.2, yTop, shaft.z - 2.2], max: [shaft.x + 2.2, shaft.y, shaft.z + 2.2]), color: Palette.linkage)
+                } else {
+                    // Shaft sideways: hub from the case face to the arm, the arm from the shaft to the pushrod hole.
+                    let side: Double = arm.x >= ctrl.servoPosition.x ? 1 : -1
+                    let x0 = shaft.x + side * gap, x1 = x0 + side * th
+                    scene.label = "Servo arm – \(ctrl.name)"
+                    let lo = SIMD3<Double>(min(x0, x1), min(shaft.y, arm.y) - hw2, arm.z - hw2)
+                    let hi = SIMD3<Double>(max(x0, x1), max(shaft.y, arm.y) + hw2, arm.z + hw2)
+                    scene.addMesh(.box(min: lo, max: hi), color: Palette.linkage)
+                    scene.addMesh(.box(min: [min(shaft.x, x0), shaft.y - 2.2, shaft.z - 2.2], max: [max(shaft.x, x0), shaft.y + 2.2, shaft.z + 2.2]), color: Palette.linkage)
+                }
             }
             scene.addLine(arm, ctrl.hornPosition, color: SIMD4(0.9, 0.9, 0.95, 0.9))
             // The printed horn (same mesh as the STL): plate in the plane of the pushrod motion – horn axis and flight
