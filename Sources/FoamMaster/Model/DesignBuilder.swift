@@ -24,7 +24,7 @@ extension AircraftConfig {
     var dualPropGap: Double { 2 * dualMotorX - 2 * propRadius }
     /// Half width of whatever sits between the two props (centre fin / keel, or fuselage plate / pod).
     var dualBodyHalfWidth: Double {
-        kind.isTailless ? (taillessFins == .centreFin ? material.thickness / 2 + 2 : 4) : fuselagePlateWidth / 2 + 2
+        kind.isTailless ? (taillessFins.hasCentreFin ? material.thickness / 2 + 2 : 4) : fuselagePlateWidth / 2 + 2
     }
     /// The printed firewall plate always sits against the end of the foam, never inside it: tractors have the plate
     /// in front of the nose / leading edge, pushers behind the foam end. `firewallZ` is the plate face the motor
@@ -613,9 +613,9 @@ enum DesignBuilder {
                                                armPosition: armTip(body, side: side)))
             }
 
-            // Winglets / centre fin with tabs into the wing.
-            let finHeight = c.wingletHeight
-            if finHeight > 5 && c.taillessFins == .centreFin {
+            // Centre fin and / or winglets with tabs into the wing.
+            let finHeight = c.tailFinHeight
+            if finHeight > 5 && c.taillessFins.hasCentreFin {
                 let fc = c.rootChord * 0.42
                 let fin = finOutline(chord: fc, height: finHeight)
                 let maxFinU = w.te(0) - nd - fc - 4
@@ -626,9 +626,11 @@ enum DesignBuilder {
                 for tu in fin.tabs { holes.append(slot(minU: u0 + tu - 4, maxU: u0 + tu + 4, minV: -t / 2, maxV: t / 2)) }
                 parts.append(Part(name: "Centre fin", role: .fin, outline: fin.outline, features: [.label("FIN", Vec2(fc * 0.45, finHeight * 0.4))],
                                   instances: [Placement(origin: [0, t / 2, u0], u: [0, 0, 1], v: [0, 1, 0])], material: c.material))
-            } else if finHeight > 5 && c.taillessFins == .winglets {
+            }
+            let wingletHeight = c.wingletHeight
+            if wingletHeight > 5 && c.taillessFins.hasWinglets {
                 // Winglets are glued to the SIDE of the wing tip: tip tabs go through slots in the winglet.
-                let wl = sideFin(chord: c.tipChord, height: finHeight)
+                let wl = sideFin(chord: c.tipChord, height: wingletHeight)
                 for v in [-s, s] {
                     for tu in wl.tabs {
                         outline = Poly.insertTab(outline, at: Vec2(w.le(v) + tu, v), width: 10, height: t)
@@ -636,7 +638,7 @@ enum DesignBuilder {
                     }
                 }
                 parts.append(Part(name: "Winglet", role: .winglet, outline: wl.outline, holes: wl.slots,
-                                  features: [.label("WINGLET", Vec2(c.tipChord * 0.45, finHeight * 0.45))],
+                                  features: [.label("WINGLET", Vec2(c.tipChord * 0.45, wingletHeight * 0.45))],
                                   instances: [-1.0, 1.0].map { Placement(origin: [$0 * (s + t / 2), 0, w.le(s)], u: [0, 0, 1], v: [0, 1, 0]) },
                                   material: c.material))
             }

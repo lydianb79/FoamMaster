@@ -69,10 +69,13 @@ struct ParameterContent: View {
                                 ForEach(TaillessFins.allCases) { Text($0.name).tag($0) }
                             }
                             .pickerStyle(.segmented).labelsHidden()
+                            if c.taillessFins == .finAndWinglets {
+                                ParamSlider(label: "Centre fin height", unit: "mm", value: bind(\.centreFinHeight), range: range(\.centreFinHeight, c), step: 1)
+                            }
                             if c.taillessFins != .none {
                                 ParamSlider(label: c.taillessFins == .centreFin ? "Fin height" : "Winglet height", unit: "mm", value: bind(\.wingletHeight), range: range(\.wingletHeight, c), step: 1)
                             }
-                            if c.taillessFins == .centreFin {
+                            if c.taillessFins.hasCentreFin {
                                 ParamSlider(label: "Fin position (LE from nose)", unit: "mm", value: bind(\.finPosition), range: 0...max(10, c.rootChord * 0.58 - c.motorNotchDepth - 4), step: 1)
                             }
                         }

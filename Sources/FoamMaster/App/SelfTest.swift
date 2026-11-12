@@ -569,6 +569,14 @@ enum SelfTest {
             if kind.allowsSingleAileronServo { c.aileronServos = 1 }
             c = Project.balanced(c)
             let d = DesignBuilder.build(c), a = Analysis(design: d)
+            if kind.isTailless {
+                // The centre fin + winglets option (as a new model starts with it).
+                var ch = kind.defaultSetupChoice; ch.fins = .finAndWinglets
+                let fd = DesignBuilder.build(Project.balanced(Project.setupConfig(kind, ch)))
+                r.setScene(SceneBuilder.aircraft(fd, Analysis(design: fd), deflection: 0, showCG: false), resetCamera: true)
+                r.yaw = 0.45; r.pitch = 0.3; r.zoom = 0.9
+                if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("\(kind.rawValue)_finwinglets.png")) }
+            }
             for defl in [-1.0, 1.0] {
                 r.setScene(SceneBuilder.aircraft(d, a, deflection: defl, showCG: false), resetCamera: true)
                 r.yaw = 0.45; r.pitch = 0.3; r.zoom = 0.9

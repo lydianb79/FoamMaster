@@ -62,7 +62,11 @@ final class Project: ObservableObject {
         c.ailerons = ch.layout.ailerons && kind.hasTail
         if !kind.isTailless && !kind.isNutBall && !kind.isTwinBoom { c.rudder = ch.layout.rudder }
         c.aileronServos = kind.allowsSingleAileronServo && c.ailerons ? ch.servos : 2
-        if kind.isTailless { c.taillessFins = ch.fins }
+        if kind.isTailless {
+            c.taillessFins = ch.fins
+            // Centre fin and winglets share the yaw stability: both a bit smaller than either alone.
+            if ch.fins == .finAndWinglets { c.centreFinHeight = (c.wingletHeight * 0.8).rounded(); c.wingletHeight = (c.wingletHeight * 0.6).rounded() }
+        }
         c.motorLayout = kind.allowsDualMotors ? ch.motors : .single
         c.tailWinglets = ch.winglets && kind.offersWinglets
         if c.tailWinglets { c.wingletHeight = kind.isNutBall ? 50 : 45 }

@@ -113,7 +113,13 @@ enum BuildDocs {
                 s.append(BuildStep(title: "Fit the winglets", text: "The disc edge is rounded, so the winglets stand on top of the disc, inboard of the edge: push their two tabs through the matching slots marked on the disc plan until flush underneath. Check 90° to the disc and parallel to the spine, then glue.", symbol: "square.split.bottomrightquarter"))
             }
         } else if c.kind.isTailless {
-            s.append(BuildStep(title: c.kind == .delta ? "Fit the centre fin" : "Fit the winglets", text: "Push the tabs through the matching slots in the wing until flush underneath. Check 90° to the wing with a square and glue.", symbol: "square.split.bottomrightquarter"))
+            if c.taillessFins != .none {
+                let title = [TaillessFins.centreFin: "Fit the centre fin", .winglets: "Fit the winglets", .finAndWinglets: "Fit the centre fin and the winglets"][c.taillessFins]!
+                let text = (c.taillessFins.hasCentreFin ? "Centre fin: push its tabs through the matching slots in the wing until flush underneath. " : "")
+                    + (c.taillessFins.hasWinglets ? "Winglets: push the wing-tip tabs through the slots in each winglet. " : "")
+                    + "Check 90° to the wing with a square and glue."
+                s.append(BuildStep(title: title, text: text, symbol: "square.split.bottomrightquarter"))
+            }
             s.append(BuildStep(title: "Centre keel & motor", text: "Glue the centre keel under the wing with its tabs. Screw the motor onto the printed mount (\(pat.label), heads sit flush in the counterbores) and push its + shaped clamp onto the wing and keel at the front of the trailing-edge cutout – the prop spins inside the cutout.", symbol: "fanblades"))
         } else {
             s.append(BuildStep(title: "Mount the motor", text: "Screw the motor onto the printed firewall (\(pat.label), heads sit flush in the counterbores) and push its + shaped clamp over the nose so it grips the plate and both fuselage halves. 1–2° right thrust can be shimmed with a washer.", symbol: "fanblades"))

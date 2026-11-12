@@ -12,13 +12,16 @@ enum MotorLayout: String, CaseIterable, Identifiable, Codable {
 
 /// Vertical stabilisation of tailless aircraft.
 enum TaillessFins: String, CaseIterable, Identifiable, Codable {
-    case winglets, centreFin, none
+    case winglets, centreFin, finAndWinglets, none
     var id: String { rawValue }
-    var name: String { [.winglets: "Winglets", .centreFin: "Centre fin", .none: "No fins"][self]! }
+    var name: String { [.winglets: "Winglets", .centreFin: "Centre fin", .finAndWinglets: "Fin + winglets", .none: "No fins"][self]! }
     var detail: String {
         [.winglets: "Two fins at the wing tips", .centreFin: "One fin on the centre line – position adjustable",
+         .finAndWinglets: "Centre fin plus a winglet at each tip – heights set separately",
          .none: "Plain tips – relies on sweep for yaw stability"][self]!
     }
+    var hasCentreFin: Bool { self == .centreFin || self == .finAndWinglets }
+    var hasWinglets: Bool { self == .winglets || self == .finAndWinglets }
 }
 
 enum AircraftKind: String, CaseIterable, Identifiable, Codable {
@@ -222,6 +225,8 @@ struct AircraftConfig: Codable, Equatable {
     /// Tailless only: winglets or a centre fin, and the centre fin's leading-edge position (mm aft of the root LE).
     var taillessFins: TaillessFins = .winglets
     var finPosition: Double = 40
+    /// Centre fin height when a tailless type has both a centre fin and winglets (winglets use `wingletHeight`).
+    var centreFinHeight: Double = 70
     var motorLayout: MotorLayout = .single
     /// Winglets on tailed aircraft (tailless types choose winglets / centre fin via `taillessFins`).
     var tailWinglets: Bool = false
@@ -241,7 +246,11 @@ struct AircraftConfig: Codable, Equatable {
     /// Groups this airframe can have: tail struts need a boom (not the twin boom), fin struts a stabiliser and a fin.
     var offersTailStruts: Bool { kind.hasTail && !kind.isTwinBoom }
     var offersFinStruts: Bool { (kind.hasTail || kind.isNutBall) && !kind.isTwinBoom }
-    var hasWinglets: Bool { kind.isTailless ? taillessFins == .winglets : tailWinglets }
+    var hasWinglets: Bool { kind.isTailless ? taillessFins.hasWinglets : tailWinglets }
+    /// Tailless types: a fin on the centre line (alone or with winglets).
+    var hasCentreFin: Bool { kind.isTailless && taillessFins.hasCentreFin }
+    /// Height of the tailless centre fin: its own slider with winglets as well, otherwise the fin / winglet height.
+    var tailFinHeight: Double { taillessFins == .finAndWinglets ? centreFinHeight : wingletHeight }
     var isDual: Bool { motorLayout == .dualTractor && kind.allowsDualMotors }
     var motorCount: Int { isDual ? 2 : 1 }
     /// Effective pusher configuration (dual layouts are always tractors).
@@ -278,6 +287,7 @@ struct AircraftConfig: Codable, Equatable {
         case \AircraftConfig.dihedral: return 0...12
         case \AircraftConfig.controlChordPct: return 0.12...0.4
         case \AircraftConfig.wingletHeight: return 0...140
+        case \AircraftConfig.centreFinHeight: return 0...140
         case \AircraftConfig.fuselageLength: return 280...600
         case \AircraftConfig.fuselageHeight: return kind.isJet ? 110...190 : 36...130
         case \AircraftConfig.noseLength: return kind.isTailless ? 30...200 : (kind.isJet ? 100...280 : 45...200)
@@ -310,7 +320,7 @@ struct AircraftConfig: Codable, Equatable {
             r(\.hStabSpan, spread: 0.15); r(\.hStabChord, spread: 0.15)
             r(\.vStabHeight, spread: 0.15); r(\.vStabChord, spread: 0.15)
         } else {
-            r(\.wingletHeight, spread: 0.3); r(\.noseLength, spread: 0.3)
+            r(\.wingletHeight, spread: 0.3); r(\.centreFinHeight, spread: 0.3); r(\.noseLength, spread: 0.3)
         }
         c.tipChord = min(c.tipChord, c.rootChord)
         if kind.hasTail {
