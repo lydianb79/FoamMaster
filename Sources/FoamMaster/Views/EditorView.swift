@@ -119,11 +119,19 @@ struct ViewportView: View {
                     StatChip(label: "CG", value: String(format: "%.0f mm", a.cg.z), tint: Theme.cgColor(a))
                     StatChip(label: "Thrust/W", value: String(format: "%.2f", a.thrustToWeight), tint: a.thrustToWeight >= c.kind.minThrustToWeight ? Theme.good : Theme.warn)
                     StatChip(label: "Flight", value: String(format: "≈%.0f min", a.flightTime), tint: Theme.good)
-                }
-                // Electronics of this design under the 3D view (same list as in the Electronics panel).
-                if let d = project.design {
-                    Divider().opacity(0.3)
-                    ElectronicsList(design: d, analysis: a, columns: 4)
+                    // The design's electronics in the same tiles (receiver and leads only in the Electronics panel).
+                    if let d = project.design {
+                        let n = c.motorCount, servos = Set(d.controls.map(\.servoID)).count
+                        StatChip(label: "Motor", value: (n > 1 ? "\(n) × " : "") + c.motor.name.replacingOccurrences(of: " brushless", with: ""))
+                            .help("\(c.motor.name), \(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S, mount pattern \(c.motor.pattern.label)")
+                        StatChip(label: "ESC", value: (n > 1 ? "\(n) × " : "") + "\(c.motor.escMass > 4 ? 12 : 6) A \(c.battery.cells)S")
+                        StatChip(label: "Propeller", value: (n > 1 ? "\(n) × " : "") + (c.propRecommendation.components(separatedBy: "-blade").first ?? "") + "-blade")
+                            .help("Propeller \(c.propRecommendation)")
+                        StatChip(label: "Battery", value: c.battery.name.replacingOccurrences(of: " LiPo", with: ""))
+                            .help("\(c.battery.name), \(c.battery.mass) g")
+                        StatChip(label: "Servos", value: "\(servos) × \(c.servo.name.replacingOccurrences(of: " micro servo", with: ""))")
+                            .help("\(servos) × \(c.servo.name), \(c.servo.torque) kg·cm")
+                    }
                 }
             }
         }
