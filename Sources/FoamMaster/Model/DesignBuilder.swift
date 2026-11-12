@@ -329,58 +329,6 @@ enum DesignBuilder {
         var wingServoCut: Vec2 { Vec2(c.servo.size.l, c.servo.size.h) }
         var webServoCut: Vec2 { Vec2(c.servo.size.l, c.servo.size.w) }
 
-        /// Rudder clear of the elevator horn, and rudder horn clear of the elevator (both swung through the type's
-        /// full throw + 5°). The rudder hinge moves `off` mm behind the elevator hinge – the fixed fin grows by that
-        /// much – so the elevator horn stays outside the wedge the rudder sweeps; the rudder horn sits `hornV` mm
-        /// above the web origin, above the highest point the elevator reaches within the horn's reach.
-        func rudderPlacement(uH: Double, eHornV: Double, elevChord ce: Double, tw: Double) -> (off: Double, hornV: Double) {
-            let T = (c.kind.maxSurfaceThrow + StrutPlanner.throwMargin) * .pi / 180, clear = 2.0
-            func hornPoints(_ pos: SIMD3<Double>, axis a: SIMD3<Double>) -> [SIMD3<Double>] {
-                let ex = SIMD3<Double>(0, 0, 1), ey = simd_cross(a, ex), o = pos - a * 9 + [0, 0, 4]
-                return PrintedParts.controlHorn(foam: t).triangles.flatMap { [$0.0, $0.1, $0.2] }.map { o + ex * $0.x + ey * $0.y + a * $0.z }
-            }
-            // Elevator horn over its travel (turns about the elevator hinge: x axis at y 0, z uH).
-            var off = 0.0
-            let eh = hornPoints([eHornV, t / 2 + 9, uH + 2], axis: [0, 1, 0])
-            for k in -6...6 {
-                let q = simd_quatd(angle: T * Double(k) / 6, axis: [1, 0, 0])
-                for p0 in eh {
-                    let p = q.act(p0 - [0, 0, uH]) + [0, 0, uH]
-                    off = max(off, p.z + clear - max(abs(p.x) - tw / 2 - clear, 0) / tan(T) - uH)
-                }
-            }
-            off = (off * 2).rounded(.up) / 2
-            // Rudder horn swept with the rudder (about the vertical hinge at uH + off): its furthest reach aft.
-            let rh = hornPoints([-(tw / 2 + 8), t / 2 + 14, uH + off + 2], axis: [-1, 0, 0])
-            var reach = 0.0
-            for k in -6...6 {
-                let q = simd_quatd(angle: T * Double(k) / 6, axis: [0, 1, 0])
-                for p0 in rh { reach = max(reach, (q.act(p0 - [0, 0, uH + off]) + [0, 0, uH + off]).z - uH) }
-            }
-            let elevTop = min(reach * tan(T), ce * sin(T)) + t / 2      // tape hinge on top: turns about the top surface
-            let hornV = max(14, elevTop + 3 + clear - t / 2)
-            return (off, (hornV * 2).rounded(.up) / 2)
-        }
-
-        /// Bottom edge of the fin / rudder over the one-piece elevator, in web coordinates (v above the plate top,
-        /// Δz behind the elevator hinge). The elevator is hinged with tape on top, so it turns about the top-surface
-        /// line: its top face rises to Δz·tanθ, its trailing edge to ce·sinθ. The edge stays above that for every
-        /// angle up to the type's throw + 5°, plus the gap `rg`.
-        struct FinCut {
-            var rg: Double, tanT: Double, thick: Double, cap: Double
-            func v(_ dz: Double) -> Double { rg + min(max(dz, 0) * tanT + thick, cap) }
-            /// Edge points (Δz, v) from d0 to d1, with the knee where the line turns flat.
-            func edge(_ d0: Double, _ d1: Double) -> [Vec2] {
-                let knee = (cap - thick) / tanT
-                return ([d0] + (knee > d0 && knee < d1 ? [knee] : []) + [d1]).map { Vec2($0, v($0)) }
-            }
-        }
-        func finCut(elevChord ce: Double, rg: Double) -> FinCut {
-            let T = (c.kind.maxSurfaceThrow + StrutPlanner.throwMargin) * .pi / 180, h = t / 2
-            _ = h
-            return FinCut(rg: rg, tanT: tan(T), thick: 0, cap: ce * sin(T))
-        }
-
         func hornSlot(at p: Vec2, alongU: Bool = true) -> Hole {
             let size = alongU ? Vec2(10, 1.6) : Vec2(1.6, 10)
             return Hole(kind: .hornSlot, polygon: Poly.rect(center: p, size: size), note: "horn")
@@ -679,6 +627,7 @@ enum DesignBuilder {
 
             // --- Horizontal fuselage plate: nose strip + wing centre + tail boom + stabiliser in one piece.
             let rudderChord = max(0.4 * vsc, 18.0)
+            let uR = uH + rudderChord            // rudder trailing edge
             if stab.le(wb / 2) < ub + 10 { issues.append("Tail arm is too short – the stabiliser would reach the wing.") }
 
             func notch(_ u: Double) -> [Vec2] { [Vec2(u - 5.2, hw), Vec2(u - 5.2, hw - 6.2), Vec2(u + 5.2, hw - 6.2), Vec2(u + 5.2, hw)] }
@@ -715,26 +664,19 @@ enum DesignBuilder {
             let finLE = uH - 1.25 * vsc
             if finLE < ub + 10 { issues.append("Fin is too long for the tail arm – fin leading edge reaches the wing.") }
             let rg = c.hasRudder ? TaperedPanel.endGap : 0     // rudder clears the plate / elevator by this gap
-            // Rudder hinge behind the elevator horn (the fixed fin grows aft by `rOff`), rudder horn above the elevator.
-            let twR = t * Double(c.fuselageType.webLayers)
-            let rp = c.hasRudder ? rudderPlacement(uH: uH, eHornV: max(armOffset, twR / 2 + 10), elevChord: ef * hsc, tw: twR) : (off: 0, hornV: 14)
-            let uRH = uH + rp.off, uR = uRH + rudderChord           // rudder hinge and trailing edge
-            // Cut-out at the bottom of the fin / rudder (from the elevator hinge) so the one-piece elevator can move up under it.
-            let cut = finCut(elevChord: ef * hsc, rg: rg)
-            let rBot = cut.v(rp.off)
-            func at(_ e: [Vec2]) -> [Vec2] { e.map { Vec2(uH + $0.x, $0.y) } }
-            var upper: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0)] + at(cut.edge(0, uR - uH)) + [Vec2(uR, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
+            // Cut-out at the bottom of the rudder (or fixed fin) so the one-piece elevator can move up under it.
+            let rCut = rg + rudderChord * DesignBuilder.rudderCutSlope
+            var upper: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0)] + (rg > 0 ? [Vec2(uH, rg)] : []) + [Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
                                  Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, noseFront)]
-            var upperMain: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0)] + (rp.off > 0 ? at(cut.edge(0, rp.off)) : []) + [Vec2(uRH, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
+            var upperMain: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
                                      Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, noseFront)]
-            var rudder = at(cut.edge(rp.off, uR - uH)) + [Vec2(uR, finTop), Vec2(uRH, finTop)]
+            var rudder = [Vec2(uH, rg), Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH, finTop)]
             if finTopRadius > 0 {        // rounded fin / rudder top corners
                 let r = rounded([upper, upperMain, rudder], corners: [Vec2(uR, finTop), Vec2(uH - 0.3 * vsc, finTop)], radius: finTopRadius)
                 upper = r[0]; upperMain = r[1]; rudder = r[2]
             }
             let hasRudder = c.hasRudder
             if !hasRudder { upperMain = upper }
-            let rHornV = max(rp.hornV, cut.v(rp.off + 6) + 8)
             let layers = Double(c.fuselageType.webLayers)
             let tw = t * layers
             let upTabs = [uN + max(32, c.noseLength * 0.45), c.rootChord * 0.45, (c.rootChord + finLE) / 2, finLE + vsc * 0.5].filter { $0 + 6 < uH }
@@ -761,7 +703,7 @@ enum DesignBuilder {
             var upperHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: upperMain)]
             if hasRudder {
                 upperHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upperMain))
-                upperHoles.append(hornSlot(at: Vec2(uRH + 6, rHornV)))
+                upperHoles.append(hornSlot(at: Vec2(uH + 6, rg + 6 * DesignBuilder.rudderCutSlope + 8)))
             }
             let lowerHoles: [Hole] = []
             if centralAileron && aw.h > hLowWing - 6 {
@@ -789,7 +731,7 @@ enum DesignBuilder {
             let webX: [Double] = layers > 1 ? [-t / 2, t / 2] : [0]
             let layerNote = layers > 1 ? " · 2 layers laminated" : ""
             var upperFeatures: [Feature] = [.label("TOP", Vec2(c.rootChord * 0.4, hWing * 0.55))] + upperTruss
-            if hasRudder { upperFeatures.insert(.hinge(Vec2(uRH, rp.off > 0 ? rBot : 0), Vec2(uRH, finTop)), at: 0) }
+            if hasRudder { upperFeatures.insert(.hinge(Vec2(uH, 0), Vec2(uH, finTop)), at: 0) }
             parts.append(Part(name: "Fuselage top\(layerNote)", role: .fuselage, outline: upperOut, holes: upperHoles,
                               features: upperFeatures,
                               regions: hasRudder ? [Region(polygon: upperMain, isControl: false), Region(polygon: rudder, isControl: true)] : [],
@@ -806,7 +748,7 @@ enum DesignBuilder {
             if hasRudder {
                 // Rudder horn on the left side of the rudder, servo arm on the left: pushrods never cross.
                 let rBody: SIMD3<Double> = [0, t / 2 + s2.y, s2.x]
-                controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uRH], hornPosition: [-(tw / 2 + 8), t / 2 + rHornV, uRH + 2],
+                controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [-(tw / 2 + 8), t / 2 + 14, uH + 2],
                                                servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
                                                armPosition: armTip(rBody, side: -1), hornAxis: [-1, 0, 0]))
             }
@@ -881,6 +823,7 @@ enum DesignBuilder {
             let stab = TaperedPanel(rootLE: ta, rootChord: hsc, tipChord: hsc * 0.55, sweep: hsc * 0.45, semiSpan: sh)
             let uH = stab.te(0) - 0.4 * hsc
             let rudderChord = max(0.4 * vsc, 18.0)
+            let uR = uH + rudderChord
             if stab.le(wb / 2) < w.te(hw) + 15 { issues.append("Tail arm is too short – the stabiliser would reach the wing.") }
             let rFull = [Vec2(w.te(hw), hw), Vec2(stab.le(wb / 2), wb / 2), Vec2(stab.le(sh), sh), Vec2(stab.te(sh), sh)]
             let rFixed = [Vec2(w.te(hw), hw), Vec2(stab.le(wb / 2), wb / 2), Vec2(stab.le(sh), sh), Vec2(uH, sh)]
@@ -908,21 +851,14 @@ enum DesignBuilder {
             // (top and bottom of the frame follow the fuselage height setting).
             let hFrame = max(wH + DesignBuilder.jetFrameRim, fh * 0.5 - t / 2)
             let rgJ = c.hasRudder ? TaperedPanel.endGap : 0
-            // Rudder hinge behind the elevator horn (fixed fin grows aft), rudder horn above the elevator's travel.
-            let twJ = t * Double(c.fuselageType.webLayers)
-            let rp = c.hasRudder ? rudderPlacement(uH: uH, eHornV: max(armOffset, twJ / 2 + 10), elevChord: 0.4 * hsc, tw: twJ) : (off: 0, hornV: 14)
-            let uRH = uH + rp.off, uR = uRH + rudderChord
-            let cut = finCut(elevChord: 0.4 * hsc, rg: rgJ)                          // cut-out over the elevator
-            let rBot = cut.v(rp.off)
-            let rHornV = max(rp.hornV, cut.v(rp.off + 6) + 8)
-            func at(_ e: [Vec2]) -> [Vec2] { e.map { Vec2(uH + $0.x, $0.y) } }
+            let rCut = rgJ + rudderChord * DesignBuilder.rudderCutSlope        // cut-out over the elevator
             let window: [Vec2] = [Vec2(wF, 0), Vec2(wF, wH), Vec2(wR, wH), Vec2(wR, 0)]
             let topLine: [Vec2] = [Vec2(finLE, hBoom), Vec2(wR + 18, hFrame), Vec2(wF - 18, hFrame), Vec2(c.rootChord * 0.2, max(hCanopy, hFrame)),
                                    Vec2(-0.3 * c.noseLength, hCanopy * 0.85), Vec2(uN + 0.45 * c.noseLength, hCanopy * 0.4), Vec2(uN + 12, 3)]
-            var upper = [Vec2(uN + 12, 0)] + window + [Vec2(uH, 0)] + at(cut.edge(0, uR - uH)) +
-                [Vec2(uR, finTop), Vec2(uH - 0.35 * vsc, finTop)] + topLine
-            var upperMain = [Vec2(uN + 12, 0)] + window + [Vec2(uH, 0)] + (rp.off > 0 ? at(cut.edge(0, rp.off)) : []) + [Vec2(uRH, finTop), Vec2(uH - 0.35 * vsc, finTop)] + topLine
-            var rudder = at(cut.edge(rp.off, uR - uH)) + [Vec2(uR, finTop), Vec2(uRH, finTop)]
+            var upper = [Vec2(uN + 12, 0)] + window + [Vec2(uH, 0)] + (rgJ > 0 ? [Vec2(uH, rgJ)] : []) +
+                [Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH - 0.35 * vsc, finTop)] + topLine
+            var upperMain = [Vec2(uN + 12, 0)] + window + [Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.35 * vsc, finTop)] + topLine
+            var rudder = [Vec2(uH, rgJ), Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH, finTop)]
             if finTopRadius > 0 {
                 let r = rounded([upper, upperMain, rudder], corners: [Vec2(uR, finTop), Vec2(uH - 0.35 * vsc, finTop)], radius: finTopRadius)
                 upper = r[0]; upperMain = r[1]; rudder = r[2]
@@ -963,7 +899,7 @@ enum DesignBuilder {
             var upperHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: upperMain)]
             if c.hasRudder {
                 upperHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upperMain))
-                upperHoles.append(hornSlot(at: Vec2(uRH + 6, rHornV)))
+                upperHoles.append(hornSlot(at: Vec2(uH + 6, rgJ + 6 * DesignBuilder.rudderCutSlope + 8)))
             }
 
             tipWinglets(outline: &wingOutline, main: &wingMain, tipV: [-s, s], tipLE: w.le(s))
@@ -977,7 +913,7 @@ enum DesignBuilder {
                               regions: [Region(polygon: tailMain, isControl: false), Region(polygon: elevator, isControl: true)],
                               instances: [.horizontal(at: .zero)], material: c.material))
             parts.append(Part(name: "Fuselage top\(layerNote)", role: .fuselage, outline: upper, holes: upperHoles,
-                              features: (c.hasRudder ? [.hinge(Vec2(uRH, rp.off > 0 ? rBot : 0), Vec2(uRH, finTop))] : []) +
+                              features: (c.hasRudder ? [.hinge(Vec2(uH, 0), Vec2(uH, finTop))] : []) +
                                         [.label("CANOPY", Vec2(c.rootChord * 0.05, hCanopy * 0.6)), .label("PROP WINDOW", Vec2((wF + wR) / 2 - 18, wH + 3))],
                               regions: c.hasRudder ? [Region(polygon: upperMain, isControl: false), Region(polygon: rudder, isControl: true)] : [],
                               instances: webX.map { .vertical(at: [$0, t / 2, 0]) }, material: c.material))
@@ -992,7 +928,7 @@ enum DesignBuilder {
             if c.hasRudder {
                 // Rudder horn on the left side of the rudder, servo arm on the left: pushrods never cross.
                 let rBody: SIMD3<Double> = [0, t / 2 + s2.y, s2.x]
-                controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uRH], hornPosition: [-(tw / 2 + 8), t / 2 + rHornV, uRH + 2],
+                controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [-(tw / 2 + 8), t / 2 + 14, uH + 2],
                                                servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
                                                armPosition: armTip(rBody, side: -1), hornAxis: [-1, 0, 0]))
             }
@@ -1194,19 +1130,13 @@ enum DesignBuilder {
             if finLE < L * 0.35 { issues.append("Fin chord is too long – the fin would reach the servos. Reduce the fin chord or the elevator depth.") }
             let noseFront = min(hs, max(mountHalf - t / 2 - 0.5, 4))
             let rg = TaperedPanel.endGap
-            // Rudder hinge behind the elevator horn (fixed fin grows aft), rudder horn above the elevator's travel.
-            let eHornVN = max(armOffset, t / 2 + 10)
-            let rp = rudderPlacement(uH: uH, eHornV: eHornVN, elevChord: f * L, tw: t)
-            let uRH = uH + rp.off, uR = uRH + rudderChord
-            // Cut-out at the bottom of the fin / rudder so the elevator can deflect up underneath it.
-            let cut = finCut(elevChord: f * L, rg: rg)
-            let rBot = cut.v(rp.off)
-            let rHornV = max(rp.hornV, cut.v(rp.off + 6) + 8)
-            func at(_ e: [Vec2]) -> [Vec2] { e.map { Vec2(uH + $0.x, $0.y) } }
-            let upper: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0)] + at(cut.edge(0, uR - uH)) + [Vec2(uR, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs),
+            let uR = uH + rudderChord
+            // Cut-out at the bottom of the rudder so the elevator can deflect up underneath it.
+            let rCut = rg + rudderChord * DesignBuilder.rudderCutSlope
+            let upper: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0), Vec2(uH, rg), Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs),
                                  Vec2(uN + 15, hs), Vec2(uN, noseFront)]
-            var upperMain: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0)] + (rp.off > 0 ? at(cut.edge(0, rp.off)) : []) + [Vec2(uRH, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs), Vec2(uN + 15, hs), Vec2(uN, noseFront)]
-            let rudder = at(cut.edge(rp.off, uR - uH)) + [Vec2(uR, finTop), Vec2(uRH, finTop)]
+            var upperMain: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs), Vec2(uN + 15, hs), Vec2(uN, noseFront)]
+            let rudder = [Vec2(uH, rg), Vec2(uR, rCut), Vec2(uR, finTop), Vec2(uH, finTop)]
             let upTabs = [L * 0.06, L * 0.4, finLE + vsc * 0.35].filter { $0 + 6 < uH && $0 - 6 > uN }
             var upperOut = upper
             for tu in upTabs {
@@ -1229,7 +1159,7 @@ enum DesignBuilder {
             let s1 = Vec2(L * 0.12 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
             let upperHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: upperMain),
                               servoCut("Rudder", center: s2, size: webServoCut, in: upperMain),
-                              hornSlot(at: Vec2(uRH + 6, rHornV))]
+                              hornSlot(at: Vec2(uH + 6, rg + 6 * DesignBuilder.rudderCutSlope + 8))]
 
             let us = L * 0.3
             let vs = S * sin(acos(min(1, max(-1, 1 - 2 * us / L)))) * 0.88
@@ -1240,7 +1170,7 @@ enum DesignBuilder {
                               regions: [Region(polygon: mainRegion, isControl: false), Region(polygon: elevator, isControl: true)],
                               instances: [.horizontal(at: .zero)], material: c.material))
             parts.append(Part(name: "Spine & fin", role: .fuselage, outline: upperOut, holes: upperHoles,
-                              features: [.hinge(Vec2(uRH, rp.off > 0 ? rBot : 0), Vec2(uRH, finTop)), .label("SPINE", Vec2(L * 0.3, hs * 0.5))],
+                              features: [.hinge(Vec2(uH, 0), Vec2(uH, finTop)), .label("SPINE", Vec2(L * 0.3, hs * 0.5))],
                               regions: [Region(polygon: upperMain, isControl: false), Region(polygon: rudder, isControl: true)],
                               instances: [.vertical(at: [0, t / 2, 0])], material: c.material))
             parts.append(Part(name: "Keel", role: .fuselage, outline: lowerOut,
@@ -1253,7 +1183,7 @@ enum DesignBuilder {
                                            servoPosition: eBody, area: Poly.area(elevator), chord: f * L * 0.7, servoID: "Elevator",
                                            armPosition: armTip(eBody, side: 1)))
             let rBody: SIMD3<Double> = [0, t / 2 + s2.y, s2.x]
-            controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uRH], hornPosition: [-(t / 2 + 8), t / 2 + rHornV, uRH + 2],
+            controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [-(t / 2 + 8), t / 2 + 14, uH + 2],
                                            servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
                                            armPosition: armTip(rBody, side: -1), hornAxis: [-1, 0, 0]))
             batteryPos = [t / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
