@@ -116,6 +116,8 @@ struct GalleryContent: View {
                     .font(.system(size: 14, weight: .medium)).foregroundStyle(.secondary)
                     .lineLimit(1).minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
+                PillButton(title: "Open Design…", symbol: "folder") { project.openDesign() }
+                    .help("Open a saved .foammaster design (⌘O)")
             }
             Text("Choose a base model to start customising")
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(.tertiary).lineLimit(1)
@@ -191,6 +193,7 @@ struct ModelCard: View {
                 }
                 HStack(spacing: 8) {
                     StatChip(label: "Span", value: "\(Int(preview.design.config.wingspan)) mm", tint: kind.tint)
+                    StatChip(label: "Length", value: "\(Int(preview.design.overallLength.rounded())) mm", tint: kind.tint)
                     StatChip(label: "Total", value: "\(Int(preview.analysis.totalMass.rounded())) g", tint: Theme.orange)
                     StatChip(label: "Load", value: String(format: "%.0f g/dm²", preview.analysis.wingLoading), tint: Theme.violet)
                 }

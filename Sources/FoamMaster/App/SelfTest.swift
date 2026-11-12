@@ -387,6 +387,75 @@ enum SelfTest {
         for b in bad { print("  · " + b) }
     }
 
+    /// Dual tractors: gap between the two prop discs and to the body, defaults and random variants.
+    @MainActor static func dualTest() {
+        for kind in AircraftKind.allCases where kind.allowsDualMotors {
+            var gaps: [Double] = [], bodyGaps: [Double] = [], props: [Double] = []
+            for i in 0..<30 {
+                var c = i == 0 ? kind.defaults : AircraftConfig.random(kind: kind)
+                c.motorLayout = .dualTractor
+                if let r = PowerOptimizer.best(for: c) { c.motor = r.config.motor; c.battery = r.config.battery }
+                gaps.append(2 * c.dualMotorX - 2 * c.propRadius)
+                bodyGaps.append(c.dualMotorX - c.propRadius - c.dualBodyHalfWidth)
+                props.append(c.propRadius * 2)
+            }
+            print(String(format: "   dual %@: prop Ø %.0f–%.0f mm, prop-to-prop gap %.1f–%.1f mm, to body %.1f–%.1f mm", kind.title,
+                         props.min()!, props.max()!, gaps.min()!, gaps.max()!, bodyGaps.min()!, bodyGaps.max()!))
+        }
+    }
+
+    /// Design files: every type (defaults and a random variant) survives save → load unchanged, and a file missing
+    /// newer settings (and with unknown extra keys) still opens with the defaults for the missing ones.
+    @MainActor static func fileTest() {
+        var ok = 0, total = 0
+        for kind in AircraftKind.allCases {
+            for c in [Project.balanced(kind.defaults), Project.randomVariant(like: Project.balanced(kind.defaults))?.0 ?? kind.defaults] {
+                total += 1
+                if let data = try? c.fileData(), let back = try? AircraftConfig.load(from: data), back == c { ok += 1 }
+                else { print("   file round trip FAILED: \(kind.title)") }
+            }
+        }
+        // Old / foreign file: drop some keys, add an unknown one.
+        var legacyOK = false
+        if let data = try? AircraftKind.trainer.defaults.fileData(),
+           var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any], var design = root["design"] as? [String: Any] {
+            design["wingspan"] = 640; design.removeValue(forKey: "finStruts"); design.removeValue(forKey: "tailStruts"); design["someFutureSetting"] = 42
+            root["design"] = design
+            if let d2 = try? JSONSerialization.data(withJSONObject: root), let c = try? AircraftConfig.load(from: d2) {
+                legacyOK = c.wingspan == 640 && c.finStruts == AircraftKind.trainer.defaults.finStruts
+            }
+        }
+        print("   design files: \(ok)/\(total) round trips exact, older file with missing / unknown keys opens \(legacyOK)")
+    }
+
+    /// Randomizer quality: per type, how many random variants (power system chosen automatically, balanced) are
+    /// feasible and how many score 100 – and the most common warnings / errors of the others.
+    @MainActor static func randomTest(count: Int = 40) {
+        for kind in [AircraftKind.trainer, .glider] {
+            let c = Project.balanced(kind.defaults)
+            let t0 = Date(); _ = PowerOptimizer.best(for: c)
+            let t1 = Date(); _ = Analysis(design: DesignBuilder.build(c))
+            print(String(format: "   %@: one power search %.0f ms, one build + analysis %.0f ms", kind.title, t1.timeIntervalSince(t0) * 1000, Date().timeIntervalSince(t1) * 1000))
+        }
+        Project.randomStats = (0, 0, 0)
+        for kind in AircraftKind.allCases {
+            var feasible = 0, perfect = 0, problems: [String: Int] = [:]
+            let t0 = Date()
+            for _ in 0..<count {
+                // Exactly what the Randomize button does.
+                guard let (_, a) = Project.randomVariant(like: Project.balanced(kind.defaults)) else { problems["E none found", default: 0] += 1; continue }
+                if a.feasible { feasible += 1 }
+                if a.feasible && a.score == 100 { perfect += 1 }
+                for ch in a.checks where ch.severity >= .warning { problems["\(ch.severity == .error ? "E" : "W") \(ch.title)\(ch.title == "Geometry conflict" ? ": " + String(ch.detail.prefix(70)) : "")", default: 0] += 1 }
+            }
+            let ms = Date().timeIntervalSince(t0) * 1000 / Double(count)
+            print(String(format: "   (%@: avg %.1f candidates, %.1f passed the quick screen, %.1f power searches per variant)", kind.title,
+                         Double(Project.randomStats.candidates) / Double(count), Double(Project.randomStats.screened) / Double(count), Double(Project.randomStats.searches) / Double(count)))
+            Project.randomStats = (0, 0, 0)
+            print("\(kind.title): feasible \(feasible)/\(count), score 100 \(perfect)/\(count), \(Int(ms)) ms each – " + problems.sorted { $0.value > $1.value }.prefix(6).map { "\($0.value)× \($0.key)" }.joined(separator: "; "))
+        }
+    }
+
     /// Scan: random variants of every type in every foam (struts on Auto). Lists builds that still fail a
     /// stiffness check (wing / fuselage twist / boom bending), with what blocked the strut candidates.
     @MainActor static func strutScan(count: Int = 12) {
@@ -738,6 +807,7 @@ enum SelfTest {
             }
         }
         strutReport(dir)
+        fileTest()
         // Struts versus random variants: how many more builds become feasible.
         do {
             var off = 0, auto = 0, withStruts = 0, sweepMin = Double.greatestFiniteMagnitude, sweepHits: [String] = []

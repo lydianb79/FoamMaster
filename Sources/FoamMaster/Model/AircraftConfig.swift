@@ -323,11 +323,51 @@ struct AircraftConfig: Codable, Equatable {
         }
         let foams: [FoamMaterial] = [.depron3, .depron5, .depron6, .epp5, .epp6, .depron8, .epp8, .depron10, .epp10]
         c.material = foams.filter { $0.thickness <= (kind == .glider ? 5 : 10) }.randomElement()!
-        c.sparEnabled = Bool.random() || c.material.family == .epp
+        c.sparEnabled = true
         c.motor = MotorClass.allCases.filter { $0 != .m2204 }.randomElement()!
         c.battery = BatteryPack.allCases.filter { c.motor.allowedCells.contains($0.cells) }.randomElement()!
         c.servo = ServoClass.allCases.randomElement()!
         c.name = ["Foamhawk", "Swift", "Cumulus", "Hornet", "Dart", "Pixie", "Zephyr", "Kestrel", "Bolt", "Nimbus"].randomElement()! + " " + String(Int.random(in: 10...99))
+        return c
+    }
+}
+
+
+// MARK: Saved designs
+
+import UniformTypeIdentifiers
+
+extension AircraftConfig {
+    static let fileExtension = "foammaster"
+    static var fileType: UTType { UTType(filenameExtension: fileExtension, conformingTo: .json) ?? .json }
+
+    /// Design file: the configuration as pretty-printed JSON (with a format version).
+    func fileData() throws -> Data {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let body = try JSONSerialization.jsonObject(with: try enc.encode(self)) as? [String: Any] ?? [:]
+        return try JSONSerialization.data(withJSONObject: ["foammaster": 1, "design": body], options: [.prettyPrinted, .sortedKeys])
+    }
+
+    /// Reads a design file. Lenient: the saved values are laid over the defaults of the saved type, so files from
+    /// older versions (missing newer settings) still open, and unknown keys are ignored.
+    static func load(from data: Data) throws -> AircraftConfig {
+        let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let saved = root["design"] as? [String: Any] ?? root
+        guard let kindRaw = saved["kind"] as? String, let kind = AircraftKind(rawValue: kindRaw) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        var merged = try JSONSerialization.jsonObject(with: try JSONEncoder().encode(kind.defaults)) as? [String: Any] ?? [:]
+        for (k, v) in saved where merged[k] != nil { merged[k] = v }
+        let mergedData = try JSONSerialization.data(withJSONObject: merged)
+        if let c = try? JSONDecoder().decode(AircraftConfig.self, from: mergedData) { return c }
+        // A value of an unknown kind (e.g. an enum case from a newer version): fall back field by field.
+        var c = kind.defaults
+        for (k, v) in saved {
+            var trial = merged
+            trial[k] = v
+            if let d = try? JSONSerialization.data(withJSONObject: trial), let t = try? JSONDecoder().decode(AircraftConfig.self, from: d) { c = t; merged = trial }
+        }
         return c
     }
 }

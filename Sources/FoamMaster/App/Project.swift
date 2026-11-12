@@ -10,7 +10,14 @@ final class Project: ObservableObject {
         didSet {
             // Keep the fuselage taller than the prop window (jet) – e.g. after a motor change.
             if let c = config, c.fuselageHeight < c.minFuselageHeight { config?.fuselageHeight = c.minFuselageHeight }
-            if let c = config { lastConfig = c }
+            // A change that narrows the battery's room (e.g. one aileron servo centred on the plate) moves the battery
+            // to the nearest position where it still fits.
+            if let c = config {
+                let l = Analysis.batteryLimits(c)
+                let clamped = min(max(c.batteryPosition, l.lowerBound.rounded(.up)), max(l.lowerBound.rounded(.up), l.upperBound.rounded(.down)))
+                if clamped != c.batteryPosition { config?.batteryPosition = clamped }   // (no re-entry: observers do not fire for sets inside didSet)
+            }
+            if let c = config { lastConfig = c } else { fileURL = nil }
             if config != oldValue {
                 rebuild()
                 if let c = config, c.autoPower, Project.airframeChanged(oldValue, c) || oldValue?.autoPower == false { schedulePowerSearch() }
@@ -41,6 +48,7 @@ final class Project: ObservableObject {
     func start(_ kind: AircraftKind, fins: TaillessFins? = nil,
                ailerons: Bool? = nil, rudder: Bool? = nil, aileronServos: Int = 2, motors: MotorLayout = .single,
                winglets: Bool = false) {
+        fileURL = nil                   // a new design – Save asks for a file
         var c = kind.recommended
         if let ailerons { c.ailerons = ailerons && kind.hasTail }
         if let rudder { c.rudder = rudder }
@@ -123,7 +131,7 @@ final class Project: ObservableObject {
 
     /// Puts the battery where the CG lands on target; if that is impossible, tries heavier
     /// (or lighter) compatible packs until the CG can be reached.
-    static func balanced(_ input: AircraftConfig) -> AircraftConfig {
+    nonisolated static func balanced(_ input: AircraftConfig) -> AircraftConfig {
         var c = input
         func place(_ c: inout AircraftConfig) -> Bool {
             let a = Analysis(design: DesignBuilder.build(c))
@@ -185,14 +193,29 @@ final class Project: ObservableObject {
         return min(max(a.requiredBatteryPosition.rounded(), r.lowerBound), r.upperBound)
     }
 
-    /// Random variation of the current type that passes all feasibility checks.
-    func randomize() {
-        guard let current = config else { return }
-        let kind = current.kind
-        var best: AircraftConfig?
-        var bestScore = -1
-        for _ in 0..<120 {
-            var c = AircraftConfig.random(kind: kind)
+    /// Lightest servo class whose torque keeps the 40 % reserve on every surface.
+    nonisolated static func lightestServo(_ input: AircraftConfig) -> AircraftConfig {
+        var c = input
+        for s in ServoClass.allCases.sorted(by: { $0.mass < $1.mass }) {
+            c.servo = s
+            let a = Analysis(design: DesignBuilder.build(c))
+            if !a.checks.contains(where: { $0.category == "Servos" && $0.severity >= .warning }) { return c }
+        }
+        return c
+    }
+
+    /// A random variant of `current`'s type with its options (fuselage, surfaces, layout, struts) that passes every
+    /// check with score 100: random airframe (spar always on) → quick screen with the current power system →
+    /// lightest sufficient servo → automatic power system → balanced. Nil when none was found within `attempts`.
+    /// Diagnostics for the self-test: candidates tried, passed the quick screen, power searches run.
+    nonisolated(unsafe) static var randomStats = (candidates: 0, screened: 0, searches: 0)
+
+    nonisolated static func randomVariant(like current: AircraftConfig, attempts: Int = 400, deadline: TimeInterval = 8) -> (AircraftConfig, Analysis)? {
+        let t0 = Date()
+        var powerSearches = 0
+        for _ in 0..<attempts where Date().timeIntervalSince(t0) < deadline {
+            var c = AircraftConfig.random(kind: current.kind)
+            randomStats.candidates += 1
             c.fuselageType = current.fuselageType
             c.aileronServos = current.aileronServos
             c.ailerons = current.ailerons
@@ -201,13 +224,51 @@ final class Project: ObservableObject {
             c.motorLayout = current.motorLayout
             c.tailWinglets = current.tailWinglets
             c.wingStruts = current.wingStruts; c.tailStruts = current.tailStruts; c.finStruts = current.finStruts
+            c.autoPower = current.autoPower
+            c.sparEnabled = true
+            c.motor = current.motor; c.battery = current.battery; c.servo = current.servo
+            // Quick screen: the airframe itself must be clean (geometry, structure, stability) – power, balance,
+            // servos and flight performance are sorted out below.
+            let d0 = DesignBuilder.build(c)
+            guard d0.geometryIssues.isEmpty else { continue }
+            let a0 = Analysis(design: d0)
+            let airframeProblems = a0.checks.filter { $0.severity >= .warning && !["Power", "Balance", "Servos", "Performance"].contains($0.category) }
+            guard airframeProblems.isEmpty else { continue }
+            randomStats.screened += 1
+            c = lightestServo(c)
+            if c.autoPower, powerSearches < 12 {
+                powerSearches += 1
+                randomStats.searches += 1
+                if let r = PowerOptimizer.best(for: c) { c.motor = r.config.motor; c.battery = r.config.battery }
+                c = lightestServo(c)
+            }
             c = Project.balanced(c)
             let a = Analysis(design: DesignBuilder.build(c))
-            if a.feasible && a.score > bestScore { best = c; bestScore = a.score }
-            if bestScore >= 92 { break }
+            if a.feasible && a.score == 100 { return (c, a) }
         }
-        if let best { config = best; flash("Randomized – feasibility score \(bestScore)") }
-        else { flash("No feasible random variant found – try again") }
+        return nil
+    }
+
+    @Published private(set) var randomizing = false
+
+    /// Random variation of the current type that passes every check (score 100), found in the background.
+    func randomize() {
+        guard let current = config, !randomizing else { return }
+        randomizing = true
+        flash("Randomizing …")
+        Task.detached(priority: .userInitiated) {
+            let found = Project.randomVariant(like: current)
+            await MainActor.run {
+                self.randomizing = false
+                if let (c, _) = found {
+                    var c = c
+                    c.name = current.name.hasPrefix("My ") ? c.name : c.name
+                    self.config = c
+                    self.fileURL = nil          // a new design – Save asks for a file
+                    self.flash("Randomized – all checks passed (score 100)")
+                } else { self.flash("No variant passing every check found this time – press Randomize again") }
+            }
+        }
     }
 
     func flash(_ msg: String) {
@@ -220,6 +281,44 @@ final class Project: ObservableObject {
 
     var safeName: String {
         (config?.name ?? "FoamMaster").replacingOccurrences(of: "[^A-Za-z0-9_-]+", with: "_", options: .regularExpression)
+    }
+
+    // MARK: Save / load designs
+
+    /// File the current design was last saved to / opened from (Save writes there again).
+    @Published private(set) var fileURL: URL?
+
+    func saveDesign(as forceNew: Bool = false) {
+        guard let c = config else { return }
+        var url = forceNew ? nil : fileURL
+        if url == nil {
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [AircraftConfig.fileType]
+            panel.nameFieldStringValue = "\(safeName).\(AircraftConfig.fileExtension)"
+            panel.title = "Save Design"
+            guard panel.runModal() == .OK, let u = panel.url else { return }
+            url = u
+        }
+        guard let url else { return }
+        do {
+            try c.fileData().write(to: url, options: .atomic)
+            fileURL = url
+            flash("Design saved to \(url.lastPathComponent)")
+        } catch { flash("Saving failed: \(error.localizedDescription)") }
+    }
+
+    func openDesign() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [AircraftConfig.fileType, .json]
+        panel.allowsMultipleSelection = false
+        panel.title = "Open Design"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let c = try AircraftConfig.load(from: Data(contentsOf: url))
+            config = c
+            fileURL = url
+            flash("Opened \(url.lastPathComponent)")
+        } catch { flash("Could not open \(url.lastPathComponent): not a FoamMaster design") }
     }
 
     // MARK: Export

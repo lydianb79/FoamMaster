@@ -83,9 +83,13 @@ struct ViewportView: View {
                     .buttonStyle(.plain).help(a.feasible ? "Show analysis" : "Show why it is not feasible and how to fix it")
             }
             Spacer()
-            PillButton(title: "Randomize", symbol: "dice.fill", prominent: true) {
+            PillButton(title: "Save", symbol: "square.and.arrow.down") { project.saveDesign() }
+                .help("Save this design (⌘S) – Save As: ⇧⌘S, open: ⌘O")
+            PillButton(title: project.randomizing ? "Randomizing …" : "Randomize", symbol: project.randomizing ? "hourglass" : "dice.fill", prominent: true) {
                 withAnimation(.spring) { project.randomize() }
             }
+            .disabled(project.randomizing)
+            .help("Random variant of this type that passes every check (score 100)")
         }
         .glass(radius: 18, padding: 10)
     }
@@ -109,6 +113,7 @@ struct ViewportView: View {
             if let a = project.analysis, let c = project.config {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 8)], spacing: 8) {
                     StatChip(label: "Span", value: "\(Int(c.wingspan)) mm")
+                    if let d = project.design { StatChip(label: "Length", value: "\(Int(d.overallLength.rounded())) mm") }
                     StatChip(label: "AUW", value: "\(Int(a.totalMass.rounded())) g", tint: Theme.orange)
                     StatChip(label: "Loading", value: String(format: "%.1f g/dm²", a.wingLoading), tint: Theme.violet)
                     StatChip(label: "CG", value: String(format: "%.0f mm", a.cg.z), tint: Theme.cgColor(a))

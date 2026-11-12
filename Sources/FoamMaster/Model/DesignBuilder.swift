@@ -16,7 +16,12 @@ extension AircraftConfig {
     /// Lateral position of the two motors of a dual-tractor layout: props clear the fuselage/pod and each other.
     /// As far inboard as possible (less roll inertia and less yaw if one motor quits) while the props clear the
     /// fuselage/pod/centre fin by 4 mm.
-    var dualMotorX: Double { propRadius + dualBodyHalfWidth + AircraftConfig.propClearance }
+    var dualMotorX: Double { max(propRadius + dualBodyHalfWidth + AircraftConfig.propClearance, propRadius + minDualPropGap / 2) }
+    /// Clear gap kept between the two prop discs of a dual tractor: 25 mm, or a quarter of the diameter for big props
+    /// (the props' tip vortices and the airflow between them must not interfere).
+    var minDualPropGap: Double { max(25, 0.25 * 2 * propRadius) }
+    /// Gap between the two prop discs as built.
+    var dualPropGap: Double { 2 * dualMotorX - 2 * propRadius }
     /// Half width of whatever sits between the two props (centre fin / keel, or fuselage plate / pod).
     var dualBodyHalfWidth: Double {
         kind.isTailless ? (taillessFins == .centreFin ? material.thickness / 2 + 2 : 4) : fuselagePlateWidth / 2 + 2
@@ -55,6 +60,9 @@ extension AircraftConfig {
     var centralAileronServoU: Double {
         centralElevatorServoU - centralWebServoHalfOpening - 8 - 0.2 - servo.size.l / 2
     }
+    /// Depth of the battery's top edge below the plate centre on the cross-fuselage types: it hangs just below the
+    /// elevator / rudder servos centred on the plate, so it can sit beside them (1 mm under the plate otherwise).
+    var batteryTop: Double { max(material.thickness / 2 + 1, servo.size.w / 2 + 0.8) }
     /// Front edge of the foremost servo (the aileron servo's cutout in the plate).
     var centralServosFrontU: Double { centralAileronServoU - servo.size.l / 2 - 0.2 }
     /// First station behind the spar for the rudder servo (the builder moves it aft if its plate opening needs it).
@@ -795,7 +803,7 @@ enum DesignBuilder {
             }
             let uEC = c.centralElevatorServoU
             var uRC = c.centralRudderServoU
-            if central && c.hasRudder {
+            if c.hasRudder {
                 // Behind the spar; further aft while the opening would cut into a wing-joint notch of the plate.
                 while !Poly.containsAll(Poly.inset(plateOutline, by: 1.5), webServoOpening(uRC, side: -1)) && uRC < c.centralRudderServoU + 30 { uRC += 1 }
             }
@@ -808,12 +816,13 @@ enum DesignBuilder {
                 loNotches.append((aw.u0, aw.u1, aw.h))
                 let aa = ailArmWindow
                 loNotches.append((aa.u0, aa.u1, aa.h))
-                var webServos = [uEC]
-                if c.hasRudder { webServos.append(uRC) }
-                for u in webServos where webDepth > 0 {
-                    upNotches.append((u - svC.l / 2 - 0.2, u + svC.l / 2 + 0.2, webDepth))
-                    loNotches.append((u - svC.l / 2 - 0.2, u + svC.l / 2 + 0.2, webDepth))
-                }
+            }
+            // Elevator and rudder servos centred on the plate – with one or two aileron servos alike.
+            var webServos = [uEC]
+            if c.hasRudder { webServos.append(uRC) }
+            for u in webServos where webDepth > 0 {
+                upNotches.append((u - svC.l / 2 - 0.2, u + svC.l / 2 + 0.2, webDepth))
+                loNotches.append((u - svC.l / 2 - 0.2, u + svC.l / 2 + 0.2, webDepth))
             }
             // Overlapping notches merge into one stepped profile (deepest wins); the bottom edge of the upper half runs
             // aft, the top edge of the lower half forward.
@@ -870,7 +879,7 @@ enum DesignBuilder {
             // Plate slots for both halves (all on the centre line, at different stations).
             var plateHoles = (upTabs + loTabs).map { slot(minU: $0 - 5, maxU: $0 + 5, minV: -tw / 2, maxV: tw / 2) }
             // Elevator horn beside the rudder, outside its sideways swing.
-            var eHornV = max(armOffset, tw / 2 + 10)
+            let eHornV = max(armOffset, tw / 2 + 10)
 
             // Servos: in the upper half above the plate – or, with one aileron servo, all three centred on the plate.
             let sv = c.servo.size
@@ -879,42 +888,24 @@ enum DesignBuilder {
             if central {
                 // Aileron servo standing in the plate: flush L × W cutout (its arm is below the plate).
                 plateHoles.append(servoCut("Aileron", center: Vec2(ailServoU, 0), size: Vec2(sv.l, sv.w), in: plateOutline))
-                // Elevator / rudder servos pass through both webs and a flush opening in the plate (arm pocket on the
-                // shaft side: elevator +x, rudder −x).
-                for (name, u, side) in [("Elevator", uEC, 1.0)] + (hasRudder ? [("Rudder", uRC, -1.0)] : []) {
-                    let open = webServoOpening(u, side: side)
-                    if !Poly.containsAll(plateOutline, open) {
-                        issues.append("The \(name.lowercased()) servo opening does not fit in the fuselage plate – widen the plate or pick a smaller servo.")
-                    }
-                    plateHoles.append(Hole(kind: .servo, polygon: open, note: name))
-                }
                 if c.batteryPosition + c.battery.size.l / 2 + 3 > c.centralServosFrontU {
-                    issues.append("The battery reaches the servos centred on the plate – move it forward (Auto-balance) or use a smaller battery.")
+                    issues.append("The battery reaches the aileron servo centred on the plate – move it forward (Auto-balance) or use a smaller battery.")
                 }
-            } else {
-                upperHoles.append(servoCut("Elevator", center: s1, size: webServoCut, in: upperMain))
-                if hasRudder { upperHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upperMain)) }
             }
+            // Elevator / rudder servos pass through both webs and a flush opening in the plate, shafts on the left (arm
+            // pocket on the −x side): the elevator arm points down, the rudder arm up – the right side stays free for
+            // the battery.
+            for (name, u) in [("Elevator", uEC)] + (hasRudder ? [("Rudder", uRC)] : []) {
+                let open = webServoOpening(u, side: -1)
+                if !Poly.containsAll(plateOutline, open) {
+                    issues.append("The \(name.lowercased()) servo opening does not fit in the fuselage plate – widen the plate or pick a smaller servo.")
+                }
+                plateHoles.append(Hole(kind: .servo, polygon: open, note: name))
+            }
+            _ = s2
             if hasRudder { upperHoles.append(hornSlot(at: Vec2(uH + 6, rHornV))) }
-            // Elevator horn under the elevator. With the servo above the plate its pushrod crosses the plate at a shallow
-            // angle: the horn moves inboard (towards the centre line, not into the web's reach) until the whole crossing
-            // – slot ± 1 mm – lies inside the plate, never beside the narrow boom's edge.
-            let eArmTip = armTip(central ? [0, 0, uEC] : [0, t / 2 + s1.y, s1.x], side: 1, down: central)
-            if !central {
-                func crossingInside(_ hx: Double) -> Bool {
-                    let h3 = SIMD3<Double>(hx, -(t / 2 + 9), uH + 2)
-                    for y in stride(from: t / 2 + 0.5, through: -(t / 2 + 0.5), by: -0.5) {
-                        let p = eArmTip + (h3 - eArmTip) * ((y - eArmTip.y) / (h3.y - eArmTip.y))
-                        for dx in [-2.5, 2.5] where !Poly.contains(plateOutline, Vec2(p.z, p.x + dx)) { return false }
-                    }
-                    return true
-                }
-                var hx = eHornV
-                while !crossingInside(hx) && hx > tw / 2 + 3.5 { hx -= 0.5 }
-                if crossingInside(hx) { eHornV = hx }
-                else { issues.append("The elevator pushrod would cross the plate beside the boom – widen the plate tail or pick a smaller servo.") }
-            }
-            plateHoles.append(hornSlot(at: Vec2(uH + 6, eHornV), under: true))
+            // Elevator horn under the elevator on the left, straight behind the arm (the pushrod runs under the plate).
+            plateHoles.append(hornSlot(at: Vec2(uH + 6, -eHornV), under: true))
             let lowerHoles: [Hole] = []
             if centralAileron && ailArmWindow.h > hLowWing - 6 {
                 issues.append("The lower fuselage is too shallow for the upside-down aileron servo and its arm – increase the fuselage height.")
@@ -948,24 +939,24 @@ enum DesignBuilder {
                               instances: webX.map { .vertical(at: [$0, t / 2, 0]) }, material: c.material))
             parts.append(Part(name: "Fuselage bottom\(layerNote)", role: .fuselage, outline: lowerOut, holes: lowerHoles,
                               features: [.label("BOTTOM", Vec2(c.rootChord * 0.3, -hLowWing * 0.5)),
-                                         .zone(Poly.rect(center: Vec2(c.batteryPosition, -c.battery.size.w / 2 - 1), size: Vec2(c.battery.size.l, c.battery.size.w)), "Battery")] + lowerTruss,
+                                         .zone(Poly.rect(center: Vec2(c.batteryPosition, -(c.batteryTop - t / 2) - c.battery.size.w / 2), size: Vec2(c.battery.size.l, c.battery.size.w)), "Battery")] + lowerTruss,
                               instances: webX.map { .vertical(at: [$0, -t / 2, 0]) }, material: c.material))
 
-            let eBody: SIMD3<Double> = central ? [0, 0, uEC] : [0, t / 2 + s1.y, s1.x]
+            let eBody: SIMD3<Double> = [0, 0, uEC]
             // Centred on the plate the elevator servo's arm points down: its pushrod runs under the plate straight to
             // the horn under the elevator.
-            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [eHornV, -(t / 2 + 9), uH + 2],
+            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [-eHornV, -(t / 2 + 9), uH + 2],
                                            servoPosition: eBody, area: Poly.area(elevator), chord: ef * hsc * 0.9, servoID: "Elevator",
-                                           armPosition: armTip(eBody, side: 1, down: central), hornAxis: [0, -1, 0]))
+                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0]))
             if hasRudder {
                 // Rudder horn on the left side of the rudder, servo arm on the left: pushrods never cross.
-                let rBody: SIMD3<Double> = central ? [0, 0, uRC] : [0, t / 2 + s2.y, s2.x]
+                let rBody: SIMD3<Double> = [0, 0, uRC]
                 controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [-(tw / 2 + 8), t / 2 + rHornV, uH + 2],
                                                servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
                                                armPosition: armTip(rBody, side: -1), hornAxis: [-1, 0, 0]))
             }
 
-            batteryPos = [tw / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
+            batteryPos = [tw / 2 + c.battery.size.h / 2, -c.batteryTop - c.battery.size.w / 2, c.batteryPosition]
         }
 
         // MARK: Sport jet (Ares style) – swept wing, prop spinning in a slot through the wing centre

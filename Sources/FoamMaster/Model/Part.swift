@@ -130,6 +130,21 @@ struct ControlSurface {
 }
 
 /// Complete derived design: parts plus the components that go into it.
+extension Design {
+    /// Overall length of the airframe (mm): nose to the aft-most foam edge (rudder / elevator), plus the
+    /// propeller where it sticks out ahead of the nose or behind the tail.
+    var overallLength: Double {
+        var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
+        for part in parts {
+            for inst in part.instances {
+                for p in part.outline { let z = inst.point(p).z; lo = min(lo, z); hi = max(hi, z) }
+            }
+        }
+        let prop = config.propPlaneZ
+        return max(hi, prop) - min(lo, prop)
+    }
+}
+
 struct Design {
     var config: AircraftConfig
     var parts: [Part]

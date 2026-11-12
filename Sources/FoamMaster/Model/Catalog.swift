@@ -38,7 +38,7 @@ enum FoamMaterial: String, CaseIterable, Identifiable, Codable {
 // MARK: - Electronics
 
 enum MotorClass: String, CaseIterable, Identifiable, Codable {
-    case m0802, m1103, m1104, m1306, m1806, m2204
+    case m0802, m1103, m1104, m1204, m1306, m1404, m1806, m2204
     var id: String { rawValue }
 
     var name: String {
@@ -46,15 +46,17 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
         case .m0802: return "0802 brushless (micro)"
         case .m1103: return "1103 brushless"
         case .m1104: return "1104 brushless"
+        case .m1204: return "1204 brushless"
+        case .m1404: return "1404 brushless"
         case .m1306: return "1306 brushless"
         case .m1806: return "1806 brushless"
         case .m2204: return "2204 brushless"
         }
     }
     /// grams
-    var mass: Double { [.m0802: 3.0, .m1103: 4.5, .m1104: 6.5, .m1306: 11, .m1806: 19, .m2204: 25][self]! }
-    var escMass: Double { [.m0802: 1.5, .m1103: 2.0, .m1104: 3.0, .m1306: 5, .m1806: 7, .m2204: 9][self]! }
-    var allowedCells: ClosedRange<Int> { [.m0802: 1...1, .m1103: 1...2, .m1104: 1...2, .m1306: 2...3, .m1806: 2...3, .m2204: 2...3][self]! }
+    var mass: Double { [.m0802: 3.0, .m1103: 4.5, .m1104: 6.5, .m1204: 7.5, .m1306: 11, .m1404: 8.8, .m1806: 19, .m2204: 25][self]! }
+    var escMass: Double { [.m0802: 1.5, .m1103: 2.0, .m1104: 3.0, .m1204: 4, .m1306: 5, .m1404: 4, .m1806: 7, .m2204: 9][self]! }
+    var allowedCells: ClosedRange<Int> { [.m0802: 1...1, .m1103: 1...2, .m1104: 1...2, .m1204: 2...3, .m1306: 2...3, .m1404: 2...3, .m1806: 2...3, .m2204: 2...3][self]! }
     /// Static thrust in g for a given cell count (manufacturer typical values).
     func thrust(cells: Int) -> Double {
         guard allowedCells.contains(cells) else { return 0 }
@@ -62,6 +64,8 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
         case .m0802: return 45
         case .m1103: return cells == 1 ? 70 : 130
         case .m1104: return cells == 1 ? 90 : 170
+        case .m1204: return cells == 2 ? 200 : 270
+        case .m1404: return cells == 2 ? 230 : 320
         case .m1306: return cells == 2 ? 260 : 360
         case .m1806: return cells == 2 ? 380 : 520
         case .m2204: return cells == 2 ? 450 : 620
@@ -78,16 +82,16 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
         return "\(fmt(propInches)) × \(fmt(pitch))\" \(blades)-blade \(pusher ? "pusher (reverse rotation)" : "tractor")"
     }
     /// Typical maximum current per motor at full throttle (A).
-    var maxCurrent: Double { [.m0802: 3, .m1103: 5, .m1104: 6, .m1306: 10, .m1806: 14, .m2204: 18][self]! }
-    var propInches: Double { [.m0802: 2.5, .m1103: 3, .m1104: 4, .m1306: 5, .m1806: 6, .m2204: 6][self]! }
+    var maxCurrent: Double { [.m0802: 3, .m1103: 5, .m1104: 6, .m1204: 8, .m1306: 10, .m1404: 10, .m1806: 14, .m2204: 18][self]! }
+    var propInches: Double { [.m0802: 2.5, .m1103: 3, .m1104: 4, .m1204: 4, .m1306: 5, .m1404: 4, .m1806: 6, .m2204: 6][self]! }
     /// Mounting pattern of the motor base (typical values of common motors of each size):
-    /// 0802 3 × M1.4 on Ø6.6 · 1103 4 × M1.6 on Ø8.5 · 1104 4 × M2 9 × 9 · 1306 4 × M2 12 × 12 ·
+    /// 0802 3 × M1.4 on Ø6.6 · 1103 4 × M1.6 on Ø8.5 · 1104 / 1204 / 1404 4 × M2 9 × 9 · 1306 4 × M2 12 × 12 ·
     /// 1806 4 × M2 12 × 16 · 2204 4 × M3 16 × 19 (cross patterns give the distances between opposite holes).
     var pattern: MountPattern {
         switch self {
         case .m0802: return MountPattern(holes: 3, a: 6.6, b: 6.6, thread: 1.4)
         case .m1103: return MountPattern(holes: 4, a: 8.5, b: 8.5, thread: 1.6)
-        case .m1104: return MountPattern(holes: 4, a: 9, b: 9, thread: 2)
+        case .m1104, .m1204, .m1404: return MountPattern(holes: 4, a: 9, b: 9, thread: 2)
         case .m1306: return MountPattern(holes: 4, a: 12, b: 12, thread: 2)
         case .m1806: return MountPattern(holes: 4, a: 12, b: 16, thread: 2)
         case .m2204: return MountPattern(holes: 4, a: 16, b: 19, thread: 3)
@@ -99,7 +103,7 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
     var screw: String { pattern.screw }
     /// Shaft / circlip clearance hole in the middle of the firewall.
     var shaftClearance: Double { min(max(2.5, boltCircle * 0.28), min(pattern.a, pattern.b) / 2 - (pattern.headDiameter + 0.4) / 2 - 0.5) }
-    var bellDiameter: Double { [.m0802: 10, .m1103: 14, .m1104: 14, .m1306: 18, .m1806: 23, .m2204: 28][self]! }
+    var bellDiameter: Double { [.m0802: 10, .m1103: 14, .m1104: 14, .m1204: 16, .m1306: 18, .m1404: 18, .m1806: 23, .m2204: 28][self]! }
 }
 
 enum BatteryPack: String, CaseIterable, Identifiable, Codable {

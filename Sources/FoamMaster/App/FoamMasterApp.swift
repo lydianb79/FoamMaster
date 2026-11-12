@@ -9,6 +9,18 @@ struct FoamMasterApp: App {
 
     init() {
         let args = CommandLine.arguments
+        if args.contains("--dualtest") {
+            MainActor.assumeIsolated { SelfTest.dualTest() }
+            exit(0)
+        }
+        if args.contains("--filetest") {
+            MainActor.assumeIsolated { SelfTest.fileTest() }
+            exit(0)
+        }
+        if args.contains("--randomtest") {
+            MainActor.assumeIsolated { SelfTest.randomTest() }
+            exit(0)
+        }
         if args.contains("--horncheck") {
             MainActor.assumeIsolated { SelfTest.hornCheck() }
             exit(0)
@@ -48,6 +60,13 @@ struct FoamMasterApp: App {
             }
             CommandGroup(replacing: .newItem) {
                 Button("New Model…") { project.config = nil }.keyboardShortcut("n")
+                Button("Open Design…") { project.openDesign() }.keyboardShortcut("o")
+            }
+            CommandGroup(replacing: .saveItem) {
+                Button("Save Design") { project.saveDesign() }.keyboardShortcut("s")
+                    .disabled(project.config == nil)
+                Button("Save Design As…") { project.saveDesign(as: true) }.keyboardShortcut("s", modifiers: [.command, .shift])
+                    .disabled(project.config == nil)
             }
             CommandMenu("Theme") {
                 Picker("Theme", selection: $theme) {
@@ -58,7 +77,7 @@ struct FoamMasterApp: App {
             }
             CommandMenu("Model") {
                 Button("Randomize") { project.randomize() }.keyboardShortcut("r", modifiers: [.command, .shift])
-                    .disabled(project.config == nil)
+                    .disabled(project.config == nil || project.randomizing)
                 Button("Export Plans PDF…") { project.exportPlans() }.keyboardShortcut("e")
                     .disabled(project.config == nil)
                 Button("Print Plans…") { project.printPlans() }.keyboardShortcut("p")

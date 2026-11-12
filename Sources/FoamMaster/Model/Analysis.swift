@@ -344,7 +344,8 @@ struct Analysis {
         if c.isDual {
             let clear = c.dualMotorX - r - c.dualBodyHalfWidth
             if clear < AircraftConfig.propClearance - 0.5 { add(.error, "Geometry", "Props hit the fuselage", "Dual motors at ±\(f0(c.dualMotorX)) mm leave \(f1(clear)) mm prop clearance – use smaller props.") }
-            else { add(.ok, "Geometry", "Dual tractor layout", "Motors at ±\(f0(c.dualMotorX)) mm (\(f0(c.dualMotorX * 2)) mm apart) – as far inboard as the \(f1(clear)) mm prop clearance allows, counter-rotating.") }
+            else if c.dualPropGap < c.minDualPropGap - 0.5 { add(.error, "Geometry", "Props too close together", "Only \(f1(c.dualPropGap)) mm between the two props – at least \(f0(c.minDualPropGap)) mm needed. Use smaller props.") }
+            else { add(.ok, "Geometry", "Dual tractor layout", "Motors at ±\(f0(c.dualMotorX)) mm (\(f0(c.dualMotorX * 2)) mm apart): \(f0(c.dualPropGap)) mm between the props, \(f1(clear)) mm to the fuselage, counter-rotating.") }
         } else if c.kind.isTailless {
             let clear = c.motorNotchHalfWidth - r
             add(.ok, "Geometry", "Motor sits in the trailing-edge cutout", "\(f0(c.motorNotchHalfWidth * 2)) × \(f0(c.motorNotchDepth)) mm cutout up to the elevons, \(f1(clear)) mm prop clearance each side.")

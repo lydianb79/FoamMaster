@@ -247,6 +247,8 @@ struct ParameterContent: View {
     }
 
     private func range(_ kp: PartialKeyPath<AircraftConfig>, _ c: AircraftConfig) -> ClosedRange<Double> {
+        // The battery slides only where it physically fits (between nose and the servos / wing).
+        if kp == \AircraftConfig.batteryPosition { let l = Analysis.batteryLimits(c); return l.lowerBound.rounded(.up)...max(l.lowerBound.rounded(.up), l.upperBound.rounded(.down)) }
         let r = AircraftConfig.range(kp, kind: c.kind)
         // The jet's fuselage must stay taller than its prop (window + frame above and below).
         if kp == \AircraftConfig.fuselageHeight, c.minFuselageHeight > r.lowerBound { return c.minFuselageHeight...max(r.upperBound, c.minFuselageHeight + 10) }

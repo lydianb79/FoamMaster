@@ -61,7 +61,7 @@ enum PlanPDF {
         header("Build Plans", d)
         let f1 = { (v: Double) in String(format: "%.1f", v) }
         let rows: [(String, String)] = [
-            ("Wingspan", "\(Int(c.wingspan)) mm"), ("Wing area", "\(f1(a.wingArea / 1e4)) dm²"),
+            ("Wingspan", "\(Int(c.wingspan)) mm"), ("Length", "\(Int(d.overallLength.rounded())) mm"), ("Wing area", "\(f1(a.wingArea / 1e4)) dm²"),
             ("Aspect ratio", f1(a.aspectRatio)), ("All-up weight", "\(Int(a.totalMass.rounded())) g"),
             ("Wing loading", "\(f1(a.wingLoading)) g/dm²"), ("Material", c.material.displayName),
             ("CG (from root LE)", "\(Int(a.recommendedCG.rounded())) mm  (\(Int(a.cgRange.lowerBound))–\(Int(a.cgRange.upperBound)))"),
@@ -71,7 +71,7 @@ enum PlanPDF {
             ("Flight time", "≈\(Int(a.flightTime)) min"), ("Feasibility", a.feasible ? "PASSED (score \(a.score))" : "NOT FEASIBLE")
         ]
         for (i, r) in rows.enumerated() {
-            let y = 42 + Double(i) * 7
+            let y = 42 + Double(i) * 6.0
             PlanDrawer.text(r.0, at: Vec2(15, y), size: 3.6, color: .darkGray)
             PlanDrawer.text(r.1, at: Vec2(70, y), size: 3.6, weight: .semibold)
         }

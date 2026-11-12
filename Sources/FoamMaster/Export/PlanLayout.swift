@@ -280,6 +280,38 @@ enum PlanDrawer {
         ctx.setStrokeColor(inkC.cgColor)
         ctx.setLineWidth(0.4)
         ctx.strokePath()
+        drawDimensions(ctx, pl, color: dark ? NSColor(white: 0.75, alpha: 1) : NSColor(white: 0.35, alpha: 1), paper: dark ? nil : .white)
+    }
+
+    /// Overall dimensions of a part in mm: its length under it and its height beside it (in the 14 mm gap to the
+    /// next part), with extension lines, end ticks and the value.
+    static func drawDimensions(_ ctx: CGContext, _ pl: PlanLayout.Placed, color: NSColor, paper: NSColor?) {
+        let o = pl.origin, sz = pl.size, off = 4.5, tick = 1.2
+        // Length (sheet x) below the part.
+        let y = o.y + sz.y + off
+        line(ctx, Vec2(o.x, o.y + sz.y + 0.8), Vec2(o.x, y + tick), color: color, width: 0.15)
+        line(ctx, Vec2(o.x + sz.x, o.y + sz.y + 0.8), Vec2(o.x + sz.x, y + tick), color: color, width: 0.15)
+        line(ctx, Vec2(o.x, y), Vec2(o.x + sz.x, y), color: color, width: 0.2)
+        for x in [o.x, o.x + sz.x] { line(ctx, Vec2(x - tick, y + tick), Vec2(x + tick, y - tick), color: color, width: 0.3) }
+        let lt = "\(Int(sz.x.rounded())) mm"
+        let lw = NSAttributedString(string: lt, attributes: [.font: NSFont.systemFont(ofSize: 2.4, weight: .semibold)]).size().width
+        if let paper { ctx.saveGState(); ctx.setFillColor(paper.cgColor)
+            ctx.fill(CGRect(x: o.x + sz.x / 2 - lw / 2 - 0.8, y: y - 1.6, width: lw + 1.6, height: 3.2)); ctx.restoreGState() }
+        text(lt, at: Vec2(o.x + sz.x / 2, y - 1.5), size: 2.4, color: color, weight: .semibold, centered: true)
+        // Height (sheet y) beside the part.
+        let x = o.x + sz.x + off
+        line(ctx, Vec2(o.x + sz.x + 0.8, o.y), Vec2(x + tick, o.y), color: color, width: 0.15)
+        line(ctx, Vec2(o.x + sz.x + 0.8, o.y + sz.y), Vec2(x + tick, o.y + sz.y), color: color, width: 0.15)
+        line(ctx, Vec2(x, o.y), Vec2(x, o.y + sz.y), color: color, width: 0.2)
+        for yy in [o.y, o.y + sz.y] { line(ctx, Vec2(x - tick, yy + tick), Vec2(x + tick, yy - tick), color: color, width: 0.3) }
+        let ht = "\(Int(sz.y.rounded())) mm"
+        let hw = NSAttributedString(string: ht, attributes: [.font: NSFont.systemFont(ofSize: 2.4, weight: .semibold)]).size().width
+        ctx.saveGState()
+        ctx.translateBy(x: x, y: o.y + sz.y / 2)
+        ctx.rotate(by: -.pi / 2)
+        if let paper { ctx.setFillColor(paper.cgColor); ctx.fill(CGRect(x: -hw / 2 - 0.8, y: -1.6, width: hw + 1.6, height: 3.2)) }
+        text(ht, at: Vec2(0, -1.5), size: 2.4, color: color, weight: .semibold, centered: true)
+        ctx.restoreGState()
     }
 
     static let strutColor = NSColor(calibratedRed: 0.45, green: 0.25, blue: 0.85, alpha: 1)
