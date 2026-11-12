@@ -166,16 +166,7 @@ struct ParameterContent: View {
                         if let d = project.design, let a = project.analysis {
                             // Full electronics list – the same items as under Materials ▸ Electronics.
                             Divider().opacity(0.3).padding(.vertical, 2)
-                            ForEach(BuildDocs.billOfMaterials(d, a).filter { $0.category == "Electronics" }) { it in
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text(it.quantity).font(.system(size: 10.5, weight: .bold, design: .rounded))
-                                        .foregroundStyle(Theme.accent).frame(width: 52, alignment: .leading)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(it.item).font(.system(size: 11, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
-                                        Text(it.spec).font(.system(size: 9.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                                    }
-                                }
-                            }
+                            ElectronicsList(design: d, analysis: a)
                         }
                     }
                     .glass()
@@ -325,5 +316,41 @@ struct MaterialPicker: View {
                 Spacer()
             }
         }
+    }
+}
+
+
+/// The electronics of the design (motor, ESC, propeller, battery, servos, receiver …) – the same items as under
+/// Materials ▸ Electronics. One column in the side panel, a compact grid under the 3D view.
+struct ElectronicsList: View {
+    let design: Design
+    let analysis: Analysis
+    var columns = 1
+
+    var body: some View {
+        let items = BuildDocs.billOfMaterials(design, analysis).filter { $0.category == "Electronics" }
+        if columns <= 1 {
+            VStack(alignment: .leading, spacing: 10) { ForEach(items) { row($0, compact: false) } }
+        } else {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .topLeading), count: columns),
+                      alignment: .leading, spacing: 8) {
+                ForEach(items) { row($0, compact: true) }
+            }
+        }
+    }
+
+    private func row(_ it: BOMItem, compact: Bool) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(it.quantity).font(.system(size: 10.5, weight: .bold, design: .rounded))
+                .foregroundStyle(Theme.accent).frame(width: compact ? 38 : 52, alignment: .leading)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(it.item).font(.system(size: 11, weight: .semibold)).lineLimit(compact ? 1 : nil)
+                    .fixedSize(horizontal: false, vertical: !compact)
+                Text(it.spec).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(compact ? 2 : nil)
+                    .fixedSize(horizontal: false, vertical: !compact)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help(it.item + " – " + it.spec)
     }
 }
