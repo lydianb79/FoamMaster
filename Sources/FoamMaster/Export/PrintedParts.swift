@@ -80,6 +80,12 @@ enum PrintedParts {
                                    note: "one piece for \(sd.label) L + R: slide over the bottom edge of the fuselage at the \(sd.label) saddle mark and glue\(sd.footDepth > 0 ? " (the rods plug into the foot below the edge)" : "") – rod holes Ø\(String(format: "%.2f", r.diameter + 0.25)) mm at \(deg)° to the foam"))
         }
 
+        if c.hasSparJoiner {
+            let dTxt = c.sparSpec.widthMM == c.sparSpec.widthMM.rounded() ? String(format: "%.0f", c.sparSpec.widthMM) : String(format: "%.1f", c.sparSpec.widthMM)
+            out.append(PrintedPart(name: "Spar joiner · Ø\(dTxt) mm · \(String(format: "%.1f", 2 * c.sparSweepAngle))° V", fileName: "spar_joiner_\(dTxt.replacingOccurrences(of: ".", with: "_"))mm",
+                                   quantity: 1, mesh: sparJoiner(c),
+                                   note: "joins the two spar rods at the wing root (each half swept \(String(format: "%.1f", c.sparSweepAngle))°): glue into the pocket under the root with the open side down, press both rods in from below – \(c.sparJoinerFloorInside ? "flush with the underside" : "its floor stays 0.6 mm proud under the wing (thin foam)")"))
+        }
         out.append(PrintedPart(name: "Battery tray", fileName: "battery_tray_\(c.battery.rawValue)", quantity: 1,
                                mesh: batteryTray(c.battery), note: "velcro base with side rails"))
         // Safety net: every exported STL faces outward (positive signed volume).
@@ -414,6 +420,55 @@ enum PrintedParts {
         let m = strutSaddle(right: r, left: l, dia: dia).transformed { p in let q = rot.act(p - o); return [q.x, -q.z, q.y] }
         let lo = m.bounds.min
         return m.translated([0, 0, -lo.z])
+    }
+
+    // MARK: Spar joiner (swept wings)
+
+    static let joinerWall = 0.8, joinerFloor = 0.6, joinerClearance = 0.15
+    /// Span-wise reach of each joiner arm.
+    static func joinerArmSpan(_ c: AircraftConfig) -> Double { c.sparJoinerArm * cos(atan(abs(c.sparSlope))) }
+    /// Half width of the joiner (rod + clearance + wall) and of its pocket (+0.2 mm).
+    static func joinerHalfWidth(_ c: AircraftConfig) -> Double { c.sparSpec.widthMM / 2 + joinerClearance + joinerWall }
+    static func joinerPocketHalfWidth(_ c: AircraftConfig) -> Double { joinerHalfWidth(c) + 0.2 }
+    /// Centre line of the joiner in (x = span, y = chord from the root spar point): both arms along their rods.
+    static func joinerCentre(_ c: AircraftConfig) -> [Vec2] {
+        let A = joinerArmSpan(c), k = c.sparSlope
+        return [Vec2(-A, k * A), Vec2(0, 0), Vec2(A, k * A)]
+    }
+    /// Polyline offset sideways by `o` (left of the direction of travel), mitred at the corners.
+    static func offsetPolyline(_ pts: [Vec2], by o: Double) -> [Vec2] {
+        guard pts.count > 1 else { return pts }
+        func normal(_ a: Vec2, _ b: Vec2) -> Vec2 { let d = simd_normalize(b - a); return Vec2(-d.y, d.x) }
+        var out: [Vec2] = []
+        for i in pts.indices {
+            if i == 0 { out.append(pts[0] + normal(pts[0], pts[1]) * o); continue }
+            if i == pts.count - 1 { out.append(pts[i] + normal(pts[i - 1], pts[i]) * o); continue }
+            let n1 = normal(pts[i - 1], pts[i]), n2 = normal(pts[i], pts[i + 1])
+            let m = simd_normalize(n1 + n2)
+            out.append(pts[i] + m * (o / max(simd_dot(m, n1), 0.2)))
+        }
+        return out
+    }
+    /// Band between the offsets `a` and `b` of a polyline.
+    static func strip(_ pts: [Vec2], from a: Double, to b: Double) -> [Vec2] {
+        Poly.ccw(offsetPolyline(pts, by: b) + offsetPolyline(pts, by: a).reversed())
+    }
+    /// Light V-shaped U-channel joining the two spar rods of a swept wing at the root: 0.6 mm floor, 0.8 mm walls as
+    /// high as the rod, open on one side so the rods press in. Printed floor down (open side up).
+    static func sparJoiner(_ c: AircraftConfig) -> Mesh3D {
+        let cl = joinerCentre(c), d = c.sparSpec.widthMM
+        let inner = d / 2 + joinerClearance, outer = joinerHalfWidth(c)
+        var m = Mesh3D.extrude(strip(cl, from: -outer, to: outer), z0: 0, z1: joinerFloor)
+        m.append(Mesh3D.extrude(strip(cl, from: inner, to: outer), z0: joinerFloor, z1: joinerFloor + d))
+        m.append(Mesh3D.extrude(strip(cl, from: -outer, to: -inner), z0: joinerFloor, z1: joinerFloor + d))
+        return m
+    }
+    /// Mass of the joiner (PETG, 1.27 g/cm³).
+    static func sparJoinerMass(_ c: AircraftConfig) -> Double {
+        let cl = joinerCentre(c), d = c.sparSpec.widthMM
+        let inner = d / 2 + joinerClearance, outer = joinerHalfWidth(c)
+        let vol = Poly.area(strip(cl, from: -outer, to: outer)) * joinerFloor + 2 * Poly.area(strip(cl, from: inner, to: outer)) * d
+        return vol * 1.27e-3
     }
 
     static func batteryTray(_ b: BatteryPack) -> Mesh3D {

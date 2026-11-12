@@ -513,14 +513,79 @@ enum SelfTest {
         for e in examples { print("  · " + e) }
     }
 
+    /// Spar joiner on every type (default and every setup): angle, rod, floor side, mass, pocket conflicts, STL.
+    @MainActor static func joinerCheck(_ dir: URL) {
+        var conflicts = 0
+        for kind in AircraftKind.allCases {
+            for ch in Project.setupChoices(kind) {
+                let c = Project.feasibleSetup(kind, ch)
+                let d = DesignBuilder.build(c)
+                let issues = d.geometryIssues.filter { $0.contains("joiner") }
+                conflicts += issues.count
+                guard ch.servos == 2 || kind.allowsSingleAileronServo else { continue }
+                let parts = PrintedParts.generate(d)
+                let j = parts.first { $0.name.hasPrefix("Spar joiner") }
+                print("\(kind.title) \(Project.setupKey(kind, ch)): " + (c.hasSparJoiner
+                    ? String(format: "joiner %.1f° V, Ø%.1f, arm %.0f mm, floor %@, foam above %.1f mm, %.2f g, STL vol %.0f mm³", 2 * c.sparSweepAngle, c.sparSpec.widthMM, c.sparJoinerArm,
+                             c.sparJoinerFloorInside ? "inside" : "outside", c.material.thickness - c.sparSpec.widthMM - PrintedParts.joinerFloor, PrintedParts.sparJoinerMass(c), j?.mesh.signedVolume ?? -1)
+                    : String(format: "no joiner (spar %.1f° per half%@)", c.sparSweepAngle, c.sparEnabled ? "" : ", spar off")) + (issues.isEmpty ? "" : " · " + issues.joined(separator: "; ")))
+            }
+        }
+        print("joiner pocket conflicts: \(conflicts)")
+        let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+        guard let r = Renderer(view: view) else { return }
+        for kind in [AircraftKind.jet, .flyingWing, .delta, .trainer] {
+            let c = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+            let d = DesignBuilder.build(c), a = Analysis(design: d)
+            guard c.hasSparJoiner else { continue }
+            r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
+            r.target = SIMD3<Float>(0, Float(-c.material.thickness / 2), Float(c.sparRootU))
+            r.pitch = -1.45; r.yaw = 0; r.zoom = 0.12
+            if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("joiner_\(kind.rawValue).png")) }
+            try? PlanPDF.render(d, a).write(to: dir.appendingPathComponent("plans_\(kind.rawValue).pdf"))
+        }
+    }
+
+    /// Battery side vs pushrods on every type: setups and random balanced variants.
+    @MainActor static func batteryCheck() {
+        var stats: [String: Int] = [:]
+        var examples: [String] = []
+        for kind in AircraftKind.allCases {
+            let cs = Project.setupChoices(kind).map { Project.feasibleSetup(kind, $0) } + (0..<40).map { _ in Project.balanced(AircraftConfig.random(kind: kind)) }
+            for c in cs {
+                let d = DesignBuilder.build(c)
+                guard let b = d.components.first(where: { $0.category == "Battery" }) else { continue }
+                let side = abs(b.position.x) < 0.1 ? "centre" : (b.position.x > 0 ? "right" : "LEFT")
+                let blocked = d.geometryIssues.first { $0.contains("battery is in the way") }
+                let key = "\(kind.title): " + (blocked != nil ? "BLOCKED" : side)
+                stats[key, default: 0] += 1
+                if blocked != nil && examples.count < 6 {
+                    examples.append("\(kind.title) ail \(c.aileronServos) bat \(c.battery.name) at \(Int(c.batteryPosition)) pos \(b.position): \(blocked!)")
+                }
+            }
+        }
+        for (k, v) in stats.sorted(by: { $0.key < $1.key }) { print("   \(k) \(v)") }
+        for e in examples { print("   · " + e) }
+    }
+
     /// Crash fuzz: every type × setup option, every slider of the fix finder swept from its minimum to its maximum
     /// (11 stations, alone and on random airframes), plus random airframes with sliders at their range ends – each
     /// built, analysed and drawn. A crash here is a trap; the count says how much was covered.
     @MainActor static func fuzz() {
-        var builds = 0
+        var builds = 0, batteryLeft = 0, batteryBlocked = 0
+        var leftExamples: [String] = []
+        var blockedKinds: [String: Int] = [:]
         let t0 = Date()
         func run(_ c: AircraftConfig) {
             let d = DesignBuilder.build(c)
+            if let b = d.components.first(where: { $0.category == "Battery" }), b.position.x < -0.1 {
+                batteryLeft += 1
+                if leftExamples.count < 4 { leftExamples.append("\(c.kind.title) ail servos \(c.aileronServos) battery at \(Int(c.batteryPosition))") }
+            }
+            if let iss = d.geometryIssues.first(where: { $0.contains("battery is in the way") }) {
+                batteryBlocked += 1
+                blockedKinds["\(c.kind.title) ail \(c.aileronServos): " + String(iss.prefix(60)), default: 0] += 1
+            }
             let a = Analysis(design: d)
             _ = SceneBuilder.aircraft(d, a, deflection: 1, showCG: true)
             builds += 1
@@ -552,6 +617,8 @@ enum SelfTest {
             }
         }
         print(String(format: "fuzz: %d builds without a crash, %.0f s", builds, Date().timeIntervalSince(t0)))
+        print("   battery moved to the left (pushrod on the right): \(batteryLeft) – e.g. \(leftExamples.joined(separator: "; ")); pushrod in the way on both sides: \(batteryBlocked)")
+        for (k, v) in blockedKinds.sorted(by: { $0.value > $1.value }).prefix(8) { print("      \(v)× \(k)") }
     }
 
     /// Surface preview directions on every type: slider right = right aileron / elevon up, left down, rudder right,

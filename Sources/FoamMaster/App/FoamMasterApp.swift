@@ -9,6 +9,16 @@ struct FoamMasterApp: App {
 
     init() {
         let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--joinercheck") {
+            let dir = URL(fileURLWithPath: i + 1 < args.count ? args[i + 1] : "joinercheck")
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            MainActor.assumeIsolated { SelfTest.joinerCheck(dir) }
+            exit(0)
+        }
+        if args.contains("--batterycheck") {
+            MainActor.assumeIsolated { SelfTest.batteryCheck() }
+            exit(0)
+        }
         if args.contains("--fuzz") {
             MainActor.assumeIsolated { SelfTest.fuzz() }
             exit(0)

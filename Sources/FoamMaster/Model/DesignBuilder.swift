@@ -50,6 +50,19 @@ extension AircraftConfig {
         return w.le(hw) + 0.3 * w.chord(hw)
     }
     var centralSparHalf: Double { sparEnabled ? sparSpec.widthMM / 2 : 1.5 }
+    /// Slope du/dv of the wing spar line (30 % chord) on each wing half: sweep plus taper.
+    var sparSlope: Double { (sweep + 0.3 * (tipChord - rootChord)) / max(semiSpan, 1) }
+    /// Angle between each spar half and the span-wise direction (degrees).
+    var sparSweepAngle: Double { atan(abs(sparSlope)) * 180 / .pi }
+    /// Swept spar line: two rods, one per wing half, meeting at the centre line in a printed spar joiner.
+    var hasSparJoiner: Bool { sparEnabled && !kind.isNutBall && sparSweepAngle > 1 }
+    /// Length of each joiner arm along its rod.
+    var sparJoinerArm: Double { max(25, sparSpec.widthMM * 9) }
+    /// The joiner's floor sits inside the foam (pocket deeper than the groove) when at least 1 mm of foam stays above
+    /// it, otherwise on the underside (0.6 mm proud) and the pocket is only as deep as the groove.
+    var sparJoinerFloorInside: Bool { material.thickness - (sparSpec.widthMM + PrintedParts.joinerFloor) >= 1.0 }
+    /// Root station (u) of the spar line.
+    var sparRootU: Double { 0.3 * rootChord }
     /// Half length of the plate opening for a servo passing through the webs (flush, 0.2 mm each end).
     var centralWebServoHalfOpening: Double { servo.size.l / 2 + 0.2 }
     /// Next to the spar groove, 2 mm clear of it – also its arm pocket (on the aft side of the opening).
@@ -356,7 +369,86 @@ enum DesignBuilder {
             else if c.kind.isJet { buildJet() }
             else if c.kind.isNutBall { buildNutBall() }
             else { buildConventional() }
+            if c.hasSparJoiner { addSparJoinerPocket() }
             addElectronics()
+        }
+
+        /// A tab station on the centre line moved just clear of the spar joiner pocket at the wing root (tabs go through
+        /// slots on the centre line, where the joiner sits).
+        func clearOfJoiner(_ u: Double) -> Double {
+            guard c.hasSparJoiner else { return u }
+            let h = PrintedParts.joinerPocketHalfWidth(c) / cos(atan(abs(c.sparSlope))) + abs(c.sparSlope) * 4 + 1
+            let lo = c.sparRootU - h - 5, hi = c.sparRootU + h + 5
+            guard u > lo && u < hi else { return u }
+            return u - lo < hi - u ? lo : hi
+        }
+
+        /// Pocket for the printed spar joiner on the plan of the part that carries the wing root (one-piece wing or
+        /// fuselage plate) and, where the arms reach that far, on the wing halves.
+        mutating func addSparJoinerPocket() {
+            let u0 = c.sparRootU, k = c.sparSlope
+            let half = PrintedParts.joinerPocketHalfWidth(c)
+            let A = PrintedParts.joinerArmSpan(c)
+            let depth = c.sparJoinerFloorInside ? c.sparSpec.widthMM + PrintedParts.joinerFloor : c.sparSpec.widthMM
+            let label = "SPAR JOINER POCKET \(String(format: "%.1f", depth)) MM DEEP"
+            let toPlan = { (p: Vec2) in Vec2(u0 + p.y, p.x) }
+            if let i = parts.firstIndex(where: { $0.name == "Wing" && $0.role == .wing }) {
+                let pocket = PrintedParts.strip([Vec2(-A, k * A), Vec2(0, 0), Vec2(A, k * A)], from: -half, to: half).map(toPlan)
+                parts[i].features.append(.zone(pocket, label))
+                for h in parts[i].holes {
+                    if Poly.overlaps(h.polygon, pocket) {
+                        issues.append("The spar joiner pocket cuts into the \(h.note.isEmpty ? (h.kind == .slot ? "tab slot" : "cutout") : h.note) at the wing root – move the spar or the cutout.")
+                    }
+                }
+            } else if let i = parts.firstIndex(where: { $0.name == "Fuselage plate" }) {
+                // Across the plate (V through the centre) …
+                let hw = c.fuselagePlateWidth / 2
+                let a = min(A, hw)
+                let pocket = PrintedParts.strip([Vec2(-a, k * a), Vec2(0, 0), Vec2(a, k * a)], from: -half, to: half).map(toPlan)
+                parts[i].features.append(.zone(pocket, label))
+                for h in parts[i].holes where Poly.overlaps(h.polygon, pocket) {
+                    issues.append("The spar joiner pocket cuts into the \(h.note.isEmpty ? "cutout" : h.note) in the fuselage plate – pick a smaller servo or a thinner spar.")
+                }
+                // … and on into each wing half (its plan starts at the plate edge).
+                if A > hw + 1, let j = parts.firstIndex(where: { $0.name == "Wing half" }) {
+                    let seg = PrintedParts.strip([Vec2(hw, k * hw), Vec2(A, k * A)], from: -half, to: half).map { Vec2(u0 + $0.y, $0.x - hw) }
+                    parts[j].features.append(.zone(seg, "JOINER POCKET"))
+                }
+            }
+        }
+
+        /// Battery box (centre ± half size) for a battery hung on the side of a web (x = side face) or lying on top.
+        func batteryBox(at p: SIMD3<Double>) -> (lo: SIMD3<Double>, hi: SIMD3<Double>) {
+            let b = c.battery.size
+            // Drawn 1.2 mm off its anchor point (the printed tray between foam and battery).
+            let q = abs(p.x) > 0.1 ? p + [p.x > 0 ? 1.2 : -1.2, 0, 0] : p + [0, 1.2, 0]
+            let half: SIMD3<Double> = abs(p.x) > 0.1 ? [b.h / 2, b.w / 2, b.l / 2] : [b.w / 2, b.h / 2, b.l / 2]
+            return (q - half, q + half)
+        }
+        /// Pushrods (servo arm tip → horn) passing through the battery box grown by `margin`.
+        func pushrodsThroughBattery(at p: SIMD3<Double>, margin: Double = 1.5) -> [String] {
+            let box = batteryBox(at: p)
+            let lo = box.lo - margin, hi = box.hi + margin
+            return controls.compactMap { ctrl -> String? in
+                let a = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition, b = ctrl.hornPosition
+                let n = max(2, Int(simd_distance(a, b) / 0.5))
+                for i in 0...n {
+                    let q = a + (b - a) * (Double(i) / Double(n))
+                    if q.x > lo.x && q.x < hi.x && q.y > lo.y && q.y < hi.y && q.z > lo.z && q.z < hi.z { return ctrl.name }
+                }
+                return nil
+            }
+        }
+        /// A battery hung on one side of the web moves to the other side when a pushrod would run through it (the
+        /// check runs on every build, so it follows the battery as it is moved to balance).
+        mutating func placeBatteryClearOfPushrods() {
+            guard abs(batteryPos.x) > 0.1 else { return }
+            let hit = pushrodsThroughBattery(at: batteryPos)
+            guard !hit.isEmpty else { return }
+            let other: SIMD3<Double> = [-batteryPos.x, batteryPos.y, batteryPos.z]
+            let hitOther = pushrodsThroughBattery(at: other)
+            if hitOther.isEmpty { batteryPos = other }
+            else { issues.append("The battery is in the way of the \(hit.joined(separator: " / ").lowercased()) pushrod on both sides – move the battery (or the servo) fore or aft.") }
         }
 
         // MARK: Helpers
@@ -399,6 +491,25 @@ enum DesignBuilder {
         /// vertical fuselage web it passes through the web (L×W cutout) like on profile planes.
         /// The arm points up at neutral, so the pushrod runs straight fore-aft to a horn at the same x.
         /// Returns the pushrod end at the arm: arm length from the shaft, on the arm's outer side.
+        /// Plate opening for an elevator / rudder servo centred on a horizontal part (through the vertical web): flush
+        /// around the servo, with a pocket on the shaft side for the arm's hub at plate level. `tw` = web thickness.
+        func centredServoOpening(_ u: Double, side: Double, tw: Double) -> [Vec2] {
+            let sv = c.servo.size, half = c.centralWebServoHalfOpening
+            let body = Poly.rect(center: Vec2(u, 0), size: Vec2(2 * half, 2 * max(sv.h / 2 + 0.2, tw / 2 + 0.2)))
+            return Self.unionRects(body, armPocket(cutCenter: Vec2(u, 0), cutHalfAcross: sv.h / 2 + 0.2, side: side,
+                                                   hubU: u + sv.l / 2 - 5, sheet: t))
+        }
+        /// Notch profile along the plate edge (v = 0) of an upper (sign +1) or lower (sign −1) web for servos centred on
+        /// the plate at the stations `us`, in increasing u.
+        func centredServoNotches(_ us: [Double], sign: Double) -> [Vec2] {
+            let sv = c.servo.size
+            let depth = sv.w / 2 + 0.3 - t / 2
+            guard depth > 0 else { return [] }
+            return us.sorted().flatMap { u -> [Vec2] in
+                let u0 = u - sv.l / 2 - 0.2, u1 = u + sv.l / 2 + 0.2
+                return [Vec2(u0, 0), Vec2(u0, sign * depth), Vec2(u1, sign * depth), Vec2(u1, 0)]
+            }
+        }
         /// Span stations of an aileron (from the half-span station `a0` out to `a1`). Where the wing is too short for
         /// one (e.g. booms far out on a small wing), the design is flagged and a short aileron at the tip keeps the
         /// geometry valid instead of an inverted range.
@@ -660,7 +771,7 @@ enum DesignBuilder {
             let hk = max(12, min(20, c.rootChord * 0.08))
             if k1 - k0 > 40 {
                 var keel = [Vec2(k0, 0), Vec2(k0 + hk, -hk), Vec2(k1, -hk), Vec2(k1, 0)]
-                let tabs = [k0 + (k1 - k0) * 0.3, k0 + (k1 - k0) * 0.75]
+                let tabs = [k0 + (k1 - k0) * 0.3, k0 + (k1 - k0) * 0.75].map(clearOfJoiner).filter { $0 - 6 > k0 && $0 + 6 < k1 }
                 for tu in tabs { keel = Poly.insertTab(keel, at: Vec2(tu, 0), width: 10, height: t) }
                 holes += centreSlots(tabs)
                 parts.append(Part(name: "Centre keel", role: .fuselage, outline: keel,
@@ -877,7 +988,7 @@ enum DesignBuilder {
             if !hasRudder { upperMain = upper }
             let layers = Double(c.fuselageType.webLayers)
             let tw = t * layers
-            let upTabs = [uN + max(32, c.noseLength * 0.45), c.rootChord * 0.45, (c.rootChord + finLE) / 2, finLE + vsc * 0.5].filter { $0 + 6 < uH && clearOfAileronServo($0) }
+            let upTabs = [uN + max(32, c.noseLength * 0.45), c.rootChord * 0.45, (c.rootChord + finLE) / 2, finLE + vsc * 0.5].map(clearOfJoiner).filter { $0 + 6 < uH && clearOfAileronServo($0) }
             var upperOut = upper
             for tu in upTabs { upperOut = Poly.insertTab(upperOut, at: Vec2(tu, 0), width: 10, height: t); upperMain = Poly.insertTab(upperMain, at: Vec2(tu, 0), width: 10, height: t) }
 
@@ -885,7 +996,7 @@ enum DesignBuilder {
             let hLowWing = fh * 0.5 - t / 2
             let lower: [Vec2] = [Vec2(uN, 0), Vec2(uN, -noseFrontLow), Vec2(uN + 0.3 * c.noseLength, -hLowWing), Vec2(c.rootChord * 0.85, -hLowWing),
                                  Vec2(uL, -c.lowerTailHeight), Vec2(uL, 0)] + ailNotch
-            let loTabs = [uN + max(44, c.noseLength * 0.6), c.rootChord * 0.75, (c.rootChord + ta) / 2 + 15].filter { $0 + 6 < uL && clearOfAileronServo($0) }
+            let loTabs = [uN + max(44, c.noseLength * 0.6), c.rootChord * 0.75, (c.rootChord + ta) / 2 + 15].map(clearOfJoiner).filter { $0 + 6 < uL && clearOfAileronServo($0) }
             var lowerOut = lower
             for tu in loTabs { lowerOut = Poly.insertTab(lowerOut, at: Vec2(tu, 0), width: 10, height: t) }
 
@@ -940,7 +1051,7 @@ enum DesignBuilder {
 
             parts.append(Part(name: "Fuselage plate", role: .fuselage, outline: plateOutline, holes: plateHoles,
                               features: [.hinge(Vec2(uH, -sh), Vec2(uH, sh)),
-                                         .label("PLATE", Vec2(c.rootChord * 0.5, 0))] + sparFeatures(w, from: -hw, to: hw),
+                                         .label("PLATE", Vec2(c.rootChord * 0.5, 0))] + (c.hasSparJoiner ? sparFeatures(w, from: -hw, to: 0) + sparFeatures(w, from: 0, to: hw) : sparFeatures(w, from: -hw, to: hw)),
                               regions: [Region(polygon: plateMain, isControl: false), Region(polygon: elevator, isControl: true)],
                               instances: [.horizontal(at: .zero)], material: c.material))
             let webX: [Double] = layers > 1 ? [-t / 2, t / 2] : [0]
@@ -1101,26 +1212,49 @@ enum DesignBuilder {
                     if u < -6 { noseHoles.append(h) } else if u < te0 - 8 { wingHoles.append(h) } else if u > te0 + 8 { tailHoles.append(h) }
                 }
             }
+            // Elevator and rudder servos BEHIND the prop window (their pushrods run aft to the tail without crossing the
+            // spinning prop), centred on the plate as on the cross-fuselage types: half in the upper, half in the lower
+            // fuselage, through flush openings in the wing / tail plate – an opening never straddles their joint.
+            let sv = c.servo.size
+            let open = c.centralWebServoHalfOpening + 1
+            var servoUs: [Double] = []
+            var nextU = wR + 12 + sv.l / 2
+            for _ in 0..<(c.hasRudder ? 2 : 1) {
+                var u = nextU
+                if u - open < te0 + 3 && u + open > te0 - 3 { u = te0 + 3 + open }
+                servoUs.append(u)
+                nextU = u + sv.l + 5
+            }
+            let uEJ = servoUs[0], uRJ = servoUs.count > 1 ? servoUs[1] : uEJ
+            if (servoUs.last ?? 0) + sv.l / 2 + 6 > finLE { issues.append("No room for the elevator and rudder servos between the prop window and the fin – lengthen the tail arm.") }
+            let clearOfServos = { (u: Double) in servoUs.allSatisfy { abs(u - $0) > sv.l / 2 + 7 } }
             let clearOfWindow = { (u: Double) in u + 8 < wF || u - 8 > wR }
-            let upTabs = [uN + 0.6 * c.noseLength, c.rootChord * 0.15, (te0 + ta) / 2, ta + hsc * 0.2].filter { clearOfWindow($0) && $0 + 8 < uH }
-            let loTabs = [uN + 0.7 * c.noseLength, c.rootChord * 0.3, (te0 + uL) / 2].filter { clearOfWindow($0) && $0 + 8 < uL }
+            let upTabs = [uN + 0.6 * c.noseLength, c.rootChord * 0.15, (te0 + ta) / 2, ta + hsc * 0.2].map(clearOfJoiner).filter { clearOfWindow($0) && $0 + 8 < uH && clearOfServos($0) }
+            let loTabs = [uN + 0.7 * c.noseLength, c.rootChord * 0.3, (te0 + uL) / 2].map(clearOfJoiner).filter { clearOfWindow($0) && $0 + 8 < uL && clearOfServos($0) }
+            // Notches for the servos in the plate edges of both fuselage halves (aft of the window).
+            if let i = upper.firstIndex(of: Vec2(wR, 0)) { upper.insert(contentsOf: centredServoNotches(servoUs, sign: 1), at: i + 1) }
+            if let i = upperMain.firstIndex(of: Vec2(wR, 0)) { upperMain.insert(contentsOf: centredServoNotches(servoUs, sign: 1), at: i + 1) }
+            if let i = lower.firstIndex(of: Vec2(wR, 0)) { lower.insert(contentsOf: centredServoNotches(servoUs, sign: -1), at: i + 1) }
             for u in upTabs { upper = Poly.insertTab(upper, at: Vec2(u, 0), width: 10, height: t); upperMain = Poly.insertTab(upperMain, at: Vec2(u, 0), width: 10, height: t) }
             for u in loTabs { lower = Poly.insertTab(lower, at: Vec2(u, 0), width: 10, height: t) }
             lower = Poly.ccw(lower)
             addSlots(upTabs + loTabs)
+            // Elevator horn under the elevator on the left, straight behind the servo arm (the pushrod runs under the plate).
             let eHornV = max(armOffset, tw / 2 + 10)
-            tailHoles.append(hornSlot(at: Vec2(uH + 6, eHornV), under: true))
-
-            // Elevator and rudder servos in the upper fuselage BEHIND the prop window: their pushrods run aft to the
-            // tail without crossing the spinning prop (from the canopy they would pass straight through it).
-            let sv = c.servo.size
-            let s1 = Vec2(wR + 12 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
-            if s2.x + sv.l / 2 + 6 > finLE { issues.append("No room for the elevator and rudder servos between the prop window and the fin – lengthen the tail arm.") }
-            var upperHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: upperMain)]
-            if c.hasRudder {
-                upperHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upperMain))
-                upperHoles.append(hornSlot(at: Vec2(uH + 6, rHornV)))
+            tailHoles.append(hornSlot(at: Vec2(uH + 6, -eHornV), under: true))
+            // Plate openings: elevator servo shaft on the left (arm down), rudder servo shaft on the right (arm up).
+            for (name, u, side) in [("Elevator", uEJ, -1.0)] + (c.hasRudder ? [("Rudder", uRJ, 1.0)] : []) {
+                let o = centredServoOpening(u, side: side, tw: tw)
+                let inWing = Poly.containsAll(wingMain, o), inTail = Poly.containsAll(tailMain, o)
+                if inWing { wingHoles.append(Hole(kind: .servo, polygon: o, note: name)) }
+                else if inTail { tailHoles.append(Hole(kind: .servo, polygon: o, note: name)) }
+                else {
+                    issues.append("The \(name.lowercased()) servo opening does not fit in the wing or tail plate – widen the plate or pick a smaller servo.")
+                    (u < te0 ? { wingHoles.append(Hole(kind: .servo, polygon: o, note: name)) } : { tailHoles.append(Hole(kind: .servo, polygon: o, note: name)) })()
+                }
             }
+            var upperHoles: [Hole] = []
+            if c.hasRudder { upperHoles.append(hornSlot(at: Vec2(uH + 6, rHornV))) }
 
             tipWinglets(outline: &wingOutline, main: &wingMain, tipV: [-s, s], tipLE: w.le(s))
             parts.append(Part(name: "Wing", role: .wing, outline: wingOutline, holes: wingHoles, features: wingFeatures,
@@ -1138,21 +1272,22 @@ enum DesignBuilder {
                               regions: c.hasRudder ? [Region(polygon: upperMain, isControl: false), Region(polygon: rudder, isControl: true)] : [],
                               instances: webX.map { .vertical(at: [$0, t / 2, 0]) }, material: c.material))
             parts.append(Part(name: "Fuselage bottom\(layerNote)", role: .fuselage, outline: lower,
-                              features: [.zone(Poly.rect(center: Vec2(c.batteryPosition, -c.battery.size.w / 2 - 1), size: Vec2(c.battery.size.l, c.battery.size.w)), "Battery")],
+                              features: [.zone(Poly.rect(center: Vec2(c.batteryPosition, -(c.batteryTop - t / 2) - c.battery.size.w / 2), size: Vec2(c.battery.size.l, c.battery.size.w)), "Battery")],
                               instances: webX.map { .vertical(at: [$0, -t / 2, 0]) }, material: c.material))
 
-            let eBody: SIMD3<Double> = [0, t / 2 + s1.y, s1.x]
-            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [eHornV, -(t / 2 + 9), uH + 2],
+            // Elevator servo arm down on the left: the pushrod runs under the plate to the horn, never through the body.
+            let eBody: SIMD3<Double> = [0, 0, uEJ]
+            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [-eHornV, -(t / 2 + 9), uH + 2],
                                            servoPosition: eBody, area: Poly.area(elevator), chord: 0.4 * hsc * 0.8, servoID: "Elevator",
-                                           armPosition: armTip(eBody, side: 1), hornAxis: [0, -1, 0]))
+                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0]))
             if c.hasRudder {
-                // Rudder horn on the left side of the rudder, servo arm on the left: pushrods never cross.
-                let rBody: SIMD3<Double> = [0, t / 2 + s2.y, s2.x]
-                controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [-(tw / 2 + 8), t / 2 + rHornV, uH + 2],
+                // Rudder servo arm up on the right, horn on the right side of the rudder: the pushrods never cross.
+                let rBody: SIMD3<Double> = [0, 0, uRJ]
+                controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [tw / 2 + 8, t / 2 + rHornV, uH + 2],
                                                servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
-                                               armPosition: armTip(rBody, side: -1), hornAxis: [-1, 0, 0]))
+                                               armPosition: armTip(rBody, side: 1), hornAxis: [1, 0, 0]))
             }
-            batteryPos = [tw / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
+            batteryPos = [tw / 2 + c.battery.size.h / 2, -c.batteryTop - c.battery.size.w / 2, c.batteryPosition]
         }
 
         // MARK: Twin boom pusher
@@ -1220,7 +1355,7 @@ enum DesignBuilder {
             let pe = c.rootChord
             var podTop = [Vec2(uN, 0), Vec2(pe, 0), Vec2(pe, hp * 0.45), Vec2(c.rootChord * 0.55, hp), Vec2(uN + 0.35 * c.noseLength, hp * 0.9), Vec2(uN, hp * 0.5)]
             var podBot = [Vec2(uN, 0), Vec2(uN, -hp * 0.5), Vec2(uN + 0.3 * c.noseLength, -hp), Vec2(c.rootChord * 0.6, -hp), Vec2(pe, -hp * 0.4), Vec2(pe, 0)]
-            let topTabs = [uN * 0.5, c.rootChord * 0.3, c.rootChord * 0.75], botTabs = [uN * 0.3, c.rootChord * 0.5]
+            let topTabs = [uN * 0.5, c.rootChord * 0.3, c.rootChord * 0.75].map(clearOfJoiner), botTabs = [uN * 0.3, c.rootChord * 0.5].map(clearOfJoiner)
             for tu in topTabs { podTop = Poly.insertTab(podTop, at: Vec2(tu, 0), width: 10, height: t) }
             for tu in botTabs { podBot = Poly.insertTab(podBot, at: Vec2(tu, 0), width: 10, height: t) }
             wingHoles += centreSlots(topTabs.filter { $0 > 0 } + botTabs.filter { $0 > 0 })
@@ -1355,11 +1490,18 @@ enum DesignBuilder {
             let cut = finCut(elevChord: f * L, rg: rg)
             let cutEdge = cut.edge(0, uR - uH).map { Vec2(uH + $0.x, $0.y) }
             let rHornV = max(rudderHornV(uH: uH, elevChord: f * L, tw: t), cut.v(6) + 8)
-            let upper: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0)] + cutEdge + [Vec2(uR, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs),
+            // Elevator and rudder servos just ahead of the CG, centred on the disc as on the cross-fuselage types: half in
+            // the spine, half in the keel, through flush openings in the disc.
+            let sv = c.servo.size
+            let uEN = L * 0.12 + sv.l / 2, uRN = uEN + sv.l + 5
+            let servoUs = [uEN, uRN]
+            let upNotch = centredServoNotches(servoUs, sign: 1)
+            let upper: [Vec2] = [Vec2(uN, 0)] + upNotch + [Vec2(uH, 0)] + cutEdge + [Vec2(uR, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs),
                                  Vec2(uN + 15, hs), Vec2(uN, noseFront)]
-            var upperMain: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs), Vec2(uN + 15, hs), Vec2(uN, noseFront)]
+            var upperMain: [Vec2] = [Vec2(uN, 0)] + upNotch + [Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs), Vec2(uN + 15, hs), Vec2(uN, noseFront)]
+            let clearOfServos = { (u: Double) in servoUs.allSatisfy { abs(u - $0) > sv.l / 2 + 7 } }
             let rudder = cutEdge + [Vec2(uR, finTop), Vec2(uH, finTop)]
-            let upTabs = [L * 0.06, L * 0.4, finLE + vsc * 0.35].filter { $0 + 6 < uH && $0 - 6 > uN }
+            let upTabs = [L * 0.06, L * 0.4, finLE + vsc * 0.35].filter { $0 + 6 < uH && $0 - 6 > uN && clearOfServos($0) }
             var upperOut = upper
             for tu in upTabs {
                 upperOut = Poly.insertTab(upperOut, at: Vec2(tu, 0), width: 10, height: t)
@@ -1367,21 +1509,24 @@ enum DesignBuilder {
             }
             let noseFrontLow = min(hk, max(mountHalf - t / 2 - 0.5, 4))
             let kEnd = L * 0.62
-            let lower: [Vec2] = [Vec2(uN, 0), Vec2(uN, -noseFrontLow), Vec2(uN + 20, -hk), Vec2(L * 0.45, -hk), Vec2(kEnd, 0)]
-            let loTabs = [L * 0.12, L * 0.36].filter { $0 + 6 < kEnd }
+            // (top edge runs from the keel end forward: notches in decreasing u)
+            let loNotch = Array(centredServoNotches(servoUs, sign: -1).reversed())
+            let lower: [Vec2] = [Vec2(uN, 0), Vec2(uN, -noseFrontLow), Vec2(uN + 20, -hk), Vec2(L * 0.45, -hk), Vec2(kEnd, 0)] + loNotch
+            let loTabs = [L * 0.12, L * 0.36].filter { $0 + 6 < kEnd && clearOfServos($0) }
             var lowerOut = lower
             for tu in loTabs { lowerOut = Poly.insertTab(lowerOut, at: Vec2(tu, 0), width: 10, height: t) }
 
             var discHoles = centreSlots(upTabs + loTabs)
+            // Elevator horn under the elevator on the left, straight behind the servo arm (the pushrod runs under the disc).
             let eHornV = max(armOffset, t / 2 + 10)
-            discHoles.append(hornSlot(at: Vec2(uH + 6, eHornV), under: true))
-
-            // Servos in the spine just ahead of the CG.
-            let sv = c.servo.size
-            let s1 = Vec2(L * 0.12 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
-            let upperHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: upperMain),
-                              servoCut("Rudder", center: s2, size: webServoCut, in: upperMain),
-                              hornSlot(at: Vec2(uH + 6, rHornV))]
+            discHoles.append(hornSlot(at: Vec2(uH + 6, -eHornV), under: true))
+            // Disc openings: elevator servo shaft on the left (arm down), rudder servo shaft on the right (arm up).
+            for (name, u, side) in [("Elevator", uEN, -1.0), ("Rudder", uRN, 1.0)] {
+                let o = centredServoOpening(u, side: side, tw: t)
+                if !Poly.containsAll(mainRegion, o) { issues.append("The \(name.lowercased()) servo opening does not fit in the disc – pick a smaller servo.") }
+                discHoles.append(Hole(kind: .servo, polygon: o, note: name))
+            }
+            let upperHoles = [hornSlot(at: Vec2(uH + 6, rHornV))]
 
             let us = L * 0.3
             let vs = S * sin(acos(min(1, max(-1, 1 - 2 * us / L)))) * 0.88
@@ -1397,18 +1542,20 @@ enum DesignBuilder {
                               instances: [.vertical(at: [0, t / 2, 0])], material: c.material))
             parts.append(Part(name: "Keel", role: .fuselage, outline: lowerOut,
                               features: [.label("KEEL", Vec2(L * 0.3, -hk * 0.5)),
-                                         .zone(Poly.rect(center: Vec2(c.batteryPosition, -c.battery.size.w / 2 - 1), size: Vec2(c.battery.size.l, c.battery.size.w)), "Battery")],
+                                         .zone(Poly.rect(center: Vec2(c.batteryPosition, -(c.batteryTop - t / 2) - c.battery.size.w / 2), size: Vec2(c.battery.size.l, c.battery.size.w)), "Battery")],
                               instances: [.vertical(at: [0, -t / 2, 0])], material: c.material))
 
-            let eBody: SIMD3<Double> = [0, t / 2 + s1.y, s1.x]
-            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [eHornV, -(t / 2 + 9), uH + 2],
+            // Elevator servo arm down on the left, rudder servo arm up on the right: the pushrods never cross or pass
+            // through the disc.
+            let eBody: SIMD3<Double> = [0, 0, uEN]
+            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [-eHornV, -(t / 2 + 9), uH + 2],
                                            servoPosition: eBody, area: Poly.area(elevator), chord: f * L * 0.7, servoID: "Elevator",
-                                           armPosition: armTip(eBody, side: 1), hornAxis: [0, -1, 0]))
-            let rBody: SIMD3<Double> = [0, t / 2 + s2.y, s2.x]
-            controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [-(t / 2 + 8), t / 2 + rHornV, uH + 2],
+                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0]))
+            let rBody: SIMD3<Double> = [0, 0, uRN]
+            controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [t / 2 + 8, t / 2 + rHornV, uH + 2],
                                            servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
-                                           armPosition: armTip(rBody, side: -1), hornAxis: [-1, 0, 0]))
-            batteryPos = [t / 2 + c.battery.size.h / 2, -t / 2 - c.battery.size.w / 2 - 1, c.batteryPosition]
+                                           armPosition: armTip(rBody, side: 1), hornAxis: [1, 0, 0]))
+            batteryPos = [t / 2 + c.battery.size.h / 2, -c.batteryTop - c.battery.size.w / 2, c.batteryPosition]
         }
 
         mutating func nutBallWinglets(holes: inout [Hole], features: inout [Feature], uHinge: Double) {
@@ -1459,6 +1606,7 @@ enum DesignBuilder {
                 components.append(MassItem(name: "Nose protector (printed)", mass: c.kind.isTailless ? 1.0 : 2.0, position: [0, 0, z], category: "Printed"))
             }
             components.append(MassItem(name: "Wiring & connectors", mass: c.isDual ? 4.5 : 3, position: [0, 0, c.rootChord * 0.15], category: "Radio"))
+            placeBatteryClearOfPushrods()
             components.append(MassItem(name: c.battery.name, mass: c.battery.mass, position: batteryPos, category: "Battery"))
 
             var seenServos = Set<String>()
@@ -1476,6 +1624,10 @@ enum DesignBuilder {
                 // Top and bottom strip.
                 components.append(MassItem(name: "\(c.sparSpec.name) wing spar", mass: c.sparLength / 1000 * c.sparSpec.gramsPerMeter,
                                            position: [0, 0, c.rootChord * 0.3 + c.sweep * 0.45], category: "Hardware"))
+                if c.hasSparJoiner {
+                    components.append(MassItem(name: "Spar joiner (printed)", mass: PrintedParts.sparJoinerMass(c),
+                                               position: [0, -t / 2 + c.sparSpec.widthMM / 2, c.sparRootU], category: "Printed"))
+                }
             }
             if trussLength > 0 {
                 components.append(MassItem(name: "Carbon truss strips 3 × 0.5 mm", mass: trussLength / 1000 * CarbonSpar.flat3x05.gramsPerMeter,

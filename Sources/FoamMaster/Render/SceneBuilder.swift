@@ -161,10 +161,12 @@ enum SceneBuilder {
                     scene.label = "Battery – \(c.battery.name), \(Int(c.battery.mass)) g"
                     scene.addMesh(.box(min: q - [s.w, s.h, s.l] / 2, max: q + [s.w, s.h, s.l] / 2), color: Palette.battery)
                 } else {
+                    // On the side of the web – the right side, or the left where a pushrod runs on the right.
+                    let side: Double = p.x >= 0 ? 1 : -1
                     let tray = Mesh3D.box(min: [-0.6, -s.w / 2 - 1.2, -s.l / 2 - 2], max: [0.6, s.w / 2 + 1.2, s.l / 2 + 2])
                     scene.label = "Battery tray (printed)"
-                    scene.addMesh(tray.translated([tw / 2 + 0.6, p.y, p.z]), color: Palette.printed)
-                    let q = p + [1.2, 0, 0]
+                    scene.addMesh(tray.translated([side * (tw / 2 + 0.6), p.y, p.z]), color: Palette.printed)
+                    let q = p + [side * 1.2, 0, 0]
                     scene.label = "Battery – \(c.battery.name), \(Int(c.battery.mass)) g"
                     scene.addMesh(.box(min: q - [s.h, s.w, s.l] / 2, max: q + [s.h, s.w, s.l] / 2), color: Palette.battery)
                 }
@@ -211,6 +213,17 @@ enum SceneBuilder {
                 let z0 = c.kind.isTailless ? 0 : -c.noseLength
                 scene.label = c.kind.isTailless ? "Nose protector (printed) – apex guard" : "Nose protector (printed) – + channel cap"
                 scene.addMesh(PrintedParts.noseProtector(for: c).translated([0, 0, z0]), color: Palette.printed)
+            case "Printed" where item.name.hasPrefix("Spar joiner"):
+                // Under the wing root, open side down: walls around the rods, floor inside the foam (or just below it).
+                let d = c.sparSpec.widthMM, f = PrintedParts.joinerFloor
+                let mesh = PrintedParts.sparJoiner(c)
+                let u0 = c.sparRootU
+                // (drawn 0.2 mm proud of the underside so it does not flicker with the foam, like the spar rods)
+                let placed = c.sparJoinerFloorInside
+                    ? SceneBuilder.placed(mesh, origin: [0, -t / 2 + d + f - 0.2, u0], [1, 0, 0], [0, 0, 1], [0, -1, 0])
+                    : SceneBuilder.placed(mesh, origin: [0, -t / 2 - f, u0], [1, 0, 0], [0, 0, 1], [0, 1, 0])
+                scene.label = "Spar joiner (printed) – joins the two Ø\(String(format: "%.1f", d)) mm spar rods, \(String(format: "%.1f", 2 * c.sparSweepAngle))° V"
+                scene.addMesh(placed, color: Palette.printed)
             case "Printed":
                 continue   // horns are drawn with their linkages
             case "Hardware" where item.name.hasPrefix("Tail booms"):

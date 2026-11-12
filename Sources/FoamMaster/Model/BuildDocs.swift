@@ -28,9 +28,12 @@ enum BuildDocs {
 
         if c.sparEnabled {
             let spar = c.sparSpec
-            let pieces = c.kind.hasFuselage ? 1 : (c.sweep > 15 && c.kind.isTailless ? 2 : 1)
+            let pieces = c.hasSparJoiner ? 2 : 1
             let len = ceil(c.sparLength / Double(pieces) / 10) * 10
-            items.append(BOMItem(category: "Carbon", item: spar.name, spec: "Wing spar, \(Int(len)) mm per piece – glued into a groove under the wing along the 30 % chord line (green band on the plan), bottom flush", quantity: "\(pieces)×"))
+            items.append(BOMItem(category: "Carbon", item: spar.name, spec: "Wing spar, \(Int(len)) mm per piece – glued into a groove under the wing along the 30 % chord line (green band on the plan), bottom flush\(c.hasSparJoiner ? "; one per wing half, joined at the root by the printed spar joiner" : "")", quantity: "\(pieces)×"))
+            if c.hasSparJoiner {
+                items.append(BOMItem(category: "Printed", item: "Spar joiner", spec: "V channel for both rods at the wing root (\(String(format: "%.1f", 2 * c.sparSweepAngle))°), \(String(format: "%.1f", PrintedParts.sparJoinerMass(c))) g – STL", quantity: "1×"))
+            }
         }
         let pushLen = d.controls.reduce(0) { $0 + simd_distance($1.servoPosition, $1.hornPosition) }
         items.append(BOMItem(category: "Carbon", item: "Carbon rod Ø1 mm (pushrods)", spec: "Total \(Int(ceil(pushLen / 10) * 10 + 40)) mm", quantity: "\(d.controls.count)×"))
@@ -92,10 +95,10 @@ enum BuildDocs {
             BuildStep(title: "Prepare control surfaces", text: "Cut free each surface along the solid side cuts. On the dashed hinge line bevel the lower edge 45°, then hinge with tape on the top side. Check for at least ±30° deflection.\(c.kind.isTailless ? "" : c.kind.isTwinBoom ? " The elevator is one piece between the two fins." : " The elevator is one piece across the whole tail; the fin and rudder's lower edge is cut back so the elevator can move up underneath it – check elevator and rudder together at full throw.")", symbol: "rectangle.split.2x1")
         ]
         if c.sparEnabled {
-            s.append(BuildStep(title: "Install the carbon spar", text: "Mark the green spar band on the underside of the wing and cut a groove \(String(format: "%.1f", c.sparSpec.widthMM)) mm wide and \(String(format: "%.1f", c.sparSpec.widthMM)) mm deep along it (two knife cuts, peel out the strip, or melt it with a hot rod). Fill with foam-safe glue and press in the \(c.sparSpec.name) flush with the surface. Wipe off excess glue and let cure flat.", symbol: "line.diagonal"))
+            s.append(BuildStep(title: "Install the carbon spar", text: "Mark the green spar band on the underside of the wing and cut a groove \(String(format: "%.1f", c.sparSpec.widthMM)) mm wide and \(String(format: "%.1f", c.sparSpec.widthMM)) mm deep along it (two knife cuts, peel out the strip, or melt it with a hot rod). Fill with foam-safe glue and press in the \(c.sparSpec.name) flush with the surface. Wipe off excess glue and let cure flat." + (c.hasSparJoiner ? " Swept wing: the spar is two rods, one per wing half, that meet at the centre line. At the root cut the V-shaped joiner pocket marked on the plan (\(String(format: "%.1f", 2 * PrintedParts.joinerPocketHalfWidth(c))) mm wide, \(String(format: "%.1f", c.sparJoinerFloorInside ? c.sparSpec.widthMM + PrintedParts.joinerFloor : c.sparSpec.widthMM)) mm deep), glue the printed spar joiner in with its open side down, then press both rods into its arms and on along their grooves." : ""), symbol: "line.diagonal"))
         }
         if c.kind.hasFuselage {
-            s.append(BuildStep(title: "Join the wing halves to the fuselage plate", text: "Push the wing-half tabs into the notches in the plate sides and glue with foam-safe CA. Then cut the spar groove underneath, straight across both wing halves and the plate, and glue in the one-piece carbon rod – it runs across the plate and locks the joint.", symbol: "rectangle.split.3x1"))
+            s.append(BuildStep(title: "Join the wing halves to the fuselage plate", text: "Push the wing-half tabs into the notches in the plate sides and glue with foam-safe CA. " + (c.hasSparJoiner ? "Then cut the spar grooves underneath – the swept wing's spar is two rods meeting in a V at the centre of the plate – and the joiner pocket across the plate and both wing roots; glue the printed spar joiner in (open side down) and press both rods in – the joiner bridges the plate and locks the joint." : "Then cut the spar groove underneath, straight across both wing halves and the plate, and glue in the one-piece carbon rod – it runs across the plate and locks the joint."), symbol: "rectangle.split.3x1"))
             s.append(BuildStep(title: "Fuselage top & bottom halves", text: "Press the tabs of the top half into the centre-line slots of the plate, then the bottom half from below. Check both halves are exactly 90° to the plate and in line – this + section is what makes the fuselage stiff.", symbol: "plus"))
         }
         if c.kind.isJet {

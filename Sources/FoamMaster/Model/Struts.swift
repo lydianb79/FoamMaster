@@ -543,12 +543,13 @@ struct StrutPlanner {
             case "Battery":
                 let s = c.battery.size
                 let size: SIMD3<Double> = c.kind.isTailless ? [s.w, s.h, s.l] : [s.h, s.w, s.l]
-                let q = c.kind.isTailless ? p + [0, 1.2, 0] : p + [1.2, 0, 0]
+                let side: Double = p.x >= 0 ? 1 : -1
+                let q = c.kind.isTailless ? p + [0, 1.2, 0] : p + [side * 1.2, 0, 0]
                 // The struts are re-planned on every build from the balanced battery position: keep that spot free
                 // plus ±15 mm for fine-tuning the balance on the real model (within the physical limits).
                 let z0 = max(p.z - 15, lim.lowerBound) - s.l / 2 - 2, z1 = min(p.z + 15, lim.upperBound) + s.l / 2 + 2
                 obstacles.append((SIMD3(q.x - size.x / 2 - 1.5, q.y - size.y / 2 - 1, z0), SIMD3(q.x + size.x / 2 + 1, q.y + size.y / 2 + 1, z1), "battery travel"))
-                obstacles.append((SIMD3(tw / 2, q.y - size.y / 2 - 1, z0), SIMD3(tw / 2 + 1.5, q.y + size.y / 2 + 1, z1), "battery tray"))
+                obstacles.append((SIMD3(side > 0 ? tw / 2 : -tw / 2 - 1.5, q.y - size.y / 2 - 1, z0), SIMD3(side > 0 ? tw / 2 + 1.5 : -tw / 2, q.y + size.y / 2 + 1, z1), "battery tray"))
             case "Power" where item.name.contains("brushless"):
                 let r = c.motor.bellDiameter / 2 + 3
                 obstacles.append((SIMD3(p.x - r, -r, min(c.firewallZ, c.motorZ) - c.motorLength - 3),
