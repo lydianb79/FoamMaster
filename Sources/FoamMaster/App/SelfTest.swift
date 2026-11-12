@@ -257,7 +257,8 @@ enum SelfTest {
             let d = DesignBuilder.build(Project.balanced(kind.defaults))
             let slots = d.parts.flatMap { p in p.holes.filter { $0.note == "pushrod" }.map { _ in p.name } }
             let under = d.parts.contains { $0.holes.contains { $0.note == "horn under" } }
-            print("  \(kind.title): elevator horn \(under ? "under" : "on top"), pushrod slots: \(slots.isEmpty ? "none" : slots.joined(separator: ", "))")
+            let rud = d.controls.first { $0.name.hasPrefix("Rudder") }
+            print("  \(kind.title): elevator horn \(under ? "under" : "on top"), pushrod slots: \(slots.isEmpty ? "none" : slots.joined(separator: ", "))\(rud.map { String(format: ", rudder horn %.1f mm up, rudder area %.0f mm²", $0.hornPosition.y, $0.area) } ?? "")")
         }
         print("horn check: \(total) builds, \(bad.count) collisions / < 1 mm")
         var pairs: [String: Int] = [:]
