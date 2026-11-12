@@ -120,11 +120,6 @@ struct ViewportView: View {
                     StatChip(label: "Thrust/W", value: String(format: "%.2f", a.thrustToWeight), tint: a.thrustToWeight >= c.kind.minThrustToWeight ? Theme.good : Theme.warn)
                     StatChip(label: "Flight", value: String(format: "≈%.0f min", a.flightTime), tint: Theme.good)
                 }
-                // Electronics of this design under the 3D view (same list as in the Electronics panel).
-                if let d = project.design {
-                    Divider().opacity(0.3)
-                    ElectronicsList(design: d, analysis: a, columns: 4)
-                }
             }
         }
         .glass(radius: 18, padding: 12)
