@@ -228,7 +228,10 @@ enum PlanDrawer {
                 ctx.setStrokeColor(hornColor.cgColor); ctx.setLineWidth(0.3)
                 ctx.strokeEllipse(in: CGRect(x: hole.x - 1, y: hole.y - 1, width: 2, height: 2))
                 ctx.restoreGState()
-                text("HORN", at: map(Vec2(c.x + 2, c.y)) + Vec2(0, 3.4), size: 2.2, color: hornColor, weight: .bold, centered: true)
+                text(h.note == "horn under" ? "HORN UNDER" : "HORN", at: map(Vec2(c.x + 2, c.y)) + Vec2(0, 3.4), size: 2.2, color: hornColor, weight: .bold, centered: true)
+            }
+            if h.kind == .slot && h.note == "pushrod" {
+                text("PUSHROD", at: map(Poly.centroid(h.polygon)) + Vec2(0, 3.2), size: 2.0, color: hornColor, weight: .bold, centered: true)
             }
         }
 

@@ -9,6 +9,10 @@ struct FoamMasterApp: App {
 
     init() {
         let args = CommandLine.arguments
+        if args.contains("--horncheck") {
+            MainActor.assumeIsolated { SelfTest.hornCheck() }
+            exit(0)
+        }
         if args.contains("--strutscan") {
             MainActor.assumeIsolated { SelfTest.strutScan() }
             exit(0)

@@ -145,6 +145,7 @@ enum DesignBuilder {
         c.fuselageHeight = max(c.fuselageHeight, c.minFuselageHeight)
         var b = Builder(c: c)
         b.run()
+        addPushrodSlots(&b.parts, controls: b.controls)
         var d = Design(config: c, parts: b.parts, components: b.components, controls: b.controls,
                        servoCutouts: b.servoCutouts, geometryIssues: b.issues, trussLength: b.trussLength)
         if c.struts != .off { addStruts(&d) }
@@ -153,6 +154,31 @@ enum DesignBuilder {
 
     /// Carbon struts where the stiffness checks would fail (or always, on request): rods + printed anchors as
     /// components (mass / CG), anchor marks on the plans of the parts they are glued to.
+    /// A pushrod that runs from one side of a flat part to the other (e.g. elevator servo above the plate, elevator
+    /// horn underneath) passes through a slot where its straight line crosses the part: 12 mm along the rod (its
+    /// travel at full throw), 3 mm wide.
+    static func addPushrodSlots(_ parts: inout [Part], controls: [ControlSurface]) {
+        for ctrl in controls {
+            let a = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition, h = ctrl.hornPosition
+            for pi in parts.indices {
+                let part = parts[pi]
+                for inst in part.instances where abs(inst.normal.y) > 0.9 {
+                    let y0 = inst.origin.y, half = part.thickness / 2
+                    guard (a.y - y0) * (h.y - y0) < 0, abs(a.y - y0) > half, abs(h.y - y0) > half else { continue }
+                    let k = (y0 - a.y) / (h.y - a.y)
+                    let p = a + (h - a) * k
+                    let q = p - inst.origin
+                    let pp = Vec2(simd_dot(q, inst.u), simd_dot(q, inst.v))
+                    guard Poly.contains(part.outline, pp) else { continue }
+                    let dir3 = h - a, dir = simd_normalize(Vec2(simd_dot(dir3, inst.u), simd_dot(dir3, inst.v)))
+                    let w = Vec2(-dir.y, dir.x)
+                    let slot = [pp - dir * 6 - w * 1.5, pp + dir * 6 - w * 1.5, pp + dir * 6 + w * 1.5, pp - dir * 6 + w * 1.5]
+                    parts[pi].holes.append(Hole(kind: .slot, polygon: Poly.ccw(slot), note: "pushrod"))
+                }
+            }
+        }
+    }
+
     static func addStruts(_ d: inout Design) {
         let loads = Analysis.massAndStall(d)
         let struts = StrutPlanner.plan(d, totalMass: loads.mass, stallSpeed: loads.stall)
@@ -329,9 +355,10 @@ enum DesignBuilder {
         var wingServoCut: Vec2 { Vec2(c.servo.size.l, c.servo.size.h) }
         var webServoCut: Vec2 { Vec2(c.servo.size.l, c.servo.size.w) }
 
-        func hornSlot(at p: Vec2, alongU: Bool = true) -> Hole {
+        /// `under`: the horn is glued in from the underside (elevator – clear of the rudder above it).
+        func hornSlot(at p: Vec2, alongU: Bool = true, under: Bool = false) -> Hole {
             let size = alongU ? Vec2(10, 1.6) : Vec2(1.6, 10)
-            return Hole(kind: .hornSlot, polygon: Poly.rect(center: p, size: size), note: "horn")
+            return Hole(kind: .hornSlot, polygon: Poly.rect(center: p, size: size), note: under ? "horn under" : "horn")
         }
 
         func slot(minU: Double, maxU: Double, minV: Double, maxV: Double) -> Hole {
@@ -695,7 +722,7 @@ enum DesignBuilder {
             var plateHoles = (upTabs + loTabs).map { slot(minU: $0 - 5, maxU: $0 + 5, minV: -tw / 2, maxV: tw / 2) }
             // Elevator horn beside the rudder, outside its sideways swing.
             let eHornV = max(armOffset, tw / 2 + 10)
-            plateHoles.append(hornSlot(at: Vec2(uH + 6, eHornV)))
+            plateHoles.append(hornSlot(at: Vec2(uH + 6, eHornV), under: true))
 
             // Servos in the upper half above the plate.
             let sv = c.servo.size
@@ -742,9 +769,9 @@ enum DesignBuilder {
                               instances: webX.map { .vertical(at: [$0, -t / 2, 0]) }, material: c.material))
 
             let eBody: SIMD3<Double> = [0, t / 2 + s1.y, s1.x]
-            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [eHornV, t / 2 + 9, uH + 2],
+            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [eHornV, -(t / 2 + 9), uH + 2],
                                            servoPosition: eBody, area: Poly.area(elevator), chord: ef * hsc * 0.9, servoID: "Elevator",
-                                           armPosition: armTip(eBody, side: 1)))
+                                           armPosition: armTip(eBody, side: 1), hornAxis: [0, -1, 0]))
             if hasRudder {
                 // Rudder horn on the left side of the rudder, servo arm on the left: pushrods never cross.
                 let rBody: SIMD3<Double> = [0, t / 2 + s2.y, s2.x]
@@ -889,7 +916,7 @@ enum DesignBuilder {
             lower = Poly.ccw(lower)
             addSlots(upTabs + loTabs)
             let eHornV = max(armOffset, tw / 2 + 10)
-            tailHoles.append(hornSlot(at: Vec2(uH + 6, eHornV)))
+            tailHoles.append(hornSlot(at: Vec2(uH + 6, eHornV), under: true))
 
             // Elevator and rudder servos in the upper fuselage BEHIND the prop window: their pushrods run aft to the
             // tail without crossing the spinning prop (from the canopy they would pass straight through it).
@@ -922,9 +949,9 @@ enum DesignBuilder {
                               instances: webX.map { .vertical(at: [$0, -t / 2, 0]) }, material: c.material))
 
             let eBody: SIMD3<Double> = [0, t / 2 + s1.y, s1.x]
-            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [eHornV, t / 2 + 9, uH + 2],
+            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [eHornV, -(t / 2 + 9), uH + 2],
                                            servoPosition: eBody, area: Poly.area(elevator), chord: 0.4 * hsc * 0.8, servoID: "Elevator",
-                                           armPosition: armTip(eBody, side: 1)))
+                                           armPosition: armTip(eBody, side: 1), hornAxis: [0, -1, 0]))
             if c.hasRudder {
                 // Rudder horn on the left side of the rudder, servo arm on the left: pushrods never cross.
                 let rBody: SIMD3<Double> = [0, t / 2 + s2.y, s2.x]
@@ -1152,7 +1179,7 @@ enum DesignBuilder {
 
             var discHoles = centreSlots(upTabs + loTabs)
             let eHornV = max(armOffset, t / 2 + 10)
-            discHoles.append(hornSlot(at: Vec2(uH + 6, eHornV)))
+            discHoles.append(hornSlot(at: Vec2(uH + 6, eHornV), under: true))
 
             // Servos in the spine just ahead of the CG.
             let sv = c.servo.size
@@ -1179,9 +1206,9 @@ enum DesignBuilder {
                               instances: [.vertical(at: [0, -t / 2, 0])], material: c.material))
 
             let eBody: SIMD3<Double> = [0, t / 2 + s1.y, s1.x]
-            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [eHornV, t / 2 + 9, uH + 2],
+            controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [eHornV, -(t / 2 + 9), uH + 2],
                                            servoPosition: eBody, area: Poly.area(elevator), chord: f * L * 0.7, servoID: "Elevator",
-                                           armPosition: armTip(eBody, side: 1)))
+                                           armPosition: armTip(eBody, side: 1), hornAxis: [0, -1, 0]))
             let rBody: SIMD3<Double> = [0, t / 2 + s2.y, s2.x]
             controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [-(t / 2 + 8), t / 2 + 14, uH + 2],
                                            servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",

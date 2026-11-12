@@ -88,6 +88,185 @@ enum SelfTest {
     /// Why a configuration gets no tail struts: the user's Park Trainer and close variants, with a rejection tally.
     /// Why a configuration gets no tail struts, and how long the build takes: the Park Trainer with one central
     /// aileron servo (full-span ailerons, pushrods along both boom sides) and close variants.
+    /// Horn clearance: every moving surface swept through its full throw (1° steps) against the printed horns of
+    /// the OTHER surfaces – each horn placed as in the 3D view and itself swung with its own surface (every 5°).
+    /// Returns the smallest gap per (surface, horn) and the surface angle of the first contact.
+    struct HornGap { var surface: String; var horn: String; var gap: Double; var hitAt: Double? }
+    static func hornClearance(_ d: Design) -> [HornGap] {
+        let c = d.config, t = c.material.thickness, T = c.kind.maxSurfaceThrow
+        // Moving surfaces: sample points (outline every 0.5 mm, faces on a 1 mm grid) and hinge axis, per instance.
+        struct Surf { var name: String; var pts: [SIMD3<Double>]; var a: SIMD3<Double>; var ax: SIMD3<Double>; var mid: SIMD3<Double>; var b: SIMD3<Double> = .zero }
+        var surfs: [Surf] = []
+        for part in d.parts {
+            for r in part.regions where r.isControl {
+                guard let axis = SceneBuilder.hingeAxis(part, r.polygon) else { continue }
+                var flat: [Vec2] = []
+                for i in r.polygon.indices {
+                    let p0 = r.polygon[i], p1 = r.polygon[(i + 1) % r.polygon.count]
+                    let n = max(1, Int(simd_distance(p0, p1) / 0.5))
+                    for k in 0..<n { flat.append(p0 + (p1 - p0) * (Double(k) / Double(n))) }
+                }
+                let bb = Poly.bounds(r.polygon)
+                var u = bb.min.x
+                while u <= bb.max.x { var v = bb.min.y; while v <= bb.max.y { if Poly.contains(r.polygon, Vec2(u, v)) { flat.append(Vec2(u, v)) }; v += 1 }; u += 1 }
+                for (ii, inst) in part.instances.enumerated() {
+                    let a3 = inst.point(axis.0), b3 = inst.point(axis.1)
+                    surfs.append(Surf(name: part.instances.count > 1 ? "\(part.name) #\(ii + 1)" : part.name,
+                                      pts: flat.flatMap { p in [-part.thickness / 2, part.thickness / 2].map { inst.point(p, offset: $0) } },
+                                      a: a3, ax: simd_normalize(b3 - a3), mid: (a3 + b3) / 2, b: b3))
+                }
+            }
+        }
+        // Horns: same mesh and placement as the 3D view, sampled on their triangles; each belongs to the surface whose
+        // hinge passes closest to it.
+        var out: [HornGap] = []
+        for ctrl in d.controls {
+            let a = simd_normalize(ctrl.hornAxis)
+            let ex = SIMD3<Double>(0, 0, 1), ey = simd_cross(a, ex)
+            let origin = ctrl.hornPosition - a * 9 + [0, 0, 4]
+            let mesh = PrintedParts.controlHorn(foam: t).transformed { p in origin + ex * p.x + ey * p.y + a * p.z }
+            var hp: [SIMD3<Double>] = []
+            for tri in mesh.triangles {
+                for i in 0...4 { for j in 0...(4 - i) {
+                    let u = Double(i) / 4, v = Double(j) / 4
+                    hp.append(tri.0 + (tri.1 - tri.0) * u + (tri.2 - tri.0) * v)
+                } }
+            }
+            // Own surface: the hinge SEGMENT nearest the horn (aileron hinges of both sides lie on one line).
+            func segDist(_ p: SIMD3<Double>, _ s: Surf) -> Double { StrutPlanner.distance(p, segment: s.a, s.b) }
+            guard let own = surfs.min(by: { segDist(ctrl.hornPosition, $0) < segDist(ctrl.hornPosition, $1) }) else { continue }
+            for s in surfs where simd_distance(s.mid, own.mid) > 1 {
+                var minGap = Double.greatestFiniteMagnitude, hit: Double?
+                // Cylindrical coordinates about this surface's hinge: a point keeps its axial position and radius while
+                // the surface turns, so only points whose (axial, radius) lie within the horn's range can ever reach it.
+                func cyl(_ p: SIMD3<Double>) -> (s: Double, r: Double) {
+                    let q = p - s.a, ax = simd_dot(q, s.ax); return (ax, simd_length(q - s.ax * ax))
+                }
+                let hornsAt = stride(from: -T, through: T, by: 5).map { eAng -> [SIMD3<Double>] in
+                    let qe = simd_quatd(angle: eAng * .pi / 180, axis: own.ax); return hp.map { qe.act($0 - own.a) + own.a } }
+                let hc = hornsAt.flatMap { $0 }.map(cyl)
+                guard let s0 = hc.map(\.s).min(), let s1 = hc.map(\.s).max(), let r0 = hc.map(\.r).min(), let r1 = hc.map(\.r).max() else { continue }
+                let reach = 6.0
+                let near = s.pts.filter { let k = cyl($0); return k.s > s0 - reach && k.s < s1 + reach && k.r > r0 - reach && k.r < r1 + reach }
+                if near.isEmpty { out.append(HornGap(surface: s.name, horn: ctrl.name + " horn", gap: reach, hitAt: nil)); continue }
+                // Horn samples in 3 mm cells per horn angle: each turned surface point looks at its 27 neighbour cells
+                // only (gaps beyond ~3 mm are reported as 3 mm).
+                let cell = 3.0
+                func key(_ p: SIMD3<Double>) -> SIMD3<Int32> { SIMD3<Int32>((p / cell).rounded(.down)) }
+                let grids = hornsAt.map { horn -> [SIMD3<Int32>: [SIMD3<Double>]] in
+                    var g: [SIMD3<Int32>: [SIMD3<Double>]] = [:]; for h in horn { g[key(h), default: []].append(h) }; return g }
+                minGap = cell
+                for grid in grids {
+                    for sign in [1.0, -1.0] {
+                        for deg in stride(from: 0.0, through: T, by: 1) {
+                            let q = simd_quatd(angle: sign * deg * .pi / 180, axis: s.ax)
+                            var g = cell
+                            for p in near {
+                                let w = q.act(p - s.a) + s.a, k = key(w)
+                                for dx in Int32(-1)...1 { for dy in Int32(-1)...1 { for dz in Int32(-1)...1 {
+                                    for h in grid[k &+ SIMD3(dx, dy, dz)] ?? [] { g = min(g, simd_distance(w, h)) }
+                                } } }
+                            }
+                            minGap = min(minGap, g)
+                            if g < 0.3 { hit = min(hit ?? 999, sign * deg); break }
+                        }
+                    }
+                }
+                out.append(HornGap(surface: s.name, horn: ctrl.name + " horn", gap: minGap, hitAt: hit))
+            }
+        }
+        return out
+    }
+
+    /// Elevator against the fin / rudder above it: elevator points (outline 0.5 mm, faces 1 mm) swung through the full
+    /// throw (+5°) in 1° steps must stay out of the upper web (fixed fin + rudder) wherever the rudder can swing over
+    /// them. Returns the deepest intrusion (mm, 0 = clear) and the elevator angle where it starts.
+    nonisolated(unsafe) static var lastIntrusion = ""
+    static func elevatorUnderFin(_ d: Design) -> (depth: Double, at: Double?) {
+        let c = d.config
+        guard c.hasRudder, !c.kind.isTwinBoom else { return (0, nil) }
+        let T = c.kind.maxSurfaceThrow + StrutPlanner.throwMargin
+        // Upper web carrying the rudder (vertical instance), and the elevator region (horizontal part).
+        guard let webIdx = d.parts.firstIndex(where: { p in p.regions.contains { $0.isControl } && p.instances.allSatisfy { abs($0.normal.x) > 0.9 } }) else { return (0, nil) }
+        let web = d.parts[webIdx], wi = web.instances[0]
+        let tw = web.thickness * Double(web.instances.count)
+        guard let rud = web.regions.first(where: \.isControl) else { return (0, nil) }
+        let rudB = Poly.bounds(rud.polygon)
+        let reach = (rudB.max.x - rudB.min.x) * sin(T * .pi / 180) + tw / 2
+        var deepest = 0.0, at: Double?
+        for part in d.parts where part.instances.allSatisfy({ abs($0.normal.y) > 0.9 }) {
+            for r in part.regions where r.isControl {
+                guard let axis = SceneBuilder.hingeAxis(part, r.polygon) else { continue }
+                var flat: [Vec2] = []
+                for i in r.polygon.indices {
+                    let p0 = r.polygon[i], p1 = r.polygon[(i + 1) % r.polygon.count]
+                    let n = max(1, Int(simd_distance(p0, p1) / 0.5)); for k in 0..<n { flat.append(p0 + (p1 - p0) * (Double(k) / Double(n))) }
+                }
+                let bb = Poly.bounds(r.polygon); var u = bb.min.x
+                while u <= bb.max.x { var v = bb.min.y; while v <= bb.max.y { if Poly.contains(r.polygon, Vec2(u, v)) { flat.append(Vec2(u, v)) }; v += 1 }; u += 1 }
+                for inst in part.instances {
+                    // Tape hinge on top: the elevator turns about its top-surface line.
+                    let up = inst.normal.y > 0 ? inst.normal : -inst.normal
+                    let a3 = inst.point(axis.0) + up * part.thickness / 2, ax = simd_normalize(inst.point(axis.1) - inst.point(axis.0))
+                    let pts = flat.flatMap { p in [-part.thickness / 2, part.thickness / 2].map { inst.point(p, offset: $0) } }.filter { abs($0.x) < reach }
+                    guard !pts.isEmpty else { continue }
+                    for sign in [1.0, -1.0] {
+                        for deg in stride(from: 0.0, through: T, by: 1) {
+                            let q = simd_quatd(angle: sign * deg * .pi / 180, axis: ax)
+                            var depth = 0.0
+                            for p in pts {
+                                let w = q.act(p - a3) + a3
+                                let pp = Vec2((w.z - wi.origin.z) / wi.u.z, (w.y - wi.origin.y) / wi.v.y)
+                                guard Poly.contains(web.outline, pp) else { continue }
+                                // Depth: distance into the web outline (vertical, from its bottom edge).
+                                var dy = 0.0
+                                while dy < 30 && Poly.contains(web.outline, pp - Vec2(0, dy)) { dy += 0.25 }
+                                if dy > depth { lastIntrusion = String(format: "pt rest (x %.1f, y %.2f, dz %.2f) → web (u−uH… %.2f, v %.2f) at %.0f°", p.x, p.y, p.z - a3.z, w.z - a3.z, pp.y, sign * deg) }
+                                depth = max(depth, dy)
+                            }
+                            if depth > 0.25 { if at == nil || abs(sign * deg) < abs(at!) { at = sign * deg }; deepest = max(deepest, depth) }
+                        }
+                    }
+                }
+            }
+        }
+        return (deepest, at)
+    }
+
+    @MainActor static func hornCheck() {
+        var total = 0, bad: [String] = [], closest: [String: Double] = [:]
+        for kind in AircraftKind.allCases {
+            var configs: [AircraftConfig] = [kind.defaults]
+            for m in FoamMaterial.allCases { var c = kind.defaults; c.material = m; configs.append(c) }
+            for _ in 0..<10 { configs.append(AircraftConfig.random(kind: kind)) }
+            for c0 in configs {
+                let c = Project.balanced(c0)
+                let d = DesignBuilder.build(c)
+                total += 1
+                let ef = elevatorUnderFin(d)
+                if ef.depth > 0.25 { bad.append("\(kind.rawValue) \(c.material.rawValue): elevator into fin / rudder \(String(format: "%.1f", ef.depth)) mm from \(Int(ef.at ?? 0))° [\(lastIntrusion)]") }
+                for g in hornClearance(d) {
+                    closest[kind.rawValue] = min(closest[kind.rawValue] ?? 999, g.gap)
+                    if g.hitAt != nil || g.gap < 1 {
+                        bad.append("\(kind.rawValue) \(c.material.rawValue) span \(Int(c.wingspan)) fin chord \(Int(c.vStabChord)) stab chord \(Int(c.hStabChord)): \(g.surface) vs \(g.horn) gap \(String(format: "%.1f", g.gap)) mm\(g.hitAt.map { " – HIT at \(Int($0))°" } ?? "")")
+                    }
+                }
+            }
+        }
+        for kind in AircraftKind.allCases {
+            let d = DesignBuilder.build(Project.balanced(kind.defaults))
+            let slots = d.parts.flatMap { p in p.holes.filter { $0.note == "pushrod" }.map { _ in p.name } }
+            let under = d.parts.contains { $0.holes.contains { $0.note == "horn under" } }
+            print("  \(kind.title): elevator horn \(under ? "under" : "on top"), pushrod slots: \(slots.isEmpty ? "none" : slots.joined(separator: ", "))")
+        }
+        print("horn check: \(total) builds, \(bad.count) collisions / < 1 mm")
+        var pairs: [String: Int] = [:]
+        for b in bad { if let r = b.range(of: ": ") { let rest = b[r.upperBound...]; pairs[b.split(separator: " ")[0] + " " + String(rest.prefix { $0 != "g" || !rest.contains(" gap") }).components(separatedBy: " gap")[0], default: 0] += 1 } }
+        for (k, v) in pairs.sorted(by: { $0.value > $1.value }) { print("  \(v)× \(k)") }
+        for (k, v) in closest.sorted(by: { $0.key < $1.key }) { print("  closest \(k): \(String(format: "%.1f", v)) mm") }
+        for b in bad { print("  · " + b) }
+    }
+
     /// Scan: random variants of every type in every foam (struts on Auto). Lists builds that still fail a
     /// stiffness check (wing / fuselage twist / boom bending), with what blocked the strut candidates.
     @MainActor static func strutScan(count: Int = 12) {
