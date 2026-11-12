@@ -233,6 +233,62 @@ enum SelfTest {
         return (deepest, at)
     }
 
+    /// Pushrods through the structure: every pushrod (servo arm tip → horn) sampled every 0.5 mm must not run inside
+    /// foam, except through a cut-out (slot, servo opening). The last 3 mm at the horn are skipped (the Z-bend sits
+    /// in the horn there). Returns one line per pushrod that runs into foam, with the length inside.
+    static func pushrodHits(_ d: Design) -> [String] {
+        var out: [String] = []
+        for ctrl in d.controls {
+            let a = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition, h = ctrl.hornPosition
+            let L = simd_distance(a, h), n = max(2, Int(L / 0.5))
+            var inside = 0.0, partsHit = Set<String>()
+            for k in 0...n {
+                let along = L * Double(k) / Double(n)
+                guard along < L - 3 else { continue }
+                let p = a + (h - a) * (Double(k) / Double(n))
+                for part in d.parts {
+                    for inst in part.instances {
+                        let q = p - inst.origin
+                        guard abs(simd_dot(q, inst.normal)) < part.thickness / 2 + 0.5 else { continue }   // rod Ø1
+                        let pp = Vec2(simd_dot(q, inst.u), simd_dot(q, inst.v))
+                        guard Poly.contains(part.outline, pp), !part.holes.contains(where: { Poly.contains($0.polygon, pp) }) else { continue }
+                        inside += L / Double(n); partsHit.insert(part.name)
+                    }
+                }
+            }
+            if inside > 0.5 { out.append("\(ctrl.name) pushrod \(String(format: "%.0f", inside)) mm inside \(partsHit.sorted().joined(separator: ", "))") }
+        }
+        // Pushrods of different servos must keep ≥ 2 mm between their axes (Ø1 rods, 1 mm clear).
+        for (i, c1) in d.controls.enumerated() {
+            for c2 in d.controls[(i + 1)...] where c1.servoID != c2.servoID {
+                let a1 = c1.armPosition == .zero ? c1.servoPosition : c1.armPosition, a2 = c2.armPosition == .zero ? c2.servoPosition : c2.armPosition
+                var dmin = Double.greatestFiniteMagnitude
+                for k in 0...200 { dmin = min(dmin, StrutPlanner.distance(a1 + (c1.hornPosition - a1) * (Double(k) / 200), segment: a2, c2.hornPosition)) }
+                if dmin < 2 { out.append("\(c1.name) pushrod inside \(c2.name) pushrod (\(String(format: "%.1f", dmin)) mm)") }
+            }
+        }
+        return out
+    }
+
+    @MainActor static func pushrodCheck() {
+        for kind in AircraftKind.allCases {
+            for ail in (kind.allowsSingleAileronServo && kind.hasTail && !kind.isNutBall ? [1, 2] : [2]) {
+                var hits: [String: Int] = [:], n = 0
+                for m in FoamMaterial.allCases {
+                    for variant in 0..<4 {
+                        var c = variant == 0 ? kind.defaults : AircraftConfig.random(kind: kind)
+                        c.material = m; c.aileronServos = ail
+                        c = Project.balanced(c)
+                        let d = DesignBuilder.build(c)
+                        n += 1
+                        for h in pushrodHits(d) { hits[h.components(separatedBy: " pushrod")[0] + " pushrod into " + h.components(separatedBy: "inside ")[1], default: 0] += 1 }
+                    }
+                }
+                print("  \(kind.title), \(ail) aileron servo\(ail > 1 ? "s" : ""): \(n) builds, pushrods into foam: \(hits.isEmpty ? "none" : hits.sorted { $0.value > $1.value }.map { "\($0.value)× \($0.key)" }.joined(separator: "; "))")
+            }
+        }
+    }
+
     @MainActor static func hornCheck() {
         var total = 0, bad: [String] = [], closest: [String: Double] = [:]
         for kind in AircraftKind.allCases {
@@ -257,10 +313,13 @@ enum SelfTest {
             let d = DesignBuilder.build(Project.balanced(kind.defaults))
             let slots = d.parts.flatMap { p in p.holes.filter { $0.note == "pushrod" }.map { _ in p.name } }
             let under = d.parts.contains { $0.holes.contains { $0.note == "horn under" } }
+            let lens = d.parts.flatMap { $0.holes.filter { $0.note == "pushrod" } }.map { h -> Double in let b = Poly.bounds(h.polygon); return max(b.max.x - b.min.x, b.max.y - b.min.y) }
+            if !lens.isEmpty { print(String(format: "  %@: pushrod slot %.0f mm long", kind.title, lens.max()!)) }
             let rud = d.controls.first { $0.name.hasPrefix("Rudder") }
             print("  \(kind.title): elevator horn \(under ? "under" : "on top"), pushrod slots: \(slots.isEmpty ? "none" : slots.joined(separator: ", "))\(rud.map { String(format: ", rudder horn %.1f mm up, rudder area %.0f mm²", $0.hornPosition.y, $0.area) } ?? "")")
         }
         print("horn check: \(total) builds, \(bad.count) collisions / < 1 mm")
+        pushrodCheck()
         var pairs: [String: Int] = [:]
         for b in bad { if let r = b.range(of: ": ") { let rest = b[r.upperBound...]; pairs[b.split(separator: " ")[0] + " " + String(rest.prefix { $0 != "g" || !rest.contains(" gap") }).components(separatedBy: " gap")[0], default: 0] += 1 } }
         for (k, v) in pairs.sorted(by: { $0.value > $1.value }) { print("  \(v)× \(k)") }
@@ -306,6 +365,23 @@ enum SelfTest {
     }
 
     @MainActor static func strutDiagnosis() {
+        // Picture of the one-aileron-servo layout (Park Trainer, Depron 6 mm): 3D side / below and the plans.
+        do {
+            var c = AircraftKind.trainer.defaults
+            c.aileronServos = 1; c = Project.balanced(c)
+            let d = DesignBuilder.build(c), a = Analysis(design: d)
+            let dir = URL(fileURLWithPath: CommandLine.arguments.last ?? ".")
+            try? PlanPDF.render(d, a).write(to: dir.appendingPathComponent("central_servos.pdf"))
+            let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+            if let r = Renderer(view: view) {
+                for (tag, pitch, yaw, zoom) in [("side", 0.05, Float.pi / 2, Float(0.32)), ("below", -0.5, Float(0.9), Float(0.3)), ("above", 0.6, Float(0.9), Float(0.3))] {
+                    r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
+                    r.target = SIMD3<Float>(0, 0, Float(c.centralSparU))
+                    r.pitch = Float(pitch); r.yaw = yaw; r.zoom = zoom
+                    if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("central_servos_\(tag).png")) }
+                }
+            }
+        }
         for m in [FoamMaterial.depron3, .depron5, .epp3, .epp5] {
             for ail in [1, 2] {
                 var c = AircraftKind.trainer.defaults
@@ -322,6 +398,9 @@ enum SelfTest {
                 let tail = p.tailStruts(tally: { why[$0, default: 0] += 1 })
                 print("== trainer \(m.displayName) ail servos \(ail): build \(Int(ms)) ms, struts \(d.struts.count), twist bare \(String(format: "%.1f", rep.tailTwistDeg ?? 0))° → \(String(format: "%.1f", a.structure?.tailTwistDeg ?? 0))°, feasible \(a.feasible), tail candidates found \(tail.count)")
                 for (k, v) in why.sorted(by: { $0.value > $1.value }).prefix(4) { print("     \(v)× \(k)") }
+                for issue in d.geometryIssues { print("     issue: \(issue)") }
+                for ctrl in d.controls where ctrl.servoID != "" { print(String(format: "     %@ servo at z %.1f y %.1f, arm y %.1f", ctrl.name, ctrl.servoPosition.z, ctrl.servoPosition.y, ctrl.armPosition.y)) }
+                print(String(format: "     battery %.0f (limits %.0f…%.0f), errors: %@", c.batteryPosition, Analysis.batteryLimits(c).lowerBound, Analysis.batteryLimits(c).upperBound, a.checks.filter { $0.severity == .error }.map(\.title).joined(separator: ", ")))
             }
         }
     }

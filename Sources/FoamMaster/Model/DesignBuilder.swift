@@ -34,19 +34,27 @@ extension AircraftConfig {
     }
     var firewallThickness: Double { PrintedParts.firewallThickness(motor) }
 
-    /// Single central aileron servo (hangs under the plate in the lower fuselage half): 5 mm AHEAD of the spar rod
-    /// where it crosses the plate when it still sits under the wing root (best for the CG), otherwise 5 mm behind it –
-    /// never on the rod.
-    var centralAileronServoU: Double {
+    /// One aileron servo: aileron, elevator and rudder servos centred on the plate (half in the upper, half in the
+    /// lower fuselage half), which holds them firmly and keeps the pushrods clear of the structure. Ahead of the
+    /// spar groove: the elevator servo next to it, the aileron servo (shaft down) in front – so the elevator pushrod
+    /// (arm down, under the plate) starts behind the aileron double arm and stays inboard of the aileron pushrods.
+    /// Behind the spar: the rudder servo.
+    var centralSparU: Double {
         let w = TaperedPanel(rootChord: rootChord, tipChord: tipChord, sweep: sweep, semiSpan: semiSpan)
-        let hw = fuselagePlateWidth / 2, l = servo.size.l
-        let spar = w.le(hw) + 0.3 * w.chord(hw)
-        let gap = (sparEnabled ? sparSpec.widthMM / 2 : 1.5) + 5
-        let ahead = spar - gap - l / 2
-        if ahead - l / 2 >= w.le(hw) + rootChord * 0.04 { return ahead }
-        let hinge = w.te(hw) - controlChordPct * w.chord(hw)
-        return min(spar + gap + l / 2, hinge - 20 - l / 2)
+        let hw = fuselagePlateWidth / 2
+        return w.le(hw) + 0.3 * w.chord(hw)
     }
+    var centralSparHalf: Double { sparEnabled ? sparSpec.widthMM / 2 : 1.5 }
+    /// Half length of the plate opening for a servo passing through the webs (its frame on the web faces fits in).
+    var centralWebServoHalfOpening: Double { servo.size.l / 2 + PrintedParts.servoFrameFlange + 0.5 }
+    var centralElevatorServoU: Double { centralSparU - centralSparHalf - 2 - centralWebServoHalfOpening }
+    var centralAileronServoU: Double {
+        centralElevatorServoU - centralWebServoHalfOpening - 5 - PrintedParts.servoFrameFlange - 0.2 - servo.size.l / 2
+    }
+    /// Front edge of the foremost servo (the aileron servo's frame on the plate).
+    var centralServosFrontU: Double { centralAileronServoU - servo.size.l / 2 - PrintedParts.servoFrameFlange - 0.2 }
+    /// First station behind the spar for the rudder servo (the builder moves it aft if its plate opening needs it).
+    var centralRudderServoU: Double { centralSparU + centralSparHalf + 2 + centralWebServoHalfOpening }
     var hasCentralAileronServo: Bool { hasAilerons && aileronServos == 1 && kind.allowsSingleAileronServo }
 
     /// Nose face (+ section) `d` mm aft of the nose: plate half width and web height above / below the plate.
@@ -154,24 +162,26 @@ enum DesignBuilder {
     /// Carbon struts where the stiffness checks would fail (or always, on request): rods + printed anchors as
     /// components (mass / CG), anchor marks on the plans of the parts they are glued to.
     /// A pushrod that runs from one side of a flat part to the other (e.g. elevator servo above the plate, elevator
-    /// horn underneath) passes through a slot where its straight line crosses the part: 12 mm along the rod (its
-    /// travel at full throw), 3 mm wide.
+    /// horn underneath) passes through a slot: from where it enters the top face to where it leaves the bottom face
+    /// (a shallow rod needs a long slot), plus 4 mm travel at each end, 3 mm wide.
     static func addPushrodSlots(_ parts: inout [Part], controls: [ControlSurface]) {
         for ctrl in controls {
             let a = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition, h = ctrl.hornPosition
             for pi in parts.indices {
                 let part = parts[pi]
                 for inst in part.instances where abs(inst.normal.y) > 0.9 {
-                    let y0 = inst.origin.y, half = part.thickness / 2
+                    let y0 = inst.origin.y, half = part.thickness / 2 + 0.5        // rod radius
                     guard (a.y - y0) * (h.y - y0) < 0, abs(a.y - y0) > half, abs(h.y - y0) > half else { continue }
-                    let k = (y0 - a.y) / (h.y - a.y)
-                    let p = a + (h - a) * k
-                    let q = p - inst.origin
-                    let pp = Vec2(simd_dot(q, inst.u), simd_dot(q, inst.v))
-                    guard Poly.contains(part.outline, pp) else { continue }
-                    let dir3 = h - a, dir = simd_normalize(Vec2(simd_dot(dir3, inst.u), simd_dot(dir3, inst.v)))
+                    func at(_ y: Double) -> Vec2 {
+                        let p = a + (h - a) * ((y - a.y) / (h.y - a.y)), q = p - inst.origin
+                        return Vec2(simd_dot(q, inst.u), simd_dot(q, inst.v))
+                    }
+                    let p0 = at(y0 + half), p1 = at(y0 - half)
+                    guard Poly.contains(part.outline, (p0 + p1) / 2) else { continue }
+                    let dir = simd_length(p1 - p0) > 1e-6 ? simd_normalize(p1 - p0) : simd_normalize(Vec2(simd_dot(h - a, inst.u), simd_dot(h - a, inst.v)))
                     let w = Vec2(-dir.y, dir.x)
-                    let slot = [pp - dir * 6 - w * 1.5, pp + dir * 6 - w * 1.5, pp + dir * 6 + w * 1.5, pp - dir * 6 + w * 1.5]
+                    let s0 = p0 - dir * 4, s1 = p1 + dir * 4
+                    let slot = [s0 - w * 1.5, s1 - w * 1.5, s1 + w * 1.5, s0 + w * 1.5]
                     parts[pi].holes.append(Hole(kind: .slot, polygon: Poly.ccw(slot), note: "pushrod"))
                 }
             }
@@ -307,12 +317,13 @@ enum DesignBuilder {
         var ailShaftU: Double { ailServoU + c.servo.size.l / 2 - 5 }
         /// Half length of the double arm (hole to hub) – longer for bigger servos.
         var ailArm: Double { [.g17: 7.0, .g25: 8, .g37: 9, .g5: 10][c.servo]! }
-        var ailArmY: Double { -t / 2 - c.servo.size.h - 2 }
-        var ailServoCenter: SIMD3<Double> { [0, -t / 2 - c.servo.size.h / 2, ailServoU] }
-        /// Window in the lower fuselage web for the servo body and the arm hub, with clearance below the arm.
+        var ailArmY: Double { -c.servo.size.h / 2 - 2 }
+        var ailServoCenter: SIMD3<Double> { [0, 0, ailServoU] }
+        /// Notch in the lower fuselage half (below the plate) for the lower half of the servo and the arm hub, with
+        /// clearance below the arm.
         var ailWindow: (u0: Double, u1: Double, h: Double) {
             let sv = c.servo.size
-            return (ailServoU - sv.l / 2 - 1, ailServoU + sv.l / 2 + 1, sv.h + 2 + 1.5 + 3)
+            return (ailServoU - sv.l / 2 - 1, ailServoU + sv.l / 2 + 1, sv.h / 2 + 2 + 1.5 + 3 - t / 2)
         }
 
         var wing: TaperedPanel {
@@ -344,9 +355,9 @@ enum DesignBuilder {
         /// In the wing that means the servo lies FLAT (L×H cutout, only W crosses the thin foam); in a
         /// vertical fuselage web it passes through the web (L×W cutout) like on profile planes.
         /// The arm points up at neutral, so the pushrod runs straight fore-aft to a horn at the same x.
-        func armTip(_ center: SIMD3<Double>, side: Double) -> SIMD3<Double> {
+        func armTip(_ center: SIMD3<Double>, side: Double, down: Bool = false) -> SIMD3<Double> {
             let sv = c.servo.size
-            return center + [side * (sv.h / 2 + 2), 10, sv.l / 2 - 5]
+            return center + [side * (sv.h / 2 + 2), down ? -10 : 10, sv.l / 2 - 5]
         }
         /// Sideways offset of the arm (and horn) from the servo centre so the pushrod is straight.
         var armOffset: Double { c.servo.size.h / 2 + 2.5 }
@@ -717,10 +728,43 @@ enum DesignBuilder {
             let noseFront = min(hNose * 0.65, max(mountHalf - t / 2 - 0.5, 4))
             let noseFrontLow = min((fh * 0.5 - t / 2) * 0.55, max(mountHalf - t / 2 - 0.5, 4))
             let aw = ailWindow
-            // Notch in the top edge of the lower half (listed aft → forward, like that edge).
-            let ailNotch: [Vec2] = centralAileron ? [Vec2(aw.u1, 0), Vec2(aw.u1, -aw.h), Vec2(aw.u0, -aw.h), Vec2(aw.u0, 0)] : []
-            let hasAilServo = centralAileron
-            let clearOfAileronServo = { (u: Double) in !hasAilServo || u + 6 < aw.u0 - 2 || u - 6 > aw.u1 + 2 }
+            // One aileron servo: aileron servo (front) and elevator servo ahead of the spar, rudder servo behind it, each
+            // centred on the plate – half in the upper, half in the lower fuselage half (orientation as always: aileron
+            // servo shaft down, elevator / rudder servos through the web with the shaft sideways).
+            let central = centralAileron
+            let svC = c.servo.size, flange = PrintedParts.servoFrameFlange
+            let twC = t * Double(c.fuselageType.webLayers)
+            let webOpen = c.centralWebServoHalfOpening
+            /// Plate opening for a servo passing through the webs: long enough for its frame on the web faces.
+            func webServoOpening(_ u: Double) -> [Vec2] {
+                Poly.rect(center: Vec2(u, 0), size: Vec2(2 * webOpen, 2 * max(svC.h / 2 + 0.5, twC / 2 + 1.2 + 0.5)))
+            }
+            let uEC = c.centralElevatorServoU
+            var uRC = c.centralRudderServoU
+            if central && c.hasRudder {
+                // Behind the spar; further aft while the opening would cut into a wing-joint notch of the plate.
+                while !Poly.containsAll(Poly.inset(plateOutline, by: 1.5), webServoOpening(uRC)) && uRC < c.centralRudderServoU + 30 { uRC += 1 }
+            }
+            // Notches: in the bottom edge of the upper half (for the servo tops and the aileron servo's frame on the
+            // plate) and in the top edge of the lower half (servo bottoms, the aileron servo's arm). (u0, u1, depth)
+            let webDepth = svC.w / 2 + 0.3 - t / 2
+            var upNotches: [(Double, Double, Double)] = [], loNotches: [(Double, Double, Double)] = []
+            if central {
+                upNotches.append((ailServoU - svC.l / 2 - flange - 0.5, ailServoU + svC.l / 2 + flange + 0.5, max(svC.h / 2 + 1 - t / 2, 2)))
+                loNotches.append((aw.u0, aw.u1, aw.h))
+                var webServos = [uEC]
+                if c.hasRudder { webServos.append(uRC) }
+                for u in webServos where webDepth > 0 {
+                    upNotches.append((u - svC.l / 2 - 0.2, u + svC.l / 2 + 0.2, webDepth))
+                    loNotches.append((u - svC.l / 2 - 0.2, u + svC.l / 2 + 0.2, webDepth))
+                }
+            }
+            upNotches.sort { $0.0 < $1.0 }; loNotches.sort { $0.0 > $1.0 }
+            // Bottom edge of the upper half runs aft, top edge of the lower half forward.
+            let upNotchPts = upNotches.flatMap { [Vec2($0.0, 0), Vec2($0.0, $0.2), Vec2($0.1, $0.2), Vec2($0.1, 0)] }
+            let ailNotch = loNotches.flatMap { [Vec2($0.1, 0), Vec2($0.1, -$0.2), Vec2($0.0, -$0.2), Vec2($0.0, 0)] }
+            let allNotches = upNotches + loNotches
+            let clearOfAileronServo = { (u: Double) in allNotches.allSatisfy { u + 6 < $0.0 - 2 || u - 6 > $0.1 + 2 } }
             let hBoom = c.boomTopHeight
             let finTop = hBoom + c.vStabHeight
             let finLE = uH - 1.25 * vsc
@@ -731,9 +775,9 @@ enum DesignBuilder {
             let cut = finCut(elevChord: ef * hsc, rg: rg)
             let cutEdge = cut.edge(0, uR - uH).map { Vec2(uH + $0.x, $0.y) }
             let rHornV = max(rudderHornV(uH: uH, elevChord: ef * hsc, tw: t * Double(c.fuselageType.webLayers)), cut.v(6) + 8)
-            var upper: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0)] + (rg > 0 ? cutEdge : Array(cutEdge.dropFirst())) + [Vec2(uR, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
+            var upper: [Vec2] = [Vec2(uN, 0)] + upNotchPts + [Vec2(uH, 0)] + (rg > 0 ? cutEdge : Array(cutEdge.dropFirst())) + [Vec2(uR, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
                                  Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, noseFront)]
-            var upperMain: [Vec2] = [Vec2(uN, 0), Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
+            var upperMain: [Vec2] = [Vec2(uN, 0)] + upNotchPts + [Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.3 * vsc, finTop), Vec2(finLE, hBoom),
                                      Vec2(c.rootChord, hWing * 0.9), Vec2(c.rootChord * 0.15, hWing), Vec2(uN + 0.35 * c.noseLength, hNose), Vec2(uN, noseFront)]
             var rudder = cutEdge + [Vec2(uR, finTop), Vec2(uH, finTop)]
             if finTopRadius > 0 {        // rounded fin / rudder top corners
@@ -744,7 +788,7 @@ enum DesignBuilder {
             if !hasRudder { upperMain = upper }
             let layers = Double(c.fuselageType.webLayers)
             let tw = t * layers
-            let upTabs = [uN + max(32, c.noseLength * 0.45), c.rootChord * 0.45, (c.rootChord + finLE) / 2, finLE + vsc * 0.5].filter { $0 + 6 < uH }
+            let upTabs = [uN + max(32, c.noseLength * 0.45), c.rootChord * 0.45, (c.rootChord + finLE) / 2, finLE + vsc * 0.5].filter { $0 + 6 < uH && clearOfAileronServo($0) }
             var upperOut = upper
             for tu in upTabs { upperOut = Poly.insertTab(upperOut, at: Vec2(tu, 0), width: 10, height: t); upperMain = Poly.insertTab(upperMain, at: Vec2(tu, 0), width: 10, height: t) }
 
@@ -762,14 +806,30 @@ enum DesignBuilder {
             let eHornV = max(armOffset, tw / 2 + 10)
             plateHoles.append(hornSlot(at: Vec2(uH + 6, eHornV), under: true))
 
-            // Servos in the upper half above the plate.
+            // Servos: in the upper half above the plate – or, with one aileron servo, all three centred on the plate.
             let sv = c.servo.size
             let s1 = Vec2(c.rootChord * 0.06 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
-            var upperHoles = [servoCut("Elevator", center: s1, size: webServoCut, in: upperMain)]
-            if hasRudder {
-                upperHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upperMain))
-                upperHoles.append(hornSlot(at: Vec2(uH + 6, rHornV)))
+            var upperHoles: [Hole] = []
+            if central {
+                // Aileron servo standing in the plate (L × W cutout with its printed frame on top).
+                plateHoles.append(servoCut("Aileron", center: Vec2(ailServoU, 0), size: Vec2(sv.l, sv.w), in: plateOutline))
+                // Elevator / rudder servos pass through both webs (frame on the web faces) and an opening in the plate.
+                for (name, u) in [("Elevator", uEC)] + (hasRudder ? [("Rudder", uRC)] : []) {
+                    let open = webServoOpening(u)
+                    if !Poly.containsAll(plateOutline, open) {
+                        issues.append("The \(name.lowercased()) servo opening does not fit in the fuselage plate – widen the plate or pick a smaller servo.")
+                    }
+                    plateHoles.append(Hole(kind: .servo, polygon: open, note: name))
+                    servoCutouts.append((name, Poly.rect(center: .zero, size: webServoCut + Vec2(0.4, 0.4))))
+                }
+                if c.batteryPosition + c.battery.size.l / 2 + 3 > c.centralServosFrontU {
+                    issues.append("The battery reaches the servos centred on the plate – move it forward (Auto-balance) or use a smaller battery.")
+                }
+            } else {
+                upperHoles.append(servoCut("Elevator", center: s1, size: webServoCut, in: upperMain))
+                if hasRudder { upperHoles.append(servoCut("Rudder", center: s2, size: webServoCut, in: upperMain)) }
             }
+            if hasRudder { upperHoles.append(hornSlot(at: Vec2(uH + 6, rHornV))) }
             let lowerHoles: [Hole] = []
             if centralAileron && aw.h > hLowWing - 6 {
                 issues.append("The lower fuselage is too shallow for the upside-down aileron servo and its arm – increase the fuselage height.")
@@ -806,13 +866,15 @@ enum DesignBuilder {
                                          .zone(Poly.rect(center: Vec2(c.batteryPosition, -c.battery.size.w / 2 - 1), size: Vec2(c.battery.size.l, c.battery.size.w)), "Battery")] + lowerTruss,
                               instances: webX.map { .vertical(at: [$0, -t / 2, 0]) }, material: c.material))
 
-            let eBody: SIMD3<Double> = [0, t / 2 + s1.y, s1.x]
+            let eBody: SIMD3<Double> = central ? [0, 0, uEC] : [0, t / 2 + s1.y, s1.x]
+            // Centred on the plate the elevator servo's arm points down: its pushrod runs under the plate straight to
+            // the horn under the elevator.
             controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [eHornV, -(t / 2 + 9), uH + 2],
                                            servoPosition: eBody, area: Poly.area(elevator), chord: ef * hsc * 0.9, servoID: "Elevator",
-                                           armPosition: armTip(eBody, side: 1), hornAxis: [0, -1, 0]))
+                                           armPosition: armTip(eBody, side: 1, down: central), hornAxis: [0, -1, 0]))
             if hasRudder {
                 // Rudder horn on the left side of the rudder, servo arm on the left: pushrods never cross.
-                let rBody: SIMD3<Double> = [0, t / 2 + s2.y, s2.x]
+                let rBody: SIMD3<Double> = central ? [0, 0, uRC] : [0, t / 2 + s2.y, s2.x]
                 controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [-(tw / 2 + 8), t / 2 + rHornV, uH + 2],
                                                servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
                                                armPosition: armTip(rBody, side: -1), hornAxis: [-1, 0, 0]))
