@@ -168,11 +168,12 @@ struct ComponentLegend: View {
             ("Motor", Palette.motor, "\(c.motorCount) × \(c.motor.name) – stator base, red bell, shaft · \(c.motor.pattern.label) mount"),
             ("Propeller", Palette.prop, c.propRecommendation),
             ("Battery", Palette.battery, "\(c.battery.name), \(Int(c.battery.mass)) g on a printed tray – move it to balance"),
-            ("Servo", Palette.servo, "\(c.servo.name) in printed frames"),
+            ("Servo", Palette.servo, "\(c.servo.name), glued into flush cutouts"),
             ("ESC", Palette.esc, esc),
             ("Receiver", Palette.receiver, "Micro receiver, taped to the fuselage / wing"),
-            ("Servo arm", Palette.linkage, "Servo arms; the white lines are the Ø1 mm carbon pushrods"),
-            ("Printed parts", Palette.printed, "Motor mount, servo frames, horns, battery tray – exported as STL"),
+            ("Servo arm", Palette.linkage, "Servo arms as supplied with the servos (no STL)"),
+            ("Pushrod", Palette.steel, "Ø1 mm carbon rods with Ø0.8 mm steel-wire Z-bend ends, joined with heat-shrink (red)"),
+            ("Printed parts", Palette.printed, "Motor mount, horns, battery tray – exported as STL"),
         ]
         if c.sparEnabled || c.kind.isTwinBoom || !struts.isEmpty {
             list.append(("Carbon", Palette.carbon, [c.sparEnabled ? "\(c.sparSpec.name) wing spar" : nil, c.kind.isTwinBoom ? "\(CarbonSpar.tube4.name) tail booms" : nil,

@@ -64,6 +64,11 @@ enum Palette {
     static let esc = SIMD4<Float>(0.2, 0.82, 0.35, 1)
     static let receiver = SIMD4<Float>(0.1, 0.85, 0.92, 1)
     static let linkage = SIMD4<Float>(0.95, 0.95, 0.95, 1)
+    static let armDetail = SIMD4<Float>(0.55, 0.57, 0.62, 1)
+    static let steel = SIMD4<Float>(0.80, 0.83, 0.88, 1)
+    /// Pushrod carbon rod – lighter than the structural carbon so the thin rods stay visible from a distance.
+    static let pushrod = SIMD4<Float>(0.58, 0.62, 0.72, 1)
+    static let heatShrink = SIMD4<Float>(0.86, 0.30, 0.22, 1)
     static let cg = SIMD4<Float>(1.0, 0.2, 0.6, 1)
     static let edge = SIMD4<Float>(0.1, 0.12, 0.18, 0.55)
     static let grid = SIMD4<Float>(0.4, 0.7, 1.0, 0.12)
@@ -71,7 +76,7 @@ enum Palette {
     static func name(for c: SIMD4<Float>) -> String? {
         let all: [(SIMD4<Float>, String)] = [(depron, "Foam"), (epp, "Foam"), (control, "Control surface"), (carbon, "Carbon"), (motor, "Motor"),
                                              (battery, "Battery"), (servo, "Servo"), (printed, "Printed part"), (prop, "Propeller"),
-                                             (esc, "ESC"), (receiver, "Receiver"), (linkage, "Servo arm"), (cg, "Centre of gravity")]
+                                             (esc, "ESC"), (receiver, "Receiver"), (linkage, "Servo arm"), (steel, "Pushrod"), (pushrod, "Pushrod"), (heatShrink, "Pushrod"), (armDetail, "Servo arm"), (cg, "Centre of gravity")]
         return all.first { $0.0 == c }?.1
     }
 }
@@ -262,39 +267,76 @@ enum SceneBuilder {
                 scene.addMesh(PrintedParts.placedAnchor(end, dia: st.diameter, pad: true), color: Palette.printed)
             }
         }
-        // Linkages: servo arm (white), pushrod, and the printed horn standing out of the surface.
+        // Linkages: the servo arm as supplied with the servo, the pushrod (Ø1 mm carbon rod with Ø0.8 mm steel-wire
+        // Z-bend ends joined by heat-shrink) and the printed horn standing out of the surface.
         for ctrl in d.controls {
             let arm = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition
+            let th = ServoClass.armThickness
+            // Direction along which the pushrod's Z-bend crosses the arm (through its hole, towards the servo case).
+            var throughArm: SIMD3<Double> = [0, 0, 0]
             if ctrl.armPosition != .zero {
-                // The arm sits on the servo's output shaft, `armGap` off the case; the pushrod hangs on its outer side.
                 let shaft = ctrl.shaft(c.servo)
-                let gap = ServoClass.armGap, th = ServoClass.armThickness, hw2 = ServoClass.armWidth / 2
+                let gap = ServoClass.armGap
                 if ctrl.isDoubleArm {
-                    // Shaft down: hub from the case bottom to the arm, the arm horizontal, rods below its ends.
-                    let yTop = shaft.y - gap, yBot = yTop - th
-                    scene.label = "Double servo arm – both ailerons"
-                    scene.addMesh(.box(min: [-abs(arm.x) - hw2, yBot, arm.z - hw2], max: [abs(arm.x) + hw2, yTop, arm.z + hw2]), color: Palette.linkage)
-                    scene.addMesh(.box(min: [shaft.x - 2.2, yTop, shaft.z - 2.2], max: [shaft.x + 2.2, shaft.y, shaft.z + 2.2]), color: Palette.linkage)
+                    // Shaft down: spline hub below the case, the double arm horizontal across, pushrods below its ends.
+                    let yTop = shaft.y - gap
+                    let half = abs(arm.x - shaft.x)
+                    scene.label = "Double servo arm – both ailerons (comes with the servo)"
+                    scene.addMesh(armMesh(length: half, double: true, origin: [shaft.x, yTop, shaft.z], along: [1, 0, 0], across: [0, 0, 1], normal: [0, -1, 0]), color: Palette.linkage)
+                    scene.addMesh(placed(cylinderMesh(radius: 2.3, from: 0, to: gap), origin: [shaft.x, yTop, shaft.z], [1, 0, 0], [0, 0, 1], [0, 1, 0]), color: Palette.linkage)
+                    scene.label = "Servo arm screw"
+                    scene.addMesh(placed(cylinderMesh(radius: 1.1, from: -0.4, to: 0, segments: 12), origin: [shaft.x, yTop - th, shaft.z], [1, 0, 0], [0, 0, 1], [0, 1, 0]), color: Palette.armDetail)
+                    throughArm = [0, 1, 0]
                 } else {
-                    // Shaft sideways: hub from the case face to the arm, the arm from the shaft to the pushrod hole.
+                    // Shaft sideways: spline hub from the case face to the arm, the arm from the shaft to the pushrod hole.
                     let side: Double = arm.x >= ctrl.servoPosition.x ? 1 : -1
-                    let x0 = shaft.x + side * gap, x1 = x0 + side * th
-                    scene.label = "Servo arm – \(ctrl.name)"
-                    let lo = SIMD3<Double>(min(x0, x1), min(shaft.y, arm.y) - hw2, arm.z - hw2)
-                    let hi = SIMD3<Double>(max(x0, x1), max(shaft.y, arm.y) + hw2, arm.z + hw2)
-                    scene.addMesh(.box(min: lo, max: hi), color: Palette.linkage)
-                    scene.addMesh(.box(min: [min(shaft.x, x0), shaft.y - 2.2, shaft.z - 2.2], max: [max(shaft.x, x0), shaft.y + 2.2, shaft.z + 2.2]), color: Palette.linkage)
+                    let x0 = shaft.x + side * gap
+                    let up: Double = arm.y >= shaft.y ? 1 : -1
+                    let reach = simd_length(SIMD2(arm.y - shaft.y, arm.z - shaft.z))
+                    let dir = reach > 0.1 ? SIMD3<Double>(0, (arm.y - shaft.y) / reach, (arm.z - shaft.z) / reach) : [0, up, 0]
+                    let across = simd_cross([side, 0, 0], dir)
+                    scene.label = "Servo arm – \(ctrl.name) (comes with the servo)"
+                    scene.addMesh(armMesh(length: reach, double: false, origin: [x0, shaft.y, shaft.z], along: dir, across: across, normal: [side, 0, 0]), color: Palette.linkage)
+                    scene.addMesh(placed(cylinderMesh(radius: 2.3, from: -gap, to: 0), origin: [x0, shaft.y, shaft.z], dir, across, [side, 0, 0]), color: Palette.linkage)
+                    scene.label = "Servo arm screw"
+                    scene.addMesh(placed(cylinderMesh(radius: 1.1, from: th, to: th + 0.4, segments: 12), origin: [x0, shaft.y, shaft.z], dir, across, [side, 0, 0]), color: Palette.armDetail)
+                    throughArm = [-side, 0, 0]
                 }
             }
-            scene.addLine(arm, ctrl.hornPosition, color: SIMD4(0.9, 0.9, 0.95, 0.9))
+            // Pushrod: steel Z-bend through the arm hole, steel end, heat-shrink joint, carbon rod, joint, steel end and
+            // Z-bend through the horn. Drawn about twice as thick as real (Ø2 / Ø1.5 mm) so the rods stay visible in the whole-model view.
+            let horn = ctrl.hornPosition
+            let len = simd_length(horn - arm)
+            if len > 1 {
+                let u = (horn - arm) / len
+                let steel = min(35, len * 0.3)
+                let a1 = arm + u * steel, h1 = horn - u * steel
+                scene.label = "Pushrod – \(ctrl.name): Ø1 mm carbon rod, Ø0.8 mm steel-wire Z-bend ends, heat-shrink joints"
+                scene.addMesh(rodMesh(a1, h1, radius: 1.0), color: Palette.pushrod)
+                scene.addMesh(rodMesh(arm, a1, radius: 0.75), color: Palette.steel)
+                scene.addMesh(rodMesh(h1, horn, radius: 0.75), color: Palette.steel)
+                for j in [a1, h1] { scene.addMesh(rodMesh(j - u * 5, j + u * 5, radius: 1.3), color: Palette.heatShrink) }
+                if simd_length(throughArm) > 0 {
+                    let p1 = arm + throughArm * (th + 1.1)
+                    scene.addMesh(rodMesh(arm, p1, radius: 0.75, cap: true), color: Palette.steel)
+                    scene.addMesh(rodMesh(p1, p1 - u * 2.5, radius: 0.75, cap: true), color: Palette.steel)
+                }
+                // Z-bend through the horn's pushrod hole (across the horn plate).
+                let ha = simd_normalize(ctrl.hornAxis)
+                let ey = simd_cross(ha, [0, 0, 1])
+                let hz = horn + ey * 1.4
+                scene.addMesh(rodMesh(horn - ey * 0.4, hz, radius: 0.75, cap: true), color: Palette.steel)
+                scene.addMesh(rodMesh(hz, hz + u * 2.5, radius: 0.75, cap: true), color: Palette.steel)
+                scene.addLine(arm, horn, color: Palette.strutLine)
+            }
             // The printed horn (same mesh as the STL): plate in the plane of the pushrod motion – horn axis and flight
             // direction –, tab in the slot 6 mm behind the hinge, pushrod hole above the hinge line.
             let a = simd_normalize(ctrl.hornAxis)
             let ex = SIMD3<Double>(0, 0, 1), ey = simd_cross(a, ex)
             let origin = ctrl.hornPosition - a * 9 + [0, 0, 4]
-            let horn = PrintedParts.controlHorn(foam: t).transformed { p in origin + ex * p.x + ey * p.y + a * p.z }
+            let hornMesh = PrintedParts.controlHorn(foam: t).transformed { p in origin + ex * p.x + ey * p.y + a * p.z }
             scene.label = "Control horn (printed) – \(ctrl.name)"
-            scene.addMesh(horn, color: Palette.printed)
+            scene.addMesh(hornMesh, color: Palette.printed)
         }
 
         scene.fitBounds()
@@ -436,6 +478,57 @@ enum SceneBuilder {
         func quad(_ p: SIMD3<Double>, _ q: SIMD3<Double>, _ r: SIMD3<Double>, _ s: SIMD3<Double>) { m.triangles += [(p, q, r), (p, r, s)] }
         quad(c[0], c[1], c[2], c[3]); quad(top[3], top[2], top[1], top[0])
         for i in 0..<4 { let j = (i + 1) % 4; quad(c[i], c[j], top[j], top[i]) }
+        return m
+    }
+
+    /// Places a mesh built in local coordinates (x, y, z) at `o` with the axes ex, ey, ez; mirrored frames keep their
+    /// triangles facing outward.
+    static func placed(_ m: Mesh3D, origin o: SIMD3<Double>, _ ex: SIMD3<Double>, _ ey: SIMD3<Double>, _ ez: SIMD3<Double>) -> Mesh3D {
+        var out = m.transformed { o + ex * $0.x + ey * $0.y + ez * $0.z }
+        if simd_dot(simd_cross(ex, ey), ez) < 0 { out.triangles = out.triangles.map { ($0.0, $0.2, $0.1) } }
+        return out
+    }
+
+    /// Cylinder along local z from `z0` to `z1`.
+    static func cylinderMesh(radius r: Double, from z0: Double, to z1: Double, segments n: Int = 20) -> Mesh3D {
+        Mesh3D.extrude(Poly.circle(.zero, r, segments: n), z0: z0, z1: z1)
+    }
+
+    /// Round rod from a to b (optionally with a little ball at each end so bends look continuous).
+    static func rodMesh(_ a: SIMD3<Double>, _ b: SIMD3<Double>, radius r: Double, cap: Bool = false) -> Mesh3D {
+        let l = simd_length(b - a)
+        guard l > 1e-6 else { return Mesh3D() }
+        let dir = (b - a) / l
+        let side = simd_normalize(abs(dir.y) < 0.9 ? simd_cross(dir, [0, 1, 0]) : simd_cross(dir, [1, 0, 0]))
+        let up = simd_cross(dir, side)
+        var m = placed(cylinderMesh(radius: r, from: 0, to: l, segments: 10), origin: a, side, up, dir)
+        if cap { m.append(sphere(center: b, radius: r)) }
+        return m
+    }
+
+    /// A servo arm as supplied with micro servos: a round hub tapering to a rounded tip (single) or to both tips
+    /// (double), `length` from the shaft to the outer pushrod hole, ServoClass.armThickness thick, with a row of
+    /// small holes. Built in the plane spanned by `along` / `across` from `origin` (the arm face nearest the case)
+    /// towards `normal`.
+    static func armMesh(length: Double, double: Bool, origin: SIMD3<Double>, along: SIMD3<Double>, across: SIMD3<Double>, normal: SIMD3<Double>) -> Mesh3D {
+        let hubR = 2.9, tipR = 1.5
+        let reach = length + 1.2           // a little past the outer hole
+        var pts = Poly.circle(Vec2(0, 0), hubR, segments: 24) + Poly.circle(Vec2(reach, 0), tipR, segments: 16)
+        if double { pts += Poly.circle(Vec2(-reach, 0), tipR, segments: 16) }
+        else { pts += Poly.circle(Vec2(-2.2, 0), 2.2, segments: 16) }      // short stub behind the hub
+        let outline = StrutPlanner.convexHull(pts)
+        let th = ServoClass.armThickness
+        var m = placed(Mesh3D.extrude(outline, z0: 0, z1: th), origin: origin, along, across, normal)
+        // Holes: small dark dots on the outer face (outer one is the pushrod's).
+        var dots = Mesh3D()
+        for k in 0..<4 {
+            let x = length - Double(k) * 2.2
+            guard x > hubR + 0.8 else { break }
+            for sx in double ? [1.0, -1.0] : [1.0] {
+                dots.append(placed(cylinderMesh(radius: 0.45, from: th, to: th + 0.05, segments: 8), origin: origin + along * (sx * x), along, across, normal))
+            }
+        }
+        m.append(dots)
         return m
     }
 

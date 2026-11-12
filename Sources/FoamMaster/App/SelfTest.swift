@@ -517,25 +517,28 @@ enum SelfTest {
     @MainActor static func servoViews(_ dir: URL) {
         let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
         guard let r = Renderer(view: view) else { return }
-        for kind in [AircraftKind.trainer, .aerobat, .glider] {
-            for n in [1, 2] {
+        for kind in AircraftKind.allCases {
+            for n in kind.allowsSingleAileronServo ? [1, 2] : [2] {
                 var c = kind.defaults
                 c.aileronServos = n; c = Project.balanced(c)
                 let d = DesignBuilder.build(c), a = Analysis(design: d)
-                for ctrl in d.controls where ctrl.name == "Elevator" || ctrl.name == "Rudder" {
+                for ctrl in d.controls where ctrl.name != "Left aileron" && ctrl.name != "Left elevon" {
                     let mid = (ctrl.servoPosition + ctrl.hornPosition) / 2
                     print("\(kind.rawValue) \(n) servo(s) \(ctrl.name): servo \(ctrl.servoPosition), arm \(ctrl.armPosition), shaft \(ctrl.shaft(c.servo)), horn \(ctrl.hornPosition)")
                     for (tag, pitch, yaw) in [("left", Float(-0.35), -Float.pi / 2 + 0.25), ("below", Float(-1.2), -Float.pi / 2 + 0.3), ("under", Float(-1.5), Float(0)), ("rear", Float(-0.3), Float.pi)] {
                         r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
                         r.target = SIMD3<Float>(Float(mid.x), Float(mid.y), Float(mid.z))
                         r.pitch = pitch; r.yaw = yaw; r.zoom = 0.75
-                        if let img = r.snapshot(width: 1000, height: 600) { savePNG(img, dir.appendingPathComponent("\(kind.rawValue)_\(n)_\(ctrl.name.lowercased())_\(tag).png")) }
+                        if let img = r.snapshot(width: 1000, height: 600) { savePNG(img, dir.appendingPathComponent("\(kind.rawValue)_\(n)_\(ctrl.name.lowercased().replacingOccurrences(of: " ", with: "_"))_\(tag).png")) }
                     }
                     let shaft = ctrl.shaft(c.servo)
                     r.setScene(SceneBuilder.aircraft(d, a, deflection: 0, showCG: false), resetCamera: true)
                     r.target = SIMD3<Float>(Float(shaft.x), Float(shaft.y), Float(shaft.z))
-                    r.pitch = -0.5; r.yaw = -Float.pi / 2 + 0.4; r.zoom = 0.08
-                    if let img = r.snapshot(width: 800, height: 600) { savePNG(img, dir.appendingPathComponent("\(kind.rawValue)_\(n)_\(ctrl.name.lowercased())_servo.png")) }
+                    // From the arm side, from above an upward / sideways arm and from below a downward one.
+                    let sx: Float = ctrl.armPosition.x >= ctrl.servoPosition.x ? 1 : -1
+                    let sy: Float = ctrl.isDoubleArm || ctrl.armPosition.y < ctrl.servoPosition.y - 1 ? -1 : 1
+                    r.pitch = sy * 0.55; r.yaw = sx * (Float.pi / 2 - 0.55); r.zoom = 0.12
+                    if let img = r.snapshot(width: 800, height: 600) { savePNG(img, dir.appendingPathComponent("\(kind.rawValue)_\(n)_\(ctrl.name.lowercased().replacingOccurrences(of: " ", with: "_"))_servo.png")) }
                 }
             }
         }
