@@ -9,6 +9,10 @@ struct FoamMasterApp: App {
 
     init() {
         let args = CommandLine.arguments
+        if args.contains("--fuzz") {
+            MainActor.assumeIsolated { SelfTest.fuzz() }
+            exit(0)
+        }
         if args.contains("--surfacecheck") {
             MainActor.assumeIsolated { SelfTest.surfaceCheck() }
             exit(0)

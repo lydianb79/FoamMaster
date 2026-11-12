@@ -399,6 +399,17 @@ enum DesignBuilder {
         /// vertical fuselage web it passes through the web (L×W cutout) like on profile planes.
         /// The arm points up at neutral, so the pushrod runs straight fore-aft to a horn at the same x.
         /// Returns the pushrod end at the arm: arm length from the shaft, on the arm's outer side.
+        /// Span stations of an aileron (from the half-span station `a0` out to `a1`). Where the wing is too short for
+        /// one (e.g. booms far out on a small wing), the design is flagged and a short aileron at the tip keeps the
+        /// geometry valid instead of an inverted range.
+        mutating func aileronSpan(from a0: Double, to a1: Double, what: String) -> ClosedRange<Double> {
+            if a1 - a0 < 20 {
+                issues.append("No room for the ailerons between the \(what) and the wing tip – increase the wingspan\(what == "booms" ? " or reduce the stab span" : "").")
+                let hi = max(a1, 12)
+                return max(2, hi - 20)...hi
+            }
+            return a0...a1
+        }
         func armTip(_ center: SIMD3<Double>, side: Double, down: Bool = false) -> SIMD3<Double> {
             let sv = c.servo.size
             return center + [side * (sv.h / 2 + ServoClass.rodOffset), (down ? -1 : 1) * c.servo.armLength, sv.l / 2 - 5]
@@ -678,7 +689,7 @@ enum DesignBuilder {
                                     sweep: c.sweep - w.le(hw), semiSpan: span)
             let central = centralAileron
             let a0 = central ? 3 : max(8, s * 0.3 - hw)
-            let surfaces: [ClosedRange<Double>] = c.hasAilerons ? [a0...(span - 10 - wingTipRadius)] : []
+            let surfaces: [ClosedRange<Double>] = c.hasAilerons ? [aileronSpan(from: a0, to: span - 10 - wingTipRadius, what: "fuselage")] : []
             let out = half.build(full: false, surfaces: surfaces, fraction: f)
             let ua = half.le(0), ub = half.te(0)
             let tabUs = [ua + (ub - ua) * 0.3, ua + (ub - ua) * 0.72]
@@ -982,7 +993,7 @@ enum DesignBuilder {
             // --- Wing (one piece) with prop slot, ailerons and joints for nose and tail plates.
             let fA = c.controlChordPct
             let a0 = max(slotHalf + 12, s * 0.35)
-            let out = w.build(full: true, surfaces: c.hasAilerons ? [a0...(s - 8 - wingTipRadius)] : [], fraction: fA)
+            let out = w.build(full: true, surfaces: c.hasAilerons ? [aileronSpan(from: a0, to: s - 8 - wingTipRadius, what: "prop slot")] : [], fraction: fA)
             var wingOutline = out.outline, wingMain = out.main
             if wingTipRadius > 0 {
                 let r = rounded([wingOutline, wingMain], corners: [Vec2(w.le(s), s), Vec2(w.te(s), s), Vec2(w.le(s), -s), Vec2(w.te(s), -s)], radius: wingTipRadius)
@@ -1159,7 +1170,7 @@ enum DesignBuilder {
             // One-piece wing; the pod nose plate keys into its leading edge.
             let fA = c.controlChordPct
             let a0 = max(s * 0.3, xb + 14)
-            let out = w.build(full: true, surfaces: c.hasAilerons ? [a0...(s - 10 - wingTipRadius)] : [], fraction: fA)
+            let out = w.build(full: true, surfaces: c.hasAilerons ? [aileronSpan(from: a0, to: s - 10 - wingTipRadius, what: "booms")] : [], fraction: fA)
             var wingOutline = out.outline, twinMain = out.main
             if wingTipRadius > 0 {
                 let r = rounded([wingOutline, twinMain], corners: [Vec2(w.le(s), s), Vec2(w.te(s), s), Vec2(w.le(s), -s), Vec2(w.te(s), -s)], radius: wingTipRadius)

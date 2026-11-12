@@ -513,6 +513,47 @@ enum SelfTest {
         for e in examples { print("  · " + e) }
     }
 
+    /// Crash fuzz: every type × setup option, every slider of the fix finder swept from its minimum to its maximum
+    /// (11 stations, alone and on random airframes), plus random airframes with sliders at their range ends – each
+    /// built, analysed and drawn. A crash here is a trap; the count says how much was covered.
+    @MainActor static func fuzz() {
+        var builds = 0
+        let t0 = Date()
+        func run(_ c: AircraftConfig) {
+            let d = DesignBuilder.build(c)
+            let a = Analysis(design: d)
+            _ = SceneBuilder.aircraft(d, a, deflection: 1, showCG: true)
+            builds += 1
+        }
+        for kind in AircraftKind.allCases {
+            let bases = Project.setupChoices(kind).map { Project.setupConfig(kind, $0) } + (0..<12).map { _ in AircraftConfig.random(kind: kind) }
+            for (bi, base) in bases.enumerated() {
+                for p in FixFinder.params where p.applies(base) {
+                    let r = AircraftConfig.range(p.key, kind: kind)
+                    for k in 0...10 {
+                        var c = base
+                        c[keyPath: p.key] = r.lowerBound + (r.upperBound - r.lowerBound) * Double(k) / 10
+                        if p.key == \AircraftConfig.rootChord { c.tipChord = min(c.tipChord, c[keyPath: p.key]) }
+                        run(c)
+                    }
+                }
+                if bi % 4 == 0 { print("   \(kind.title): \(builds) builds so far") }
+            }
+            for _ in 0..<150 {
+                var c = AircraftConfig.random(kind: kind)
+                for p in FixFinder.params where p.applies(c) && Bool.random() {
+                    let r = AircraftConfig.range(p.key, kind: kind)
+                    c[keyPath: p.key] = Bool.random() ? r.lowerBound : r.upperBound
+                }
+                c.tipChord = min(c.tipChord, c.rootChord)
+                c.aileronServos = Bool.random() ? 1 : 2
+                c.motorLayout = Bool.random() ? .dualTractor : .single
+                run(c)
+            }
+        }
+        print(String(format: "fuzz: %d builds without a crash, %.0f s", builds, Date().timeIntervalSince(t0)))
+    }
+
     /// Surface preview directions on every type: slider right must be a right turn (right aileron / elevon up, left
     /// down, rudder right, elevator up), slider left the mirror image; and every horn must follow its surface.
     @MainActor static func surfaceCheck() {
