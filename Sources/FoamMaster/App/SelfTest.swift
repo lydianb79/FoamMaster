@@ -513,6 +513,38 @@ enum SelfTest {
         for e in examples { print("  · " + e) }
     }
 
+    /// Surface preview at both ends of the slider for every type (seen from behind, above), plus a tail close-up.
+    @MainActor static func deflectViews(_ dir: URL) {
+        let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+        guard let r = Renderer(view: view) else { return }
+        for kind in AircraftKind.allCases {
+            var c = kind.defaults
+            if kind.allowsSingleAileronServo { c.aileronServos = 1 }
+            c = Project.balanced(c)
+            let d = DesignBuilder.build(c), a = Analysis(design: d)
+            for defl in [-1.0, 1.0] {
+                r.setScene(SceneBuilder.aircraft(d, a, deflection: defl, showCG: false), resetCamera: true)
+                r.yaw = 0.45; r.pitch = 0.3; r.zoom = 0.9
+                if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("\(kind.rawValue)_\(defl > 0 ? "plus" : "minus").png")) }
+                for ctrl in d.controls where ctrl.armPosition != .zero && !ctrl.name.hasPrefix("Left") {
+                    let sh = ctrl.shaft(c.servo)
+                    r.setScene(SceneBuilder.aircraft(d, a, deflection: defl, showCG: false), resetCamera: true)
+                    r.target = SIMD3<Float>(Float(sh.x), Float(sh.y), Float(sh.z))
+                    let sx: Float = ctrl.armPosition.x >= ctrl.servoPosition.x ? 1 : -1
+                    let sy: Float = ctrl.isDoubleArm || ctrl.armPosition.y < ctrl.servoPosition.y - 1 ? -1 : 1
+                    r.pitch = sy * (ctrl.isDoubleArm ? 1.3 : 0.4); r.yaw = sx * (Float.pi / 2 - 0.2); r.zoom = 0.1
+                    if let img = r.snapshot(width: 800, height: 600) { savePNG(img, dir.appendingPathComponent("\(kind.rawValue)_\(defl > 0 ? "plus" : "minus")_arm_\(ctrl.name.lowercased().replacingOccurrences(of: " ", with: "_")).png")) }
+                }
+                if let tail = d.controls.first(where: { $0.name == "Elevator" || $0.name.contains("elevon") }) {
+                    r.setScene(SceneBuilder.aircraft(d, a, deflection: defl, showCG: false), resetCamera: true)
+                    r.target = SIMD3<Float>(Float(tail.hingeMid.x), Float(tail.hingeMid.y), Float(tail.hingeMid.z))
+                    r.yaw = -1.1; r.pitch = -0.35; r.zoom = 0.3
+                    if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("\(kind.rawValue)_\(defl > 0 ? "plus" : "minus")_tail.png")) }
+                }
+            }
+        }
+    }
+
     /// Close-ups of the servos, arms, pushrods and horns of the conventional types with one and two aileron servos.
     @MainActor static func servoViews(_ dir: URL) {
         let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())

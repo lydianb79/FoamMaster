@@ -86,6 +86,11 @@ enum SceneBuilder {
         var scene = SceneData()
         let base = d.config.material.family == .depron ? Palette.depron : Palette.epp
 
+        // Surface preview: the slider is one coherent control input – positive = pull and turn left: elevator and
+        // elevons trailing edge up, left aileron up / right aileron down, rudder trailing edge to the left – up to the
+        // type's maximum throw. Every moved surface is remembered so its horn, pushrod and servo arm follow.
+        let maxThrow = d.config.kind.maxSurfaceThrow * .pi / 180
+        var moves: [SurfaceMove] = []
         for part in d.parts {
             let regions = part.regions.isEmpty ? [Region(polygon: part.outline, isControl: false)] : part.regions
             let mainRegion = regions.first { !$0.isControl }?.polygon ?? part.outline
@@ -99,12 +104,22 @@ enum SceneBuilder {
                     var transform: (SIMD3<Double>) -> SIMD3<Double> = { $0 }
                     if r.isControl, deflection != 0, let axis = hingeAxis(part, r.polygon) {
                         let a3 = inst.point(axis.0), b3 = inst.point(axis.1)
-                        var angle = deflection * 0.45
                         let probe = inst.point(Poly.centroid(r.polygon))
-                        let q = simd_quatd(angle: angle, axis: simd_normalize(b3 - a3))
-                        if abs(inst.normal.y) > 0.5, (q.act(probe - a3) + a3).y < probe.y { angle = -angle }
-                        let qq = simd_quatd(angle: angle, axis: simd_normalize(b3 - a3))
+                        let test = simd_quatd(angle: 0.1, axis: simd_normalize(b3 - a3))
+                        let moved = test.act(probe - a3) + a3
+                        // Sign of a positive rotation about this hinge line for the wanted motion.
+                        let horizontal = abs(inst.normal.y) > 0.5
+                        let aileron = horizontal && part.role == .wing && d.config.kind.hasTail && !d.config.kind.isNutBall
+                        var sense: Double
+                        if horizontal {
+                            sense = moved.y > probe.y ? 1 : -1                      // trailing edge up
+                            if aileron && probe.x > 0 { sense = -sense }            // right aileron down
+                        } else {
+                            sense = moved.x < probe.x ? 1 : -1                      // trailing edge to the left
+                        }
+                        let qq = simd_quatd(angle: sense * deflection * maxThrow, axis: simd_normalize(b3 - a3))
                         transform = { qq.act($0 - a3) + a3 }
+                        moves.append(SurfaceMove(a: a3, b: b3, q: qq, normal: inst.normal))
                     }
                     addSlab(&scene, poly, holes: holes, placement: inst, thickness: part.thickness,
                             color: r.isControl ? Palette.control : base, transform: transform)
@@ -269,8 +284,42 @@ enum SceneBuilder {
         }
         // Linkages: the servo arm as supplied with the servo, the pushrod (Ø1 mm carbon rod with Ø0.8 mm steel-wire
         // Z-bend ends joined by heat-shrink) and the printed horn standing out of the surface.
+        var drawnDoubleArm = false
         for ctrl in d.controls {
-            let arm = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition
+            // The surface this control drives: hinge line through its hinge point, horn standing out of its face.
+            let move = moves.filter { abs(simd_dot(simd_normalize(ctrl.hornAxis), $0.normal)) > 0.7 }
+                .min { $0.distance(to: ctrl.hingeMid) < $1.distance(to: ctrl.hingeMid) }
+                .flatMap { $0.distance(to: ctrl.hingeMid) < 3 ? $0 : nil }
+            let moveHorn: (SIMD3<Double>) -> SIMD3<Double> = { p in move.map { $0.apply(p) } ?? p }
+            let rest = ctrl.armPosition == .zero ? ctrl.servoPosition : ctrl.armPosition
+            let horn = moveHorn(ctrl.hornPosition)
+            // Servo arm turned about its shaft so the pushrod keeps its length to the moved horn.
+            var armTurn = simd_quatd(angle: 0, axis: [0, 1, 0])
+            var pivot = rest
+            if ctrl.armPosition != .zero, move != nil {
+                let shaft = ctrl.shaft(c.servo)
+                let axis: SIMD3<Double> = ctrl.isDoubleArm ? [0, 1, 0] : [1, 0, 0]
+                pivot = shaft
+                let l0 = simd_distance(rest, ctrl.hornPosition)
+                func f(_ phi: Double) -> Double { simd_distance(simd_quatd(angle: phi, axis: axis).act(rest - shaft) + shaft, horn) - l0 }
+                var best = 0.0, bestErr = abs(f(0))
+                // Root nearest to 0 (scan outwards both ways, refine by bisection).
+                search: for k in 1...140 {
+                    for sgn in [1.0, -1.0] {
+                        let p0 = sgn * Double(k - 1) * 0.01, p1 = sgn * Double(k) * 0.01
+                        if abs(f(p1)) < bestErr { bestErr = abs(f(p1)); best = p1 }
+                        if f(p0) * f(p1) <= 0 {
+                            var lo = p0, hi = p1
+                            for _ in 0..<30 { let m = (lo + hi) / 2; if f(lo) * f(m) <= 0 { hi = m } else { lo = m } }
+                            best = (lo + hi) / 2
+                            break search
+                        }
+                    }
+                }
+                armTurn = simd_quatd(angle: best, axis: axis)
+            }
+            let turnArm: (SIMD3<Double>) -> SIMD3<Double> = { p in armTurn.act(p - pivot) + pivot }
+            let arm = turnArm(rest)
             let th = ServoClass.armThickness
             // Direction along which the pushrod's Z-bend crosses the arm (through its hole, towards the servo case).
             var throughArm: SIMD3<Double> = [0, 0, 0]
@@ -280,20 +329,23 @@ enum SceneBuilder {
                 if ctrl.isDoubleArm {
                     // Shaft down: spline hub below the case, the double arm horizontal across, pushrods below its ends.
                     let yTop = shaft.y - gap
-                    let half = abs(arm.x - shaft.x)
+                    let half = abs(rest.x - shaft.x)
+                    if !drawnDoubleArm {
+                    drawnDoubleArm = true
                     scene.label = "Double servo arm – both ailerons (comes with the servo)"
-                    scene.addMesh(armMesh(length: half, double: true, origin: [shaft.x, yTop, shaft.z], along: [1, 0, 0], across: [0, 0, 1], normal: [0, -1, 0]), color: Palette.linkage)
+                    scene.addMesh(armMesh(length: half, double: true, origin: [shaft.x, yTop, shaft.z], along: [1, 0, 0], across: [0, 0, 1], normal: [0, -1, 0]).transformed(turnArm), color: Palette.linkage)
                     scene.addMesh(placed(cylinderMesh(radius: 2.3, from: 0, to: gap), origin: [shaft.x, yTop, shaft.z], [1, 0, 0], [0, 0, 1], [0, 1, 0]), color: Palette.linkage)
                     scene.label = "Servo arm screw"
                     scene.addMesh(placed(cylinderMesh(radius: 1.1, from: -0.4, to: 0, segments: 12), origin: [shaft.x, yTop - th, shaft.z], [1, 0, 0], [0, 0, 1], [0, 1, 0]), color: Palette.armDetail)
+                    }
                     throughArm = [0, 1, 0]
                 } else {
                     // Shaft sideways: spline hub from the case face to the arm, the arm from the shaft to the pushrod hole.
-                    let side: Double = arm.x >= ctrl.servoPosition.x ? 1 : -1
+                    let side: Double = rest.x >= ctrl.servoPosition.x ? 1 : -1
                     let x0 = shaft.x + side * gap
                     let up: Double = arm.y >= shaft.y ? 1 : -1
                     let reach = simd_length(SIMD2(arm.y - shaft.y, arm.z - shaft.z))
-                    let dir = reach > 0.1 ? SIMD3<Double>(0, (arm.y - shaft.y) / reach, (arm.z - shaft.z) / reach) : [0, up, 0]
+                    let dir = reach > 0.1 ? SIMD3<Double>(0, (arm.y - shaft.y) / reach, (arm.z - shaft.z) / reach) : [0, up, 0]   // already turned
                     let across = simd_cross([side, 0, 0], dir)
                     scene.label = "Servo arm – \(ctrl.name) (comes with the servo)"
                     scene.addMesh(armMesh(length: reach, double: false, origin: [x0, shaft.y, shaft.z], along: dir, across: across, normal: [side, 0, 0]), color: Palette.linkage)
@@ -305,7 +357,6 @@ enum SceneBuilder {
             }
             // Pushrod: steel Z-bend through the arm hole, steel end, heat-shrink joint, carbon rod, joint, steel end and
             // Z-bend through the horn. Drawn about twice as thick as real (Ø2 / Ø1.5 mm) so the rods stay visible in the whole-model view.
-            let horn = ctrl.hornPosition
             let len = simd_length(horn - arm)
             if len > 1 {
                 let u = (horn - arm) / len
@@ -323,7 +374,7 @@ enum SceneBuilder {
                 }
                 // Z-bend through the horn's pushrod hole (across the horn plate).
                 let ha = simd_normalize(ctrl.hornAxis)
-                let ey = simd_cross(ha, [0, 0, 1])
+                let ey = simd_normalize(moveHorn(ctrl.hornPosition + simd_cross(ha, [0, 0, 1])) - horn)
                 let hz = horn + ey * 1.4
                 scene.addMesh(rodMesh(horn - ey * 0.4, hz, radius: 0.75, cap: true), color: Palette.steel)
                 scene.addMesh(rodMesh(hz, hz + u * 2.5, radius: 0.75, cap: true), color: Palette.steel)
@@ -334,7 +385,7 @@ enum SceneBuilder {
             let a = simd_normalize(ctrl.hornAxis)
             let ex = SIMD3<Double>(0, 0, 1), ey = simd_cross(a, ex)
             let origin = ctrl.hornPosition - a * 9 + [0, 0, 4]
-            let hornMesh = PrintedParts.controlHorn(foam: t).transformed { p in origin + ex * p.x + ey * p.y + a * p.z }
+            let hornMesh = PrintedParts.controlHorn(foam: t).transformed { p in moveHorn(origin + ex * p.x + ey * p.y + a * p.z) }
             scene.label = "Control horn (printed) – \(ctrl.name)"
             scene.addMesh(hornMesh, color: Palette.printed)
         }
@@ -550,5 +601,19 @@ enum SceneBuilder {
             }
         }
         return m
+    }
+}
+
+/// A control surface turned about its hinge line (surface preview).
+struct SurfaceMove {
+    var a: SIMD3<Double>, b: SIMD3<Double>
+    var q: simd_quatd
+    var normal: SIMD3<Double>
+    func apply(_ p: SIMD3<Double>) -> SIMD3<Double> { q.act(p - a) + a }
+    /// Distance of a point from the hinge segment.
+    func distance(to p: SIMD3<Double>) -> Double {
+        let ab = b - a
+        let k = min(max(simd_dot(p - a, ab) / max(simd_length_squared(ab), 1e-9), 0), 1)
+        return simd_distance(p, a + ab * k)
     }
 }
