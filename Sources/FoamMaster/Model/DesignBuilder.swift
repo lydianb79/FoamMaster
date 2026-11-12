@@ -371,6 +371,47 @@ enum DesignBuilder {
             else { buildConventional() }
             if c.hasSparJoiner { addSparJoinerPocket() }
             addElectronics()
+            addComponentZones()
+        }
+
+        /// Dashed placement zones on the plans for the ESC and receiver (taped to a foam face): the footprint of the
+        /// component on the face of the part it sits against, in that part's plan coordinates (once per part).
+        mutating func addComponentZones() {
+            let e = escSize
+            for item in components {
+                let size: SIMD3<Double>
+                let label: String
+                if item.name.hasPrefix("ESC") {
+                    size = (c.isDual || c.kind.isTailless) ? [e.y, e.z, e.x] : [e.z, e.y, e.x]
+                    label = "ESC"
+                } else if item.name.hasPrefix("Receiver") {
+                    size = c.kind.isTailless ? [10, 3, 14] : [3, 10, 14]
+                    label = "RX"
+                } else { continue }
+                let p = item.position
+                var best: (part: Int, rect: [Vec2], gap: Double)?
+                for (pi, part) in parts.enumerated() {
+                    for inst in part.instances {
+                        let n = inst.normal
+                        let rel = p - inst.origin
+                        let x = simd_dot(rel, inst.u), y = simd_dot(rel, inst.v), z = simd_dot(rel, n)
+                        // Half thickness of the component across this part's face.
+                        let across = abs(n.x) * size.x / 2 + abs(n.y) * size.y / 2 + abs(n.z) * size.z / 2
+                        let gap = abs(abs(z) - part.thickness / 2 - across)
+                        guard gap < 3, Poly.contains(part.outline, Vec2(x, y)) else { continue }
+                        let hu = abs(inst.u.x) * size.x / 2 + abs(inst.u.y) * size.y / 2 + abs(inst.u.z) * size.z / 2
+                        let hv = abs(inst.v.x) * size.x / 2 + abs(inst.v.y) * size.y / 2 + abs(inst.v.z) * size.z / 2
+                        let rect = Poly.rect(center: Vec2(x, y), size: Vec2(2 * hu, 2 * hv))
+                        if best == nil || gap < best!.gap { best = (pi, rect, gap) }
+                    }
+                }
+                guard let b = best else { continue }
+                let already = parts[b.part].features.contains {
+                    if case let .zone(poly, l) = $0 { return l == label && simd_distance(Poly.centroid(poly), Poly.centroid(b.rect)) < 1 }
+                    return false
+                }
+                if !already { parts[b.part].features.append(.zone(b.rect, label)) }
+            }
         }
 
         /// A tab station on the centre line moved just clear of the spar joiner pocket at the wing root (tabs go through

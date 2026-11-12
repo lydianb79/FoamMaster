@@ -398,30 +398,41 @@ enum PlanDrawer {
                 }
             }
         }
-        // --- Cutouts, slots, horn slots: size of the servo cutouts, and for every one its distance across and along to
-        // whatever is nearest – a part edge or the next cutout (chain dimensions through its centre).
-        let holeSheets = part.holes.map { $0.polygon.map(map) }
-        for (hi, h) in part.holes.enumerated() {
-            let sheet = holeSheets[hi]
-            let others = holeSheets.enumerated().filter { $0.offset != hi }.map(\.element)
-            let bb = Poly.bounds(sheet), c = (bb.min + bb.max) / 2
-            if h.kind == .servo {
-                // Size of the servo opening (the arm pocket is the step on one side).
-                let pocket = Poly.cleaned(h.polygon).count > 4
-                text("\(mm(bb.max.x - bb.min.x)) × \(mm(bb.max.y - bb.min.y))\(pocket ? " with arm pocket" : "")", at: Vec2(c.x, c.y + 1.3), size: 1.6, color: color, weight: .medium, centered: true)
+        // --- Everything placed on the part – cutouts, slots, horn slots, component zones (battery, ESC, receiver,
+        // joiner pocket, motor mount) and printed strut anchors / saddles: servo cutouts get their size, and every one
+        // its distance across and along to whatever is nearest – a part edge or the next mark (chain dimensions
+        // through its centre).
+        var marks: [(poly: [Vec2], color: NSColor)] = part.holes.map { ($0.polygon.map(map), $0.kind == .hornSlot ? hornColor : color) }
+        for f in part.features {
+            switch f {
+            case let .zone(poly, _): marks.append((poly.map(map), color))
+            case let .strutAnchor(c0, d0, size, _):
+                let w = Vec2(-d0.y, d0.x), hx = d0 * size.x / 2, hy = w * size.y / 2
+                marks.append(([c0 - hx - hy, c0 + hx - hy, c0 + hx + hy, c0 - hx + hy].map(map), strutColor))
+            case let .strutSaddle(poly, _), let .strutPlate(poly, _): marks.append((poly.map(map), strutColor))
+            default: break
             }
-            let dimC = h.kind == .hornSlot ? hornColor : color
-            // Horizontal: from the cutout's left / right edge to the nearest edge or cutout on that side (the shorter one).
+        }
+        for h in part.holes where h.kind == .servo {
+            // Size of the servo opening (the arm pocket is the step on one side).
+            let bb = Poly.bounds(h.polygon.map(map)), c = (bb.min + bb.max) / 2
+            let pocket = Poly.cleaned(h.polygon).count > 4
+            text("\(mm(bb.max.x - bb.min.x)) × \(mm(bb.max.y - bb.min.y))\(pocket ? " with arm pocket" : "")", at: Vec2(c.x, c.y + 1.3), size: 1.6, color: color, weight: .medium, centered: true)
+        }
+        for (mi, m) in marks.enumerated() {
+            let bb = Poly.bounds(m.poly), c = (bb.min + bb.max) / 2
+            let others = marks.enumerated().filter { $0.offset != mi }.map(\.element.poly)
+            // Horizontal: from the mark's left / right edge to the nearest edge or mark on that side (the shorter one).
             let xs = crossings(pts, y: c.y) + others.flatMap { crossings($0, y: c.y) }
             let left = xs.filter { $0 < bb.min.x - 0.3 }.max(), right = xs.filter { $0 > bb.max.x + 0.3 }.min()
             if let (x0, x1) = shorter(left.map { ($0, bb.min.x) }, right.map { (bb.max.x, $0) }) {
-                dimension(ctx, Vec2(x0, c.y), Vec2(x1, c.y), color: dimC, paper: paper)
+                dimension(ctx, Vec2(x0, c.y), Vec2(x1, c.y), color: m.color, paper: paper)
             }
-            // Vertical: from its top / bottom edge to the nearest edge or cutout above / below.
+            // Vertical: from its top / bottom edge to the nearest edge or mark above / below.
             let ys = crossings(pts, x: c.x) + others.flatMap { crossings($0, x: c.x) }
             let up = ys.filter { $0 < bb.min.y - 0.3 }.max(), down = ys.filter { $0 > bb.max.y + 0.3 }.min()
             if let (y0, y1) = shorter(up.map { ($0, bb.min.y) }, down.map { (bb.max.y, $0) }) {
-                dimension(ctx, Vec2(c.x, y0), Vec2(c.x, y1), color: dimC, paper: paper)
+                dimension(ctx, Vec2(c.x, y0), Vec2(c.x, y1), color: m.color, paper: paper)
             }
         }
     }
