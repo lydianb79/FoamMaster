@@ -225,8 +225,8 @@ struct AircraftConfig: Codable, Equatable {
     var motorLayout: MotorLayout = .single
     /// Winglets on tailed aircraft (tailless types choose winglets / centre fin via `taillessFins`).
     var tailWinglets: Bool = false
-    /// Carbon stabilisation struts per group. Auto: wing / tail struts when their stiffness check would fail with
-    /// an error, fin struts whenever other struts are fitted. On: always (also to clear a warning). Off: never.
+    /// Carbon stabilisation struts per group. Auto: wing / tail struts when their stiffness check would give a
+    /// warning or an error, fin struts whenever other struts are fitted. On: always. Off: never.
     var wingStruts: StrutMode = .auto
     var tailStruts: StrutMode = .auto
     var finStruts: StrutMode = .auto

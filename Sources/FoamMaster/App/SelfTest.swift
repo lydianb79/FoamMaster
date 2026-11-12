@@ -430,6 +430,30 @@ enum SelfTest {
 
     /// Randomizer quality: per type, how many random variants (power system chosen automatically, balanced) are
     /// feasible and how many score 100 – and the most common warnings / errors of the others.
+    /// Every type × every setup-sheet option: the build a new model starts with must pass every check (score 100).
+    @MainActor static func setupTest() {
+        var bad = 0, total = 0
+        for kind in AircraftKind.allCases {
+            for ch in Project.setupChoices(kind) {
+                total += 1
+                let t0 = Date()
+                let c = Project.feasibleSetup(kind, ch)
+                let d = DesignBuilder.build(c)
+                let a = Analysis(design: d)
+                let ok = d.geometryIssues.isEmpty && a.feasible && a.score == 100
+                if !ok {
+                    bad += 1
+                    let l = Analysis.batteryLimits(c)
+                    print(String(format: "      battery %@ at %.1f, fits %.1f…%.1f, nose %.0f, servo front %.1f, required %.1f", c.battery.name, c.batteryPosition, l.lowerBound, l.upperBound, c.noseLength, c.centralServosFrontU, a.requiredBatteryPosition))
+                }
+                let issues = a.checks.filter { $0.severity >= .warning }.map { "\($0.severity == .error ? "E" : "W") \($0.title)" } + d.geometryIssues.map { "G \($0)" }
+                print(String(format: "%@ %@ %@: score %d, %.0f ms, struts %d, %@ %@ %@ %@", ok ? "ok " : "BAD", kind.title, Project.setupKey(kind, ch), a.score,
+                             Date().timeIntervalSince(t0) * 1000, d.struts.count, c.fuselageType.name, c.material.displayName, c.servo.name, issues.joined(separator: "; ")))
+            }
+        }
+        print("setup builds at score 100: \(total - bad)/\(total)")
+    }
+
     @MainActor static func randomTest(count: Int = 40) {
         for kind in [AircraftKind.trainer, .glider] {
             let c = Project.balanced(kind.defaults)
@@ -437,21 +461,17 @@ enum SelfTest {
             let t1 = Date(); _ = Analysis(design: DesignBuilder.build(c))
             print(String(format: "   %@: one power search %.0f ms, one build + analysis %.0f ms", kind.title, t1.timeIntervalSince(t0) * 1000, Date().timeIntervalSince(t1) * 1000))
         }
-        Project.randomStats = (0, 0, 0)
         for kind in AircraftKind.allCases {
             var feasible = 0, perfect = 0, problems: [String: Int] = [:]
             let t0 = Date()
             for _ in 0..<count {
-                // Exactly what the Randomize button does.
-                guard let (_, a) = Project.randomVariant(like: Project.balanced(kind.defaults)) else { problems["E none found", default: 0] += 1; continue }
+                // Exactly what the Randomize button does (any score).
+                let a = Analysis(design: DesignBuilder.build(Project.randomDesign(like: Project.balanced(kind.defaults))))
                 if a.feasible { feasible += 1 }
                 if a.feasible && a.score == 100 { perfect += 1 }
                 for ch in a.checks where ch.severity >= .warning { problems["\(ch.severity == .error ? "E" : "W") \(ch.title)\(ch.title == "Geometry conflict" ? ": " + String(ch.detail.prefix(70)) : "")", default: 0] += 1 }
             }
             let ms = Date().timeIntervalSince(t0) * 1000 / Double(count)
-            print(String(format: "   (%@: avg %.1f candidates, %.1f passed the quick screen, %.1f power searches per variant)", kind.title,
-                         Double(Project.randomStats.candidates) / Double(count), Double(Project.randomStats.screened) / Double(count), Double(Project.randomStats.searches) / Double(count)))
-            Project.randomStats = (0, 0, 0)
             print("\(kind.title): feasible \(feasible)/\(count), score 100 \(perfect)/\(count), \(Int(ms)) ms each – " + problems.sorted { $0.value > $1.value }.prefix(6).map { "\($0.value)× \($0.key)" }.joined(separator: "; "))
         }
     }

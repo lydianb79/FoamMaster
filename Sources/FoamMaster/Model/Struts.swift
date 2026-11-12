@@ -4,7 +4,7 @@ import simd
 /// Carbon stabilisation struts: thin solid carbon rods that brace the wing and the tail boom as triangles (as on the
 /// superlite indoor profile planes). Each rod end sits in a small printed anchor glued onto the foam.
 enum StrutMode: String, CaseIterable, Identifiable, Codable {
-    /// Added only when the wing or fuselage would otherwise fail the stiffness checks.
+    /// Added whenever the wing or fuselage would otherwise get a stiffness warning or error.
     case auto
     /// Always fitted where the airframe allows it.
     case always
@@ -12,7 +12,7 @@ enum StrutMode: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
     var name: String { [.auto: "Auto", .always: "On", .off: "Off"][self]! }
     var detail: String {
-        [.auto: "Added only when the wing or fuselage would be too flexible",
+        [.auto: "Added whenever the wing or fuselage would be too flexible",
          .always: "Wing and tail struts wherever they fit",
          .off: "No struts – stiffness from foam and spar only"][self]!
     }
@@ -220,9 +220,9 @@ struct StrutPlanner {
         let c = d.config
         guard c.struts != .off else { return [] }
         let base = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed)
-        let needWing = c.wingStruts == .always || (c.wingStruts == .auto && base.wingDeflectionRatio * 100 >= StructureReport.wingErrorPct)
+        let needWing = c.wingStruts == .always || (c.wingStruts == .auto && base.wingDeflectionRatio * 100 >= StructureReport.wingWarnPct)
         let needTail = c.offersTailStruts && (c.tailStruts == .always || (c.tailStruts == .auto
-            && ((base.tailTwistDeg ?? 0) >= StructureReport.twistErrorDeg || (base.tailBendDeg ?? 0) >= StructureReport.bendErrorDeg)))
+            && ((base.tailTwistDeg ?? 0) >= StructureReport.twistWarnDeg || (base.tailBendDeg ?? 0) >= StructureReport.bendWarnDeg)))
         let wantFin = c.offersFinStruts && c.finStruts == .always
         guard needWing || needTail || wantFin else { return [] }
         let p = StrutPlanner(design: d, totalMass: totalMass, stallSpeed: stallSpeed)

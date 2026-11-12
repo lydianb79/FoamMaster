@@ -165,6 +165,14 @@ struct Analysis {
         return (m, stallSpeed(c, totalMass: m, wingArea: area))
     }
 
+    /// Battery position rounded to whole millimetres without leaving the room it fits in.
+    static func fittingPosition(_ p: Double, _ c: AircraftConfig) -> Double {
+        let l = batteryLimits(c)
+        let lo = l.lowerBound.rounded(.up), hi = l.upperBound.rounded(.down)
+        guard hi >= lo else { return (l.lowerBound + l.upperBound) / 2 }   // less than 1 mm of room: no rounding
+        return min(max(p.rounded(), lo), hi)
+    }
+
     static func batteryLimits(_ c: AircraftConfig) -> ClosedRange<Double> {
         if c.kind.isTailless {
             let front = c.battery.size.l / 2 - 8

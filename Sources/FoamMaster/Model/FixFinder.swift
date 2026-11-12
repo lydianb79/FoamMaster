@@ -40,7 +40,7 @@ enum FixFinder {
     static func evaluate(_ input: AircraftConfig) -> (config: AircraftConfig, analysis: Analysis) {
         var c = input
         let first = Analysis(design: DesignBuilder.build(c))
-        c.batteryPosition = first.bestBatteryPosition.rounded()
+        c.batteryPosition = Analysis.fittingPosition(first.bestBatteryPosition, c)
         return (c, Analysis(design: DesignBuilder.build(c)))
     }
 

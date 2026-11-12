@@ -95,7 +95,7 @@ struct GalleryContent: View {
     }
     private var previews: [ModelPreview] { Self.all }
     private static let all: [ModelPreview] = AircraftKind.allCases.map { k in
-        let d = DesignBuilder.build(k.recommended)
+        let d = DesignBuilder.build(Project.feasibleSetup(k, k.defaultSetupChoice))
         return ModelPreview(kind: k, design: d, analysis: Analysis(design: d))
     }
 
@@ -269,17 +269,15 @@ struct SetupSheet: View {
         _fins = State(initialValue: d.taillessFins)
     }
 
-    private var optionKey: String { "\(preview.kind.rawValue)-\(fins.rawValue)-\(layout.rawValue)-\(servos)-\(motors.rawValue)-\(winglets)" }
+    private var choice: SetupChoice { SetupChoice(fins: fins, layout: layout, servos: servos, motors: motors, winglets: winglets) }
+    private var optionKey: String { Project.setupKey(preview.kind, choice) }
+    /// Bumped when a background sizing run finishes, so the sheet picks up the cached build.
+    @State private var sizedRevision = 0
+    @State private var sizing = false
 
-    private var candidate: AircraftConfig {
-        var c = preview.kind.recommended
-        c.taillessFins = fins; c.motorLayout = motors
-        if preview.kind.offersWinglets { c.tailWinglets = winglets; if winglets { c.wingletHeight = preview.kind.isNutBall ? 50 : 45 } }
-        if preview.kind.hasTail { c.ailerons = layout.ailerons }
-        c.rudder = layout.rudder
-        c.aileronServos = preview.kind.allowsSingleAileronServo ? servos : 2
-        return c
-    }
+    /// The build "Start building" opens: sized to pass every check once ready, the plain options before that.
+    private var sized: AircraftConfig? { _ = sizedRevision; return Project.cachedSetup(preview.kind, choice) }
+    private var candidate: AircraftConfig { sized ?? Project.setupConfig(preview.kind, choice) }
 
     var body: some View {
         let kind = preview.kind
@@ -289,10 +287,20 @@ struct SetupSheet: View {
             HStack(spacing: 14) {
                 // Live render of exactly what is selected below (fins, control surfaces, servos, motors).
                 Group {
-                    if let img = Thumbnailer.image(for: DesignBuilder.build(Project.balanced(candidate)), key: optionKey) {
+                    if let c = sized, let img = Thumbnailer.image(for: DesignBuilder.build(c), key: "sized-" + optionKey) {
                         Image(nsImage: img).resizable().aspectRatio(contentMode: .fit)
+                    } else if let img = Thumbnailer.image(for: DesignBuilder.build(Project.balanced(candidate)), key: optionKey) {
+                        Image(nsImage: img).resizable().aspectRatio(contentMode: .fit).opacity(0.45)
                     } else {
                         ModelThumbnail(preview: preview)
+                    }
+                }
+                .overlay {
+                    if sized == nil {
+                        VStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Sizing for all checks …").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .frame(width: 300, height: 175)
@@ -355,9 +363,20 @@ struct SetupSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
-                PillButton(title: "Start building", symbol: "arrow.right.circle.fill", prominent: true) { start(SetupChoice(fins: fins, layout: layout, servos: servos, motors: motors, winglets: winglets)) }
+                PillButton(title: sized == nil ? "Sizing …" : "Start building", symbol: "arrow.right.circle.fill", prominent: true) { if sized != nil { start(choice) } }
                     .keyboardShortcut(.defaultAction)
+                    .disabled(sized == nil)
+                    .opacity(sized == nil ? 0.6 : 1)
             }
+        }
+        .task(id: optionKey) {
+            // Size this option set (all checks at score 100) in the background; cached after the first time.
+            guard Project.cachedSetup(preview.kind, choice) == nil else { return }
+            let kind = preview.kind, ch = choice
+            sizing = true
+            _ = await Task.detached(priority: .userInitiated) { Project.feasibleSetup(kind, ch) }.value
+            sizing = false
+            sizedRevision += 1
         }
         .padding(24)
         .frame(width: 680)

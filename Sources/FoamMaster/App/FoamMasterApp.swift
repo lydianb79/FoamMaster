@@ -9,6 +9,10 @@ struct FoamMasterApp: App {
 
     init() {
         let args = CommandLine.arguments
+        if args.contains("--setuptest") {
+            MainActor.assumeIsolated { SelfTest.setupTest() }
+            exit(0)
+        }
         if args.contains("--dualtest") {
             MainActor.assumeIsolated { SelfTest.dualTest() }
             exit(0)
@@ -100,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.applicationIconImage = icon
         }
         NSApp.activate(ignoringOtherApps: true)
+        Project.warmSetupCache()      // size every gallery setup in the background (cached on disk)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
