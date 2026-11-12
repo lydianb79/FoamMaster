@@ -805,7 +805,7 @@ enum DesignBuilder {
             var uRC = c.centralRudderServoU
             if c.hasRudder {
                 // Behind the spar; further aft while the opening would cut into a wing-joint notch of the plate.
-                while !Poly.containsAll(Poly.inset(plateOutline, by: 1.5), webServoOpening(uRC, side: -1)) && uRC < c.centralRudderServoU + 30 { uRC += 1 }
+                while !Poly.containsAll(Poly.inset(plateOutline, by: 1.5), webServoOpening(uRC, side: 1)) && uRC < c.centralRudderServoU + 30 { uRC += 1 }
             }
             // Notches: in the bottom edge of the upper half (for the servo tops and the aileron servo's frame on the
             // plate) and in the top edge of the lower half (servo bottoms, the aileron servo's arm). (u0, u1, depth)
@@ -892,11 +892,12 @@ enum DesignBuilder {
                     issues.append("The battery reaches the aileron servo centred on the plate – move it forward (Auto-balance) or use a smaller battery.")
                 }
             }
-            // Elevator / rudder servos pass through both webs and a flush opening in the plate, shafts on the left (arm
-            // pocket on the −x side): the elevator arm points down, the rudder arm up – the right side stays free for
-            // the battery.
-            for (name, u) in [("Elevator", uEC)] + (hasRudder ? [("Rudder", uRC)] : []) {
-                let open = webServoOpening(u, side: -1)
+            // Elevator / rudder servos pass through both webs and a flush opening in the plate (arm pocket on the shaft
+            // side): the elevator servo's shaft on the left with its arm pointing down (below the plate the right side
+            // stays free for the battery), the rudder servo's shaft on the right with its arm pointing up – elevator and
+            // rudder horns sit on opposite sides.
+            for (name, u, side) in [("Elevator", uEC, -1.0)] + (hasRudder ? [("Rudder", uRC, 1.0)] : []) {
+                let open = webServoOpening(u, side: side)
                 if !Poly.containsAll(plateOutline, open) {
                     issues.append("The \(name.lowercased()) servo opening does not fit in the fuselage plate – widen the plate or pick a smaller servo.")
                 }
@@ -949,11 +950,12 @@ enum DesignBuilder {
                                            servoPosition: eBody, area: Poly.area(elevator), chord: ef * hsc * 0.9, servoID: "Elevator",
                                            armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0]))
             if hasRudder {
-                // Rudder horn on the left side of the rudder, servo arm on the left: pushrods never cross.
+                // Rudder horn on the right side of the rudder, servo arm on the right (elevator on the left): the
+                // pushrods run on opposite sides and never cross.
                 let rBody: SIMD3<Double> = [0, 0, uRC]
-                controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [-(tw / 2 + 8), t / 2 + rHornV, uH + 2],
+                controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [tw / 2 + 8, t / 2 + rHornV, uH + 2],
                                                servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
-                                               armPosition: armTip(rBody, side: -1), hornAxis: [-1, 0, 0]))
+                                               armPosition: armTip(rBody, side: 1), hornAxis: [1, 0, 0]))
             }
 
             batteryPos = [tw / 2 + c.battery.size.h / 2, -c.batteryTop - c.battery.size.w / 2, c.batteryPosition]

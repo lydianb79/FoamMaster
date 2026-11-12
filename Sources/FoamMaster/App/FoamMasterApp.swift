@@ -9,6 +9,12 @@ struct FoamMasterApp: App {
 
     init() {
         let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--servoviews") {
+            let dir = URL(fileURLWithPath: i + 1 < args.count ? args[i + 1] : "servoviews")
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            MainActor.assumeIsolated { SelfTest.servoViews(dir) }
+            exit(0)
+        }
         if args.contains("--setuptest") {
             MainActor.assumeIsolated { SelfTest.setupTest() }
             exit(0)
