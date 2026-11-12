@@ -554,8 +554,8 @@ enum SelfTest {
         print(String(format: "fuzz: %d builds without a crash, %.0f s", builds, Date().timeIntervalSince(t0)))
     }
 
-    /// Surface preview directions on every type: slider right must be a right turn (right aileron / elevon up, left
-    /// down, rudder right, elevator up), slider left the mirror image; and every horn must follow its surface.
+    /// Surface preview directions on every type: slider right = right aileron / elevon up, left down, rudder right,
+    /// elevator down; slider left the mirror image; and every horn must follow its surface.
     @MainActor static func surfaceCheck() {
         var bad = 0
         for kind in AircraftKind.allCases {
@@ -580,7 +580,7 @@ enum SelfTest {
                                 if horizontal {
                                     got = dp.y
                                     if roll { want = (m.probe.x > 0 ? 1 : -1) * defl; label = "\(m.probe.x > 0 ? "right" : "left") \(name) \(dp.y > 0 ? "up" : "down")" }
-                                    else { want = defl; label = "\(name) \(dp.y > 0 ? "up" : "down")" }
+                                    else { want = -defl; label = "\(name) \(dp.y > 0 ? "up" : "down")" }
                                 } else { got = dp.x; want = defl; label = "\(name) TE \(dp.x > 0 ? "right" : "left")" }
                                 let ok = got * want > 0
                                 if !ok { bad += 1 }

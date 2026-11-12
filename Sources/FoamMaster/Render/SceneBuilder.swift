@@ -416,9 +416,9 @@ enum SceneBuilder {
 
     static func outlineWithNotches(_ part: Part, main: [Vec2]) -> [Vec2] { main }
 
-    /// Surface preview, up to the type's full throw: slider to the right = a right turn – right aileron / right elevon
-    /// trailing edge up, left one down, rudder trailing edge to the right, elevator up; to the left the mirror image
-    /// (left aileron / elevon up, right one down, rudder left, elevator down).
+    /// Surface preview, up to the type's full throw: slider to the right – right aileron / right elevon trailing edge
+    /// up, left one down, rudder trailing edge to the right, elevator down; to the left the mirror image (left
+    /// aileron / elevon up, right one down, rudder left, elevator up).
     static func surfaceMove(_ d: Design, _ part: Part, _ inst: Placement, _ region: [Vec2], deflection: Double) -> SurfaceMove? {
         guard let axis = hingeAxis(part, region) else { return nil }
         let a3 = inst.point(axis.0), b3 = inst.point(axis.1)
@@ -432,6 +432,7 @@ enum SceneBuilder {
         if horizontal {
             sense = moved.y > probe.y ? 1 : -1                      // + = trailing edge up
             if roll && probe.x < 0 { sense = -sense }               // left aileron / elevon goes the other way
+            if !roll { sense = -sense }                             // elevator: + = trailing edge down
         } else {
             sense = moved.x > probe.x ? 1 : -1                      // + = trailing edge to the right
         }
