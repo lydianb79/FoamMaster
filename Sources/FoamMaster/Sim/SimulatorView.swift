@@ -2,9 +2,67 @@ import SwiftUI
 import MetalKit
 import AppKit
 
-extension Notification.Name {
-    /// Posted by the Fly button: the simulator loads the design on screen.
-    static let flyDesign = Notification.Name("FoamMaster.flyDesign")
+/// One flight-simulator session: its own window, controller, renderer, sound and transmitter connection. Fly opens a
+/// new one for the design on screen (closing any earlier one); closing it (Exit, Esc, ⌘W, the close button) ends it
+/// and releases everything – nothing of one session can leak into the next.
+@MainActor
+final class SimSession: NSObject, NSWindowDelegate {
+    private(set) static var current: SimSession?
+    let window: NSWindow
+    let controller: SimController
+    private var enteredFullScreen = false
+
+    /// Opens the simulator for the project's design (a fresh session every time).
+    static func open(_ project: Project) {
+        var delay = 0.0
+        if let old = current {
+            delay = old.window.styleMask.contains(.fullScreen) ? 0.9 : 0   // let it leave its full-screen space first
+            old.close()
+        }
+        let s = SimSession(project)
+        current = s
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { s.show() }
+    }
+
+    init(_ project: Project) {
+        controller = SimController()
+        controller.load(project)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.title = "Flight Simulator"
+        window.titlebarAppearsTransparent = true
+        window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.fullScreenPrimary]
+        window.contentMinSize = NSSize(width: 900, height: 600)
+        window.contentView = NSHostingView(rootView: SimulatorView(ctl: controller).environmentObject(project))
+        super.init()
+        window.delegate = self
+        controller.exitAction = { [weak self] in self?.close() }
+    }
+
+    /// Shows the window, in full screen.
+    func show() {
+        guard Self.current === self else { return }
+        window.center()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        for delay in [0.05, 0.5, 1.2] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.goFullScreen() } }
+    }
+    private func goFullScreen() {
+        guard Self.current === self, window.isVisible, !enteredFullScreen else { return }
+        if window.styleMask.contains(.fullScreen) { enteredFullScreen = true; return }
+        window.toggleFullScreen(nil)
+    }
+    func close() { window.close() }
+
+    func windowWillEnterFullScreen(_ notification: Notification) { enteredFullScreen = true }
+    func windowDidBecomeKey(_ notification: Notification) { goFullScreen() }
+    func windowWillClose(_ notification: Notification) {
+        controller.shutdown()
+        if Self.current === self { Self.current = nil }
+        // Tear down the view (Metal view, renderer, HUD) once the window is gone.
+        DispatchQueue.main.async { [window] in window.contentView = nil }
+    }
 }
 
 /// Flight simulator state shared by the view, the HUD and the controls sheet.
@@ -23,17 +81,9 @@ final class SimController: ObservableObject {
     weak var renderer: SimRenderer?
     private(set) var loadedRevision = -1
 
-    private weak var project: Project?
-    private var flyObserver: NSObjectProtocol?
+    private(set) weak var project: Project?
 
-    init() {
-        autoZoom = SimControls.load().autoZoom
-        // Fly in the editor: load the design on screen, in the hand (whatever the simulator showed before).
-        flyObserver = NotificationCenter.default.addObserver(forName: .flyDesign, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { if let self, let p = self.project { self.load(p) } }
-        }
-    }
-    deinit { if let o = flyObserver { NotificationCenter.default.removeObserver(o) } }
+    init() { autoZoom = SimControls.load().autoZoom }
 
     func load(_ project: Project) {
         self.project = project
@@ -45,6 +95,7 @@ final class SimController: ObservableObject {
         input.useTrim(for: "\(d.config.kind.rawValue)/\(d.config.name)")
         renderer?.setAircraft(d, a)
         renderer?.sim = s
+        renderer?.simulating = true
         input.events = { [weak self] a in self?.event(a) }
     }
     func attach(_ r: SimRenderer, _ project: Project) {
@@ -68,18 +119,16 @@ final class SimController: ObservableObject {
         default: break
         }
     }
-    /// Closes the simulator window (set by the view).
+    /// Closes the simulator (set by its session).
     var exitAction: (() -> Void)?
-    /// The window is going away: silence and stop.
-    func windowClosed() {
+    /// The session ends: silence, stop flying, let go of the transmitter.
+    func shutdown() {
         audio.stop()
+        renderer?.simulating = false
         renderer?.sim = nil
+        renderer?.audio = nil
         input.releaseAll()
-    }
-    /// Shown again: the current design in the hand (the sound starts with its first frame).
-    func windowReopened(_ project: Project) {
-        guard renderer != nil else { return }
-        load(project)
+        sim = nil
     }
     func adjustTrim(_ d: Double) { input.adjustTrim(d); hud.trim = input.trim }
     func resetTrim() { input.setTrim(0); hud.trim = 0 }
@@ -106,82 +155,6 @@ final class SimMTKView: MTKView {
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); window?.makeFirstResponder(self) }
 }
 
-/// Invisible view in the simulator window: puts the window in full screen, reports it closing (rendering and
-/// sound stop there) and reopening (SwiftUI reuses the window of a single `Window` scene).
-final class SimWindowHook: NSView {
-    var onClose: (() -> Void)?
-    var onReopen: (() -> Void)?
-    private var closed = false
-    private var observers: [NSObjectProtocol] = []
-    private var enteredFullScreen = false
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        observers.forEach { NotificationCenter.default.removeObserver($0) }; observers = []
-        guard let w = window else { return }
-        // SwiftUI makes a single `Window` a full-screen auxiliary; the simulator gets its own full-screen space.
-        w.collectionBehavior.remove([.fullScreenAuxiliary, .fullScreenNone])
-        w.collectionBehavior.insert(.fullScreenPrimary)
-        w.styleMask.insert(.resizable)
-        enteredFullScreen = false
-        let nc = NotificationCenter.default
-        observers.append(nc.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak self] _ in
-            self?.closed = true
-            self?.onClose?()
-        })
-        observers.append(nc.addObserver(forName: NSWindow.willEnterFullScreenNotification, object: w, queue: .main) { [weak self] _ in
-            self?.enteredFullScreen = true
-        })
-        observers.append(nc.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: w, queue: .main) { [weak self] _ in
-            // A window closing out of full screen is still visible during its animation: only a window that is
-            // still up half a second later counts as reopened.
-            guard let self, self.closed, self.isUp else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                guard let self, self.closed, self.isUp else { return }
-                self.reopened()
-            }
-        })
-        observers.append(nc.addObserver(forName: NSWindow.didBecomeKeyNotification, object: w, queue: .main) { [weak self] _ in
-            guard let self else { return }
-            if self.closed, self.isUp { self.reopened() } else { self.goFullScreen() }
-        })
-        // Asked for now and again a little later: macOS ignores it while the window is still being set up.
-        askFullScreen()
-    }
-    private var isUp: Bool { guard let w = window else { return false }; return w.isVisible && w.occlusionState.contains(.visible) }
-    private func reopened() {
-        closed = false
-        enteredFullScreen = window?.styleMask.contains(.fullScreen) ?? false
-        onReopen?()
-        askFullScreen()
-    }
-    private func askFullScreen() {
-        for delay in [0.0, 0.4, 1.2] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.goFullScreen() } }
-    }
-    private func goFullScreen() {
-        guard let w = window, !closed, !enteredFullScreen, w.isVisible else { return }
-        if w.styleMask.contains(.fullScreen) { enteredFullScreen = true; return }
-        NSApp.activate(ignoringOtherApps: true)
-        w.makeKeyAndOrderFront(nil)
-        w.toggleFullScreen(nil)
-    }
-    deinit { observers.forEach { NotificationCenter.default.removeObserver($0) } }
-}
-
-struct SimWindowHookView: NSViewRepresentable {
-    var onClose: () -> Void
-    var onReopen: () -> Void
-    var onExitAction: (@escaping () -> Void) -> Void
-    func makeNSView(context: Context) -> SimWindowHook {
-        let v = SimWindowHook()
-        v.onClose = onClose
-        v.onReopen = onReopen
-        onExitAction { [weak v] in v?.window?.performClose(nil) }
-        return v
-    }
-    func updateNSView(_ v: SimWindowHook, context: Context) { v.onClose = onClose; v.onReopen = onReopen }
-}
-
 struct SimMetalView: NSViewRepresentable {
     @ObservedObject var controller: SimController
     var project: Project
@@ -205,7 +178,7 @@ struct SimMetalView: NSViewRepresentable {
 
 struct SimulatorView: View {
     @EnvironmentObject var project: Project
-    @StateObject private var ctl = SimController()
+    @ObservedObject var ctl: SimController
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -216,13 +189,10 @@ struct SimulatorView: View {
             }
             hud
         }
-        .background(SimWindowHookView(onClose: { [ctl] in ctl.windowClosed() },
-                                      onReopen: { [ctl, project] in ctl.windowReopened(project) }, onExitAction: { [ctl] f in ctl.exitAction = f }))
         .frame(minWidth: 900, minHeight: 600)
         .background(Color.black)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $ctl.showControls) { SimControlsSheet(input: ctl.input) { ctl.showControls = false } }
-        .onDisappear { ctl.audio.stop() }
         .onChange(of: project.revision) { _, _ in
             // A changed design is picked up whenever the plane is not in the air.
             if ctl.hud.phase != .flying { ctl.load(project) }
@@ -293,11 +263,13 @@ struct SimulatorView: View {
     private func statusText(_ h: SimController.HUD) -> String {
         switch h.phase {
         case .held:
-            let sw = ctl.input.controls.launchSwitch != nil ? " or flip the launch switch" : ""
+            let hasTx = ctl.input.joystick.snapshot(preferring: ctl.input.controls.deviceName) != nil
+            let sw = !hasTx ? "" : ctl.input.controls.launchSwitch != nil ? " or flip the launch switch"
+                : " (a transmitter switch can launch too: Controls… ▸ Launch & reset)"
             return "In your hand – set the throttle, then press \(keyName(ctl.input.controls.key(.launch)))\(sw) to let it go"
         case .flying: return String(format: "Flying · %.0f s", h.time)
         case .landed:
-            let sw = ctl.input.controls.resetSwitch != nil ? " or flip the reset switch" : ""
+            let sw = ctl.input.controls.resetSwitch != nil && ctl.input.joystick.snapshot(preferring: ctl.input.controls.deviceName) != nil ? " or flip the reset switch" : ""
             return h.message + " · press \(keyName(ctl.input.controls.key(.reset)))\(sw) to take it back in your hand"
         case .crashed: return h.message + " · back in your hand in a moment"
         }
@@ -355,6 +327,7 @@ struct SimControlsSheet: View {
             TabView {
                 keyboardTab.tabItem { Text("Keyboard") }
                 transmitterTab.tabItem { Text("Transmitter") }
+                launchTab.tabItem { Text("Launch & reset") }
                 ratesTab.tabItem { Text("Rates & expo") }
             }
             .frame(height: 430)
@@ -433,10 +406,7 @@ struct SimControlsSheet: View {
                         }
                     }
                     Divider()
-                    switchRow(dev, "Launch switch", \.launchSwitch, activeLabel: "LAUNCH",
-                              help: "Flip this switch on the transmitter to throw the model (like Space). Set it in the radio as a button or a channel; Detect takes whichever moves, the position you flip it to launches.")
-                    switchRow(dev, "Reset switch", \.resetSwitch, activeLabel: "RESET",
-                              help: "A switch or button that puts the model back in your hand (like the reset key) – any time, in the air or after a landing.")
+                    Text("Launch and reset switches: see the Launch & reset tab.").font(.system(size: 11)).foregroundStyle(.secondary)
                     Divider()
                     if calibrating {
                         Text("Move all sticks to every corner and the throttle from low to high. Then centre the sticks, throttle low, and press Finish.")
@@ -448,6 +418,41 @@ struct SimControlsSheet: View {
                 } else {
                     Text("No transmitter found. Connect your radio by USB and choose \u{201C}USB Joystick (HID)\u{201D} on it (EdgeTX / OpenTX: USB mode Joystick). Other USB joysticks and gamepads work too.")
                         .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    /// Launch and reset: the keys, and a switch / button on the transmitter for each (also without a radio connected,
+    /// so it is clear where to set them up).
+    private var launchTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("The model starts in your hand. Launch throws it, reset takes it back in your hand – from the keyboard, or with a switch or button on your transmitter.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text("Keyboard").font(.system(size: 12, weight: .semibold))
+                ForEach([SimAction.launch, .reset]) { a in
+                    HStack {
+                        Text(a == .launch ? "Launch key" : "Reset key").frame(width: 120, alignment: .leading)
+                        Button(capture == a ? "Press a key…" : keyName(controls.key(a))) { capture = a }.frame(width: 140)
+                    }
+                }
+                Divider()
+                Text("Transmitter").font(.system(size: 12, weight: .semibold))
+                if let dev = device {
+                    Text("Connected: \(dev.name) – \(dev.axes.count) axes, \(dev.buttons.count) buttons").font(.system(size: 11)).foregroundStyle(.secondary)
+                    switchRow(dev, "Launch switch", \.launchSwitch, activeLabel: "LAUNCH",
+                              help: "Press Detect, then flip the switch you want to the launch position – that flip throws the model (like the launch key). Works with a switch the radio sends as a button or as a channel (axis); Invert swaps the positions.")
+                    switchRow(dev, "Reset switch", \.resetSwitch, activeLabel: "RESET",
+                              help: "Press Detect, then flip or press the switch / button you want: the model is back in your hand, any time – in the air or after a landing.")
+                } else {
+                    Text("No transmitter connected. Connect your radio by USB and choose \u{201C}USB Joystick (HID)\u{201D} on it (EdgeTX / OpenTX: USB mode Joystick); the launch and reset switches can then be set here with Detect. In the radio, give the switches a channel (mixer) or a button in the USB joystick setup so they reach the computer.")
+                        .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if controls.launchSwitch != nil || controls.resetSwitch != nil {
+                        Text("Saved: " + [controls.launchSwitch.map { "launch on \(switchLabel($0))" }, controls.resetSwitch.map { "reset on \(switchLabel($0))" }].compactMap { $0 }.joined(separator: ", "))
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(8)
@@ -482,6 +487,9 @@ struct SimControlsSheet: View {
             }
             Text(help).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
+    }
+    private func switchLabel(_ m: SimControls.SwitchMapping) -> String {
+        (m.kind == .button ? "button \(m.index + 1)" : "axis \(m.index + 1)") + (m.inverted ? " (inverted)" : "")
     }
     private func switchTag(_ m: SimControls.SwitchMapping?) -> String {
         guard let m else { return "none" }

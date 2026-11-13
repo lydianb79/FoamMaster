@@ -83,30 +83,34 @@ final class SimRenderer: NSObject, MTKViewDelegate {
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
+    /// False while the simulator window is closed: nothing flies on and no sound starts (frames are still drawn).
+    var simulating = true
+
     func draw(in view: MTKView) {
         let now = CACurrentMediaTime()
         let dt = min(now - lastTime, 0.05)
         lastTime = now
-        guard let sim, let input else { return }
-        // Only while the simulator is on screen: a closed, hidden or minimised window (or one in a full-screen
-        // space you switched away from) neither flies on nor makes a sound – the sound fades out by itself.
-        guard let w = view.window, w.isVisible, w.occlusionState.contains(.visible) else { return }
-        let stick = input.update(dt)
-        sim.input = stick
-        sim.step(dt)
-        // After a crash: a second to take it in (and hear it), then the model is back in the hand.
-        if sim.state.phase == .crashed, sim.state.crashAge > 1 { sim.reset() }
-        tickAccum += dt
-        if tickAccum > 1.0 / 15 { tickAccum = 0; onTick?(sim, stick) }
-        audio?.update(sim: sim, eye: [0, 1.7, 0], dt: dt)
-        propAngle += Float(dt) * 2 * .pi * Float(20 * sim.surfaces.throttle)
-        propAngle = propAngle.truncatingRemainder(dividingBy: 2 * .pi * 100)
-        worldTime += Float(dt)
-
+        // The flight and its sound only advance while the simulator is on screen (closed, hidden, minimised or in a
+        // full-screen space you switched away from: paused, the sound fades out by itself). Drawing never stops, so
+        // the picture always shows the design that is loaded – never a frame left over from before.
+        let onScreen = view.window.map { $0.isVisible && ($0.occlusionState.contains(.visible) || $0.isKeyWindow) } ?? false
+        if let sim, let input, simulating, onScreen {
+            let stick = input.update(dt)
+            sim.input = stick
+            sim.step(dt)
+            // After a crash: a second to take it in (and hear it), then the model is back in the hand.
+            if sim.state.phase == .crashed, sim.state.crashAge > 1 { sim.reset() }
+            tickAccum += dt
+            if tickAccum > 1.0 / 15 { tickAccum = 0; onTick?(sim, stick) }
+            audio?.update(sim: sim, eye: [0, 1.7, 0], dt: dt)
+            propAngle += Float(dt) * 2 * .pi * Float(20 * sim.surfaces.throttle)
+            propAngle = propAngle.truncatingRemainder(dividingBy: 2 * .pi * 100)
+            worldTime += Float(dt)
+        }
         guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let cmd = queue.makeCommandBuffer(), let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
         let size = view.drawableSize
-        encode(enc, sim: sim, aspect: Float(size.width / max(size.height, 1)))
+        if let sim { encode(enc, sim: sim, aspect: Float(size.width / max(size.height, 1))) } else { enc.endEncoding() }
         cmd.present(drawable)
         cmd.commit()
     }

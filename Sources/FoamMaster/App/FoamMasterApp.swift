@@ -116,11 +116,7 @@ struct FoamMasterApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1480, height: 920)
-        // Flight simulator (opened with the Fly button in the editor).
-        Window("Flight Simulator", id: "simulator") {
-            SimulatorView().environmentObject(project)
-        }
-        .defaultSize(width: 1280, height: 800)
+        // (The flight simulator opens in its own window per session: SimSession, from the Fly button.)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About FoamMaster") { withAnimation { project.showAbout = true } }

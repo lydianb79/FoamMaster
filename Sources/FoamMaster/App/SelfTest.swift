@@ -777,18 +777,29 @@ enum SelfTest {
             inp.controls = saved
             print("Launch switch: button \(buttonOK ? "ok" : "PROBLEM"), axis (inverted) \(axisOK ? "ok" : "PROBLEM"); reset switch \(resetOK ? "ok" : "PROBLEM")")
         }
-        // Fly flies the design on screen: the simulator shows design A, the editor changes to B, Fly → B in the hand.
+        // Sessions: fly design A (launched, in the air), exit; change the design to B; Fly → a new session with B in
+        // the hand, and the first one shut down (no flight, no sound). Fly again while a session is open → replaced.
         do {
             let project = Project()
             project.config = Project.feasibleSetup(.trainer, AircraftKind.trainer.defaultSetupChoice)
-            let ctl = SimController()
-            ctl.load(project)
-            ctl.event(.launch)
+            SimSession.open(project)
+            let first = SimSession.current
+            first?.controller.event(.launch)
+            first?.controller.sim?.step(1)
+            let flewA = first?.controller.sim?.state.phase == .flying && first?.controller.title.contains("Park Trainer") == true
+            first?.close()
+            let closed = SimSession.current == nil && first?.controller.sim == nil && first?.controller.audio.isRunning == false
             var b = Project.feasibleSetup(.glider, AircraftKind.glider.defaultSetupChoice); b.name = "Fly test B"
             project.config = b
-            NotificationCenter.default.post(name: .flyDesign, object: nil)
-            let ok = ctl.title.hasPrefix("Fly test B") && ctl.sim?.state.phase == .held && ctl.sim?.model.mass == FlightModel(project.design!, project.analysis!).mass
-            print("Fly button: simulator holds \"\(ctl.title)\" in the hand\(ok ? "" : "  ← PROBLEM")")
+            SimSession.open(project)
+            let second = SimSession.current
+            let fresh = second !== first && second?.controller.title.hasPrefix("Fly test B") == true && second?.controller.sim?.state.phase == .held
+                && second?.controller.sim?.model.mass == FlightModel(project.design!, project.analysis!).mass
+            SimSession.open(project)
+            let replaced = SimSession.current !== second && second?.controller.sim == nil
+            SimSession.current?.close()
+            let ok = flewA && closed && fresh && replaced
+            print("Sessions: A flew \(flewA), exit shut it down \(closed), Fly after a design change holds B in the hand \(fresh), a new Fly replaces an open session \(replaced)\(ok ? "" : "  ← PROBLEM")")
         }
         // The sound lives only while frames come: a few frames start the engine, then none → it stops by itself.
         do {
