@@ -93,6 +93,8 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         case .aerobat, .jet, .flyingWing, .delta: return 3
         }
     }
+    /// Types whose single tractor prop the pilot can choose (size up to 8", 2 or 3 blades).
+    var allowsPropChoice: Bool { self == .trainer || self == .aerobat || self == .glider || self == .nutBall }
     var propBladeReason: String {
         switch self {
         case .trainer, .glider, .twinBoom, .nutBall: return "2-blade – most efficient, longest flight time"
@@ -239,6 +241,11 @@ struct AircraftConfig: Codable, Equatable {
     /// Centre fin height when a tailless type has both a centre fin and winglets (winglets use `wingletHeight`).
     var centreFinHeight: Double = 70
     var motorLayout: MotorLayout = .single
+    /// Propeller chosen by the pilot (single tractor on the Park Trainer, 3D Plane, Micro Glider and NutBall):
+    /// diameter in inches (nil = the motor's standard prop) and blade count (nil = the type's recommendation).
+    /// Optional, so older design files open unchanged.
+    var propSize: Double?
+    var propBladeChoice: Int?
     /// Winglets on tailed aircraft (tailless types choose winglets / centre fin via `taillessFins`).
     var tailWinglets: Bool = false
     /// Carbon stabilisation struts per group. Auto: wing / tail struts when their stiffness check would give a

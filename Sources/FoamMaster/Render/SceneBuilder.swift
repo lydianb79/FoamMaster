@@ -246,7 +246,7 @@ enum SceneBuilder {
                 // Same rotor as the bell (spins with Motor on): the blades turn so the leading edge advances – a
                 // mirrored prop the other way.
                 scene.spinGroup = rotor
-                scene.addMesh(propeller(radius: pr, blades: c.kind.propBlades, z: z, hub: r * 0.45, outward: out, mirrored: mirroredProp)
+                scene.addMesh(propeller(radius: pr, blades: c.propBladeCount, z: z, hub: r * 0.45, outward: out, mirrored: mirroredProp)
                                 .translated([p.x, 0, 0]), color: Palette.prop)
                 scene.spinGroup = -1
             case "Power" where item.name.hasPrefix("ESC"):

@@ -84,7 +84,7 @@ struct FlightModel {
         CYb = -0.35
         staticThrust = a.thrust * 9.81 / 1000
         stallSpeed = a.stallSpeed / 3.6
-        pitchSpeed = max(10, 3.2 * stallSpeed + 4)
+        pitchSpeed = max(10, 3.2 * stallSpeed + 4) * (c.customProp ? c.propModel.speed : 1)   // a lower-pitch prop runs out of thrust sooner
         // Inertia: wing mass spread over the span, the rest along the fuselage.
         let L = max(d.overallLength / 1000, b * 0.5)
         let mw = mass * 0.45

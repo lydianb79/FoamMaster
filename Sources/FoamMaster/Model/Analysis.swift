@@ -136,7 +136,9 @@ struct Analysis {
         wingLoading = totalMass / (wingArea * 1e-4)
         stallSpeed = Analysis.stallSpeed(c, totalMass: totalMass, wingArea: wingArea)
         // A prop smaller than the motor's standard size (jet) gives proportionally less static thrust.
-        thrust = c.motor.thrust(cells: c.battery.cells) * Double(c.motorCount) * c.propInches / c.motor.propInches
+        thrust = c.customProp
+            ? c.motor.thrust(cells: c.battery.cells) * Double(c.motorCount) * c.propModel.thrust
+            : c.motor.thrust(cells: c.battery.cells) * Double(c.motorCount) * c.propInches / c.motor.propInches
         thrustToWeight = thrust / max(totalMass, 1)
         let wPerKg: Double = [.glider: 70, .trainer: 100, .twinBoom: 110, .jet: 150, .flyingWing: 120, .delta: 140, .aerobat: 170, .nutBall: 110][c.kind]!
         let current = wPerKg * totalMass / 1000 / c.battery.voltage
@@ -224,6 +226,18 @@ struct Analysis {
             add(.warning, "Power", "Thrust/weight \(f1(thrustToWeight))", "Below the recommended \(f1(c.kind.minThrustToWeight)) for this type.")
         } else {
             add(.ok, "Power", "Thrust/weight \(f1(thrustToWeight))", "\(f0(thrust)) g static thrust for \(f0(totalMass)) g.")
+        }
+        // A prop of the pilot's own: the motor must cope with the current it asks for at full throttle.
+        if c.customProp {
+            let amps = c.fullThrottleCurrent, maxA = c.motor.maxCurrent
+            let prop = "\(f1(c.propInches)) × \(f1(c.propModel.pitch))\" \(c.propBladeCount)-blade"
+            if amps > maxA * 1.3 {
+                add(.error, "Power", "Prop overloads the motor", "The \(prop) prop draws about \(f1(amps)) A at full throttle – the \(c.motor.name) takes \(f0(maxA)) A. Use a smaller prop, 2 blades, or a bigger motor.")
+            } else if amps > maxA {
+                add(.warning, "Power", "Prop near the motor's limit", "The \(prop) prop draws about \(f1(amps)) A at full throttle (motor maximum \(f0(maxA)) A) – keep full-throttle bursts short.")
+            } else {
+                add(.ok, "Power", "Prop \(prop)", "About \(f1(amps)) A at full throttle of the motor's \(f0(maxA)) A.")
+            }
         }
         // Typical flat-foam weights grow with the span squared: ~250 g at 600 mm, ~450 g at 800 mm.
         let heavy = max(260, 260 * pow(c.wingspan / 600, 2))

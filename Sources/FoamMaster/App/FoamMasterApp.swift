@@ -33,6 +33,12 @@ struct FoamMasterApp: App {
             MainActor.assumeIsolated { SelfTest.trussCheck(dir) }
             exit(0)
         }
+        if let i = args.firstIndex(of: "--proptest") {
+            let dir: URL? = i + 1 < args.count ? URL(fileURLWithPath: args[i + 1]) : nil
+            if let dir { try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
+            MainActor.assumeIsolated { SelfTest.propTest(dir) }
+            exit(0)
+        }
         if let i = args.firstIndex(of: "--simtest") {
             let dir: URL? = i + 1 < args.count ? URL(fileURLWithPath: args[i + 1]) : nil
             if let dir { try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }

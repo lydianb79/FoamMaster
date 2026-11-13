@@ -169,6 +169,12 @@ struct ParameterContent: View {
                         PickerRow(label: "Motor", selection: manual(\.motor), options: MotorClass.allCases) { $0.name }
                         PickerRow(label: "Battery", selection: manual(\.battery), options: BatteryPack.allCases) { "\($0.name) · \(Int($0.mass)) g" }
                         PickerRow(label: "Servos", selection: bind(\.servo), options: ServoClass.allCases) { $0.name }
+                        if c.offersPropChoice {
+                            propChoice(c)
+                        } else if c.kind.allowsPropChoice {
+                            Text("Propeller: chosen automatically with the dual tractor (the prop size and blades can be picked with a single motor).")
+                                .font(.system(size: 9.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
                         if let d = project.design, let a = project.analysis {
                             // Full electronics list – the same items as under Materials ▸ Electronics.
                             Divider().opacity(0.3).padding(.vertical, 2)
@@ -253,6 +259,39 @@ struct ParameterContent: View {
         let parts = [wing > 0 ? "\(wing) wing" : nil, tail > 0 ? "\(tail) tail" : nil, fin > 0 ? "\(fin) fin" : nil, truss > 0 ? "\(truss) torsion-truss" : nil].compactMap { $0 }.joined(separator: " + ")
         let mass = struts.reduce(0) { $0 + $1.rodMass }
         return "\(parts) struts fitted (\(String(format: "%.1f", mass)) g carbon + printed anchors) – marked S1… on the plans"
+    }
+
+    /// Propeller of the pilot's own (single tractor): size 2.5–8" and 2 or 3 blades; off = the motor's standard prop
+    /// with the type's usual blades. The pitch follows from size, blades and battery; the current at full throttle shows
+    /// whether the motor copes.
+    @ViewBuilder private func propChoice(_ c: AircraftConfig) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: Binding(get: { c.customProp }, set: { on in
+                if on { project.config?.propSize = c.propInches; project.config?.propBladeChoice = c.propBladeCount }
+                else { project.config?.propSize = nil; project.config?.propBladeChoice = nil }
+            })) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Choose the propeller").font(.system(size: 12, weight: .semibold))
+                    Text(c.customProp ? "Your prop – the power system is matched to it" : "Off – the motor's standard \(String(format: "%g", c.propInches))\" prop, \(c.propBladeCount)-blade")
+                        .font(.system(size: 9.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch).tint(Theme.accent)
+            if c.customProp {
+                ParamSlider(label: "Prop diameter", unit: "in", value: Binding(get: { c.propInches }, set: { project.config?.propSize = $0 }),
+                            range: AircraftConfig.propSizeRange, step: 0.5)
+                Picker("", selection: Binding(get: { c.propBladeCount }, set: { project.config?.propBladeChoice = $0 })) {
+                    Text("Bi-blade (2)").tag(2)
+                    Text("Tri-blade (3)").tag(3)
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                let m = c.propModel
+                Text(String(format: "%g × %g\" %d-blade · ≈ %.1f A of the motor's %.0f A at full throttle · thrust %.0f %% of the standard prop",
+                            c.propInches, m.pitch, c.propBladeCount, c.fullThrottleCurrent, c.motor.maxCurrent, m.thrust * 100))
+                    .font(.system(size: 9.5)).foregroundStyle(c.fullThrottleCurrent > c.motor.maxCurrent ? Theme.orange : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private func range(_ kp: PartialKeyPath<AircraftConfig>, _ c: AircraftConfig) -> ClosedRange<Double> {

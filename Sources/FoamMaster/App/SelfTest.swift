@@ -661,6 +661,47 @@ enum SelfTest {
     }
 
     /// Flight model check on every type: hand launch hands-off, then each control – the response must go the right way.
+    /// Prop choice: on every type that offers it, sizes 3…8" with 2 and 3 blades on the type's setup, the power system
+    /// re-matched (auto) – thrust/weight, current, feasibility, geometry; the dual tractor ignores the choice; a design
+    /// without a choice is exactly as before. With a directory: 3D views of an 8" 3-blade per type.
+    @MainActor static func propTest(_ dir: URL? = nil) {
+        var problems = 0
+        for kind in AircraftKind.allCases where kind.allowsPropChoice {
+            let base = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+            var line = "\(kind.title) (standard \(String(format: "%g", base.propInches))\" \(base.propBladeCount)-blade, \(base.motor.name)):"
+            for size in [3.0, 4, 5, 6, 7, 8] { for blades in [2, 3] {
+                var c = base; c.propSize = size; c.propBladeChoice = blades
+                c = Project.powered(c)
+                let d = DesignBuilder.build(c), a = Analysis(design: d)
+                let geo = d.geometryIssues.isEmpty
+                if !geo { problems += 1 }
+                line += String(format: " %g\"×%d %@ T/W %.1f %.0fA%@;", size, blades, c.motor.name.split(separator: " ").first.map(String.init) ?? "", a.thrustToWeight, c.fullThrottleCurrent,
+                               a.feasible ? "" : " ✗", geo ? "" : " GEO")
+            }}
+            print(line)
+            if let dir {
+                var c = base; c.propSize = 8; c.propBladeChoice = 3; c = Project.powered(c)
+                let view = MTKView(frame: CGRect(x: 0, y: 0, width: 900, height: 600), device: MTLCreateSystemDefaultDevice())
+                if let r = Renderer(view: view) {
+                    let d = DesignBuilder.build(c)
+                    r.setScene(SceneBuilder.aircraft(d, Analysis(design: d), deflection: 0, showCG: false), resetCamera: true)
+                    r.target = SIMD3<Float>(Float(c.motorXs[0]), 0, Float(c.motorZ)); r.yaw = 0.9; r.pitch = 0.35; r.zoom = 0.45
+                    if let img = r.snapshot(width: 900, height: 600) { savePNG(img, dir.appendingPathComponent("prop_\(kind.rawValue)_8in_3blade.png")) }
+                }
+            }
+        }
+        // Dual tractor: the choice does not apply (standard prop, type's blades).
+        var dual = Project.feasibleSetup(.trainer, AircraftKind.trainer.defaultSetupChoice)
+        dual.motorLayout = .dualTractor; dual.propSize = 8; dual.propBladeChoice = 3
+        let dualOK = !dual.offersPropChoice && !dual.customProp && dual.propInches == dual.motor.propInches && dual.propBladeCount == AircraftKind.trainer.propBlades
+        // No choice: thrust as before (factor 1).
+        let plain = Project.feasibleSetup(.aerobat, AircraftKind.aerobat.defaultSetupChoice)
+        let plainOK = !plain.customProp && plain.propModel.thrust == 1 && plain.propModel.power == 1
+        if !dualOK || !plainOK { problems += 1 }
+        print("dual tractor ignores the choice: \(dualOK), designs without a choice unchanged: \(plainOK)")
+        print("prop test: \(problems == 0 ? "ok" : "\(problems) problems")")
+    }
+
     @MainActor static func simTest(_ dir: URL? = nil) {
         for kind in AircraftKind.allCases {
             let c = Project.feasibleSetup(kind, kind.defaultSetupChoice)

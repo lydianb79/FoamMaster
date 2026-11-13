@@ -114,10 +114,50 @@ extension AircraftConfig {
 
     /// Prop diameter used (inches). The jet's prop spins in a slot through the wing: it is kept to 4" so the slot
     /// stays short, the wing root keeps its strength and the prop clears the ground on belly landings.
-    var propInches: Double { kind.isJet ? min(motor.propInches, 4) : motor.propInches }
+    /// Whether the pilot can choose the prop: the type allows it and it flies one tractor motor (not the dual tractor).
+    var offersPropChoice: Bool { kind.allowsPropChoice && !isDual }
+    /// A prop of the pilot's own (size or blades) is set and applies.
+    var customProp: Bool { offersPropChoice && (propSize != nil || propBladeChoice != nil) }
+    static let propSizeRange: ClosedRange<Double> = 2.5...8
+    var propInches: Double {
+        if offersPropChoice, let s = propSize { return min(max(s, Self.propSizeRange.lowerBound), Self.propSizeRange.upperBound) }
+        return kind.isJet ? min(motor.propInches, 4) : motor.propInches
+    }
     var propRadius: Double { propInches * 25.4 / 2 }
+    var propBladeCount: Int { offersPropChoice ? (propBladeChoice ?? kind.propBlades) : kind.propBlades }
+
+    /// The chosen prop on this motor and battery, relative to the motor's standard prop with the type's usual blades
+    /// (factors 1 for the standard prop). Pitch is the usual pitch-to-diameter ratio for the cell count, lowered on
+    /// a prop bigger than the motor's standard one so it asks for at most 60 % more power at the motor's rpm (never
+    /// below 0.25 × D). Power the prop absorbs at that rpm ∝ blades × D⁴ × pitch (3-blade ≈ 1.27 × a 2-blade); the motor
+    /// slows under the load, so the power it really delivers grows only with the square root of that. Static thrust
+    /// (momentum theory) ∝ P^(2/3) · D^(2/3), a 3-blade ≈ 6 % less efficient. Speed ∝ pitch × rpm.
+    struct PropModel { var pitch: Double; var thrust: Double; var power: Double; var speed: Double }
+    var propModel: PropModel {
+        let ratio = (battery.cells <= 1 ? 0.6 : (battery.cells == 2 ? 0.55 : 0.45))
+        func basePitch(_ d: Double, _ blades: Int) -> Double { d * (ratio - (blades >= 3 ? 0.05 : 0)) }
+        let d0 = motor.propInches, b0 = kind.propBlades
+        let p0 = basePitch(d0, b0)
+        guard customProp else { return PropModel(pitch: (basePitch(propInches, b0) * 2).rounded() / 2, thrust: 1, power: 1, speed: 1) }
+        let d = propInches, b = propBladeCount
+        func bladeLoad(_ n: Int) -> Double { n >= 3 ? 1.27 : 1 }
+        var pitch = basePitch(d, b)
+        let cap = 1.6 * bladeLoad(b0) * pow(d0, 4) * p0 / (bladeLoad(b) * pow(d, 4))
+        if d > d0 { pitch = max(min(pitch, cap), 0.25 * d) }
+        pitch = (pitch * 2).rounded() / 2
+        let load = bladeLoad(b) * pow(d, 4) * pitch / (bladeLoad(b0) * pow(d0, 4) * p0)
+        let power = load.squareRoot()
+        let eff = (b >= 3 ? 0.94 : 1) / (b0 >= 3 ? 0.94 : 1)
+        // An overloaded motor cannot give more than about 1.6 × its standard power (it sags, the ESC limits).
+        let thrust = pow(min(power, 1.6), 2.0 / 3) * pow(d / d0, 2.0 / 3) * eff
+        let rpm = pow(power / load, 1.0 / 3)
+        return PropModel(pitch: pitch, thrust: thrust, power: power, speed: pitch / p0 * rpm)
+    }
+    /// Current at full throttle per motor (A): the standard prop draws about 80 % of the motor's maximum.
+    var fullThrottleCurrent: Double { motor.maxCurrent * 0.8 * propModel.power }
     var propRecommendation: String {
-        motor.propRecommendation(cells: battery.cells, pusher: isPusher, blades: kind.propBlades, pair: isDual, diameter: propInches)
+        motor.propRecommendation(cells: battery.cells, pusher: isPusher, blades: propBladeCount, pair: isDual, diameter: propInches,
+                                 pitch: customProp ? propModel.pitch : nil)
     }
     /// Gap kept between the prop (tips and blade faces) and any foam or structure.
     static let propClearance = 5.0
@@ -1742,7 +1782,8 @@ enum DesignBuilder {
             for (i, x) in c.motorXs.enumerated() {
                 let tag = c.isDual ? (i == 0 ? " (left)" : " (right)") : ""
                 components.append(MassItem(name: c.motor.name + tag, mass: c.motor.mass, position: [x, 0, motorZ], category: "Power"))
-                components.append(MassItem(name: "Propeller\(tag)", mass: c.propInches * 0.35, position: [x, 0, c.propPlaneZ], category: "Power"))
+                components.append(MassItem(name: "Propeller\(tag)", mass: c.propInches * 0.35 * (c.customProp ? Double(c.propBladeCount) / Double(c.kind.propBlades) : 1),
+                                          position: [x, 0, c.propPlaneZ], category: "Power"))
                 components.append(MassItem(name: "Motor mount (printed)\(tag)", mass: 1.5 + c.motor.mass * 0.12, position: [x, 0, c.firewallZ], category: "Printed"))
                 components.append(MassItem(name: "ESC\(tag)", mass: c.motor.escMass, position: escPosition(motorX: x), category: "Power"))
             }

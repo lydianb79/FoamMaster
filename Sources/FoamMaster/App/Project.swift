@@ -455,6 +455,7 @@ final class Project: ObservableObject {
         c.autoPower = current.autoPower
         c.sparEnabled = true
         c.motor = current.motor; c.battery = current.battery; c.servo = current.servo
+        c.propSize = current.propSize; c.propBladeChoice = current.propBladeChoice
         return c
     }
 

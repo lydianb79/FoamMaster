@@ -74,7 +74,7 @@ enum BuildDocs {
         items.append(BOMItem(category: "Electronics", item: "ESC", spec: "\(c.motor.escMass > 4 ? 12 : 6) A, \(c.battery.cells)S\(c.isDual ? " – both on the throttle channel via a Y-lead" : "")", quantity: "\(c.motorCount)×"))
         if c.isDual { items.append(BOMItem(category: "Electronics", item: "Y-lead + parallel battery adapter", spec: "Throttle signal to both ESCs, power from one pack", quantity: "1×")) }
         items.append(BOMItem(category: "Electronics", item: "Propeller \(c.propRecommendation)",
-                             spec: "\(c.kind.propBladeReason) · for the \(c.motor.name) on \(c.battery.cells)S – balance before use", quantity: "2× (spare)"))
+                             spec: "\(c.customProp ? "\(c.propBladeCount)-blade, chosen by you" : c.kind.propBladeReason) · for the \(c.motor.name) on \(c.battery.cells)S – balance before use", quantity: "2× (spare)"))
         items.append(BOMItem(category: "Electronics", item: c.battery.name, spec: "\(c.battery.mass) g", quantity: "1×"))
         items.append(BOMItem(category: "Electronics", item: c.servo.name, spec: "\(c.servo.torque) kg·cm", quantity: "\(servoCount)×"))
         items.append(BOMItem(category: "Electronics", item: "Receiver", spec: "\(d.channels)+ channels (\(servoCount) servo\(servoCount == 1 ? "" : "s") + throttle), micro", quantity: "1×"))
