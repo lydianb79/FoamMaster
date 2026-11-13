@@ -184,6 +184,33 @@ extension AircraftConfig {
     var motorXs: [Double] { isDual ? [-dualMotorX, dualMotorX] : [0] }
     /// Lateral position of the twin booms / fins.
     var boomX: Double { hStabSpan / 2 - 7 }
+    /// Where the ailerons / elevons are along one half span (mm from the centre line) – as the builder lays them out:
+    /// from near the root with one central servo (else from about 30 % of the half span) to just short of the tip.
+    /// Nil without them. (The flight simulator puts them on its wing strips there – in the prop's slipstream when
+    /// they reach in close.)
+    var aileronStations: ClosedRange<Double>? {
+        guard hasAilerons || kind.isTailless else { return nil }
+        let s = semiSpan
+        var tip = 0.0
+        if kind.hasTail {
+            tip = max(0, wingTipRounding)
+            if tailWinglets && wingletHeight > 5 { tip = min(tip, max(0, tipChord * 0.25 - 6)) }
+            tip = min(tip, tipChord * 0.45)
+        }
+        let inner: Double, outer: Double
+        if kind.isTailless {
+            inner = motorNotchHalfWidth; outer = s - 5
+        } else if kind.isJet {
+            inner = max(jetSlotHalfWidth + 12, s * 0.35); outer = s - 8 - tip
+        } else if kind.isTwinBoom {
+            inner = max(s * 0.3, boomX + 14); outer = s - 10 - tip
+        } else {
+            let hw = fuselagePlateWidth / 2
+            let central = hasAilerons && aileronServos == 1 && kind.allowsSingleAileronServo
+            inner = hw + (central ? 3 : max(8, s * 0.3 - hw)); outer = s - 10 - tip
+        }
+        return outer > inner + 1 ? inner...outer : nil
+    }
     /// Width of the horizontal fuselage plate (cross fuselage) at the wing – about 8.5 % of the
     /// span, the proportion of the Crack Yak cross.
     var fuselagePlateWidth: Double { basePlateWidth + (kind.hasFuselage ? min(max(plateWidthExtra, 0), AircraftConfig.maxPlateWidthExtra) : 0) }

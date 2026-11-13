@@ -33,7 +33,9 @@ struct FlightModel {
     /// Lowest point of the airframe below the CG (m) – touches the ground first.
     var groundClearance: Double
     /// Wing strips (right half; the left half mirrors it): span station y (m), area (m²), aileron / elevon on it.
-    var stripY: [Double] = [], stripS: [Double] = [], stripAileron: [Bool] = []
+    var stripY: [Double] = [], stripS: [Double] = []
+    /// Share of each strip covered by the aileron / elevon, and lying in the prop's slipstream (tractors).
+    var stripAileron: [Double] = [], stripWash: [Double] = []
     /// Aileron: change of strip lift coefficient per radian of aileron (calibrated to the roll power Clda).
     var aileronDCL: Double = 0
     /// Share of the elevator / rudder inside the prop's slipstream, total disc area (m²).
@@ -106,9 +108,11 @@ struct FlightModel {
         inertia = [Ipitch, Iroll + Ipitch, Iroll]
         groundClearance = max(c.fuselageHeight * 0.5, 15) / 1000
 
-        // Wing strips: 4 per half, chord tapering root → tip (an ellipse on the NutBall's disc), areas adding up to
-        // half the wing area. Ailerons on the outer half (tailed types), elevons on the outer three quarters.
-        let n = 4, semi = b / 2
+        // Wing strips: 8 per half, chord tapering root → tip (an ellipse on the NutBall's disc), areas adding up to
+        // half the wing area. Each strip knows how much of it the aileron / elevon covers (where the builder puts them)
+        // and how much lies in the slipstream of a tractor prop (core radius ≈ 0.45 D right behind the prop; the
+        // dual tractor's props sit outboard; pusher props blow over no wing).
+        let n = 8, semi = b / 2
         var ys: [Double] = [], ws: [Double] = []
         for k in 0..<n {
             let f = (Double(k) + 0.5) / Double(n)
@@ -118,9 +122,22 @@ struct FlightModel {
         let wsum = ws.reduce(0, +)
         stripY = ys
         stripS = ws.map { $0 / wsum * S / 2 }
-        stripAileron = (0..<n).map { k in hasAilerons && (c.kind.isTailless ? k >= 1 : k >= n / 2) }
+        func overlap(_ a0: Double, _ a1: Double, _ b0: Double, _ b1: Double) -> Double { max(0, min(a1, b1) - max(a0, b0)) }
+        let dy = semi / Double(n)
+        let ail = c.aileronStations.map { ($0.lowerBound / 1000)...($0.upperBound / 1000) }
+        stripAileron = (0..<n).map { k in
+            guard let ail, hasAilerons else { return 0 }
+            let y0 = Double(k) * dy
+            return overlap(y0, y0 + dy, ail.lowerBound, ail.upperBound) / dy
+        }
+        let washR = 0.45 * c.propInches * 0.0254
+        let propXs: [Double] = c.kind.isPusher ? [] : (c.isDual ? [c.dualMotorX / 1000] : [0])
+        stripWash = (0..<n).map { k in
+            let y0 = Double(k) * dy
+            return min(1, propXs.reduce(0) { $0 + overlap(y0, y0 + dy, $1 - washR, $1 + washR) } / dy)
+        }
         // Same roll power as Clda at small angles: Σ y·S·ΔCL over both halves = S·b·Clda per radian.
-        let armArea = zip(stripY, zip(stripS, stripAileron)).reduce(0.0) { $0 + ($1.1.1 ? $1.0 * $1.1.0 : 0) }
+        let armArea = (0..<n).reduce(0.0) { $0 + stripY[$1] * stripS[$1] * stripAileron[$1] }
         aileronDCL = armArea > 0 ? S * b * Clda / (2 * armArea) : 0
 
         // Prop wash over the tail: a tractor (or the twin boom's / jet's prop ahead of the tail) blows over the part
@@ -243,6 +260,42 @@ final class FlightSim {
         // strongest at full power and low speed (hover, prop hang).
         torque.z += m.torquePerThrust * (thrust - 0.35 * m.staticThrust)
 
+        // Wing in strips, each in its own airflow (body velocity + rotation × station): its own angle of attack, lift
+        // and drag, its own stall. Roll damping, aileron power (with reversal near the stall), tip stall, wing drop and
+        // spins follow from these. The part of a strip in a tractor prop's slipstream also gets the slipstream's
+        // airflow – its aileron keeps working at any airspeed (hover, prop hang), and its drag holds back the thrust.
+        // Induced drag: each strip's lift tilted back by the wing's downwash, which follows the whole wing's lift
+        // (cd = k · cl_strip · CL_wing) – adverse aileron yaw in the right measure.
+        let CLwing = V > 0.3 ? m.CL(atan2(-vb.y, -vb.z)) : 0
+        let washDelta = max((u * u + thrust / (Self.rho * m.discArea)).squareRoot() - u, 0)
+        for side in [1.0, -1.0] {
+            for k in 0..<m.stripY.count {
+                let rpos = SIMD3<Double>(side * m.stripY[k], 0, 0)
+                let vs = vb + simd_cross(state.omega, rpos)
+                // Aileron: like a change of the strip's incidence (right aileron up for roll right).
+                let ail = -side * m.aileronDCL * da * m.maxThrow / m.CLa * m.stripAileron[k]
+                func strip(_ v: SIMD3<Double>, _ area: Double) {
+                    let Vs = simd_length(v)
+                    guard Vs > 0.3, area > 0 else { return }
+                    let a = atan2(-v.y, -v.z) + ail
+                    let cl = m.CL(a)
+                    let cd = m.CD0 + m.k * cl * CLwing + 1.1 * pow(sin(a), 2) * (abs(a) > m.alphaStall ? 1 : 0.3)
+                    let vh = v / Vs
+                    let liftDir = simd_normalize(simd_cross([1, 0, 0], vh))
+                    let qs = 0.5 * Self.rho * Vs * Vs * area
+                    let f = liftDir * (qs * cl) - vh * (qs * cd)
+                    force += f
+                    torque += simd_cross(rpos, f)
+                }
+                let wf = m.stripWash[k]
+                if wf > 0, washDelta > 0.05 {
+                    strip(vs + SIMD3(0, 0, -washDelta), m.stripS[k] * wf)
+                    strip(vs, m.stripS[k] * (1 - wf))
+                } else {
+                    strip(vs, m.stripS[k])
+                }
+            }
+        }
         let p = -state.omega.z, qq = state.omega.x, r = -state.omega.y
         let qbar = 0.5 * Self.rho * V * V
         var stallFade = 1.0
@@ -250,31 +303,6 @@ final class FlightSim {
             let alpha = atan2(-vb.y, -vb.z)
             let beta = asin(max(min(vb.x / V, 1), -1))
             stallFade = abs(alpha) > m.alphaStall ? 0.5 : 1.0
-            // Wing in strips, each in its own airflow (body velocity + rotation × station): its own angle of attack,
-            // lift and drag, its own stall. Roll damping, aileron power (with reversal near the stall), tip stall,
-            // wing drop and spins follow from these.
-            // Induced drag: each strip's lift tilted back by the wing's downwash, which follows the whole wing's lift
-            // (cd = k · cl_strip · CL_wing) – adverse aileron yaw in the right measure.
-            let CLwing = m.CL(alpha)
-            for side in [1.0, -1.0] {
-                for k in 0..<m.stripY.count {
-                    let rpos = SIMD3<Double>(side * m.stripY[k], 0, 0)
-                    let vs = vb + simd_cross(state.omega, rpos)
-                    let Vs = simd_length(vs)
-                    guard Vs > 0.3 else { continue }
-                    var a = atan2(-vs.y, -vs.z)
-                    // Aileron: like a change of the strip's incidence (right aileron up for roll right).
-                    if m.stripAileron[k] { a += -side * m.aileronDCL * da * m.maxThrow / m.CLa }
-                    let cl = m.CL(a)
-                    let cd = m.CD0 + m.k * cl * CLwing + 1.1 * pow(sin(a), 2) * (abs(a) > m.alphaStall ? 1 : 0.3)
-                    let vh = vs / Vs
-                    let liftDir = simd_normalize(simd_cross([1, 0, 0], vh))
-                    let qs = 0.5 * Self.rho * Vs * Vs * m.stripS[k]
-                    let f = liftDir * (qs * cl) - vh * (qs * cd)
-                    force += f
-                    torque += simd_cross(rpos, f)
-                }
-            }
             let qS = qbar * m.S
             force += SIMD3<Double>(qS * m.CYb * beta, 0, 0)
             let qh = qq * m.cbar / (2 * V), rh = r * m.b / (2 * V)

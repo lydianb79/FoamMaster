@@ -908,8 +908,9 @@ enum SelfTest {
         }
         // Physics: CG, strips (spin), prop wash, motor torque.
         do {
-            func model(_ kind: AircraftKind, battery shift: Double = 0) -> FlightModel {
-                var c = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+            func model(_ kind: AircraftKind, battery shift: Double = 0, servos: Int? = nil) -> FlightModel {
+                let choice = servos.flatMap { n in Project.setupChoices(kind).first { $0.servos == n } } ?? kind.defaultSetupChoice
+                var c = Project.feasibleSetup(kind, choice)
                 c.batteryPosition += shift
                 let d = DesignBuilder.build(c)
                 return FlightModel(d, Analysis(design: d))
@@ -954,8 +955,8 @@ enum SelfTest {
             }
             // Prop wash: hanging on the prop (nose up, no airspeed, hover throttle) – the elevator still works on a
             // tractor; a tailless pusher has nothing in its slipstream. Motor torque rolls the tractor left.
-            func hover(_ kind: AircraftKind, pitch: Double) -> (pitchRate: Double, roll: Double) {
-                let fm = model(kind)
+            func hover(_ kind: AircraftKind, pitch: Double, roll: Double = 0, servos: Int? = nil) -> (pitchRate: Double, roll: Double) {
+                let fm = model(kind, servos: servos)
                 let s = FlightSim(model: fm)
                 s.step(0.1); s.launch()
                 var st = s.state
@@ -963,8 +964,8 @@ enum SelfTest {
                 st.orientation = simd_quatd(angle: .pi / 2, axis: [1, 0, 0])      // nose straight up
                 s.setState(st)
                 let hoverThrottle = min(pow(fm.mass * 9.81 / max(fm.staticThrust, 0.01), 1 / 1.6), 1)
-                s.input = StickInput(pitch: pitch, throttle: hoverThrottle)
-                s.step(0.15); s.input = StickInput(pitch: pitch, throttle: hoverThrottle)
+                s.input = StickInput(roll: roll, pitch: pitch, throttle: hoverThrottle)
+                s.step(0.15); s.input = StickInput(roll: roll, pitch: pitch, throttle: hoverThrottle)
                 for _ in 0..<12 { s.step(1.0 / 60) }
                 return (s.state.omega.x, -s.state.omega.z)
             }
@@ -973,7 +974,14 @@ enum SelfTest {
             let h3dNone = hover(.aerobat, pitch: 0), h3d = hover(.aerobat, pitch: 0.5)
             let wingNone = hover(.flyingWing, pitch: 0), wing = hover(.flyingWing, pitch: 0.5)
             let e3d = h3d.pitchRate - h3dNone.pitchRate, eWing = wing.pitchRate - wingNone.pitchRate
-            let washOK = e3d > 1 && abs(eWing) < e3d * 0.25 && h3dNone.roll < -0.05
+            // Roll in the hover: where the ailerons reach into the slipstream (3D Plane with one central aileron servo –
+            // its ailerons start at the fuselage) full right aileron must beat the torque roll; with two servos they start
+            // at 30 % of the half span, outside a 4" prop's slipstream, and can hardly act.
+            let tq1 = hover(.aerobat, pitch: 0, servos: 1), r1 = hover(.aerobat, pitch: 0, roll: 1, servos: 1)
+            let r2 = hover(.aerobat, pitch: 0, roll: 1)
+            let washOK = e3d > 1 && abs(eWing) < e3d * 0.25 && h3dNone.roll < -0.05 && r1.roll > 0.1
+            print(String(format: "Hover roll (3D Plane, full right aileron, no airspeed): 1 central servo %+.2f rad/s (torque alone %+.2f) – 2 servos %+.2f (ailerons outside the slipstream)%@",
+                         r1.roll, tq1.roll, r2.roll, r1.roll > 0.1 ? "" : "  ← PROBLEM"))
             print(String(format: "Prop wash (hanging on the prop, no airspeed): elevator → pitch rate 3D Plane %.1f rad/s, Flying Wing (pusher, nothing in the wash) %.2f rad/s; motor torque rolls the 3D Plane %.2f rad/s (− = left)%@",
                          e3d, eWing, h3dNone.roll, washOK ? "" : "  ← PROBLEM"))
         }
