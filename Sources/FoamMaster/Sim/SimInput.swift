@@ -53,6 +53,9 @@ struct SimControls: Codable, Equatable {
     var launchSwitch: SwitchMapping?
     /// A transmitter switch / button that puts the model back in the hand (like the reset key).
     var resetSwitch: SwitchMapping?
+    /// Mix: the aileron stick also steers the rudder (NutBall – no ailerons). Optional: on unless switched off.
+    var rollToRudder: Bool?
+    var mixesRollToRudder: Bool { rollToRudder ?? true }
 
     func key(_ a: SimAction) -> UInt16 { keys[a.rawValue] ?? a.defaultKey }
     /// Esc leaves the simulator unless one of its actions is bound to Esc.
@@ -189,6 +192,8 @@ final class SimInputState {
     /// Keyboard sticks ease towards the held direction and back to centre; the throttle steps while its key is held.
     private(set) var keyStick = StickInput()
     var events: ((SimAction) -> Void)?
+    /// The loaded model has no ailerons but a rudder (NutBall): the roll-to-rudder mix can apply.
+    var rudderOnly = false
     /// Pitch trim of the loaded design (+ = nose up), added to the elevator from keyboard or transmitter.
     private(set) var trim = 0.0
     private var trimKey = ""
@@ -294,6 +299,8 @@ final class SimInputState {
         }
         out.roll = controls.shaped(.roll, out.roll); out.pitch = controls.shaped(.pitch, out.pitch); out.yaw = controls.shaped(.yaw, out.yaw)
         out.pitch = min(max(out.pitch + trim, -1), 1)
+        // Mix (Controls ▸ Mixes): on the NutBall the aileron stick also works the rudder.
+        if rudderOnly, controls.mixesRollToRudder { out.yaw = min(max(out.yaw + out.roll, -1), 1) }
         return out
     }
 }

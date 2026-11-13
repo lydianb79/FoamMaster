@@ -330,13 +330,15 @@ struct AircraftConfig: Codable, Equatable {
     /// for it (wing, sweep, control chord, fins, fuselage, tail, stab sweep, roundings …) moves from the type's default
     /// by up to a quarter of its own range, either way, and stays inside the range. Sliders at 0 by default (wing sweep,
     /// stab sweep, roundings) move too.
-    static func random(kind: AircraftKind) -> AircraftConfig {
-        var c = kind.defaults
+    /// `fullRange`: every slider anywhere in its range (Randomize) instead of near the type's default; `base` supplies
+    /// the build options (and the starting values).
+    static func random(kind: AircraftKind, base: AircraftConfig? = nil, fullRange: Bool = false) -> AircraftConfig {
+        var c = base ?? kind.defaults
         let spread = 0.25
         func r(_ kp: WritableKeyPath<AircraftConfig, Double>, in given: ClosedRange<Double>? = nil) {
             let rg = given ?? AircraftConfig.range(kp, kind: kind)
             let w = rg.upperBound - rg.lowerBound
-            var v = c[keyPath: kp] + Double.random(in: -spread...spread) * w
+            var v = fullRange ? Double.random(in: rg) : c[keyPath: kp] + Double.random(in: -spread...spread) * w
             v = min(max(v, rg.lowerBound), rg.upperBound)
             c[keyPath: kp] = w > 5 ? v.rounded() : (v * 100).rounded() / 100
         }

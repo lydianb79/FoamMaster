@@ -462,28 +462,29 @@ enum SelfTest {
             let t1 = Date(); _ = Analysis(design: DesignBuilder.build(c))
             print(String(format: "   %@: one power search %.0f ms, one build + analysis %.0f ms", kind.title, t1.timeIntervalSince(t0) * 1000, Date().timeIntervalSince(t1) * 1000))
         }
-        var totalBad = 0, sweptWing = 0, sweptStab = 0, total = 0
+        var total = 0, feasibleAll = 0, sweptWing = 0, sweptStab = 0
         for kind in AircraftKind.allCases where only?.contains(kind.rawValue) ?? true {
-            var feasible = 0, perfect = 0, problems: [String: Int] = [:]
+            var feasible = 0, perfect = 0, problems: [String: Int] = [:], setups = Set<String>()
             let t0 = Date()
-            // Exactly what the Randomize button does, starting from every setup of the type in turn.
-            let starts = Project.setupChoices(kind).map { Project.feasibleSetup(kind, $0) }
-            for i in 0..<count {
-                let c = Project.randomDesign(like: starts[i % starts.count])
+            // Exactly what the Randomize button does (no feasibility check): random options and sliders.
+            let start = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+            for _ in 0..<count {
+                let c = Project.randomDesign(like: start)
                 total += 1
                 if c.sweep != kind.defaults.sweep { sweptWing += 1 }
                 if kind.hasTail, c.hStabSweep != 0 { sweptStab += 1 }
-                let a = Analysis(design: DesignBuilder.build(c))
-                if !a.feasible { totalBad += 1 }
-                if a.feasible { feasible += 1 }
+                setups.insert("\(c.taillessFins.rawValue)-\(c.ailerons)-\(c.rudder)-\(c.aileronServos)-\(c.motorLayout.rawValue)-\(c.tailWinglets)")
+                let d = DesignBuilder.build(c), a = Analysis(design: d)      // builds and analyses without a crash
+                if a.feasible { feasible += 1; feasibleAll += 1 }
                 if a.feasible && a.score == 100 { perfect += 1 }
-                for ch in a.checks where ch.severity >= .warning { problems["\(ch.severity == .error ? "E" : "W") \(ch.title)\(ch.title == "Geometry conflict" ? ": " + String(ch.detail.prefix(70)) : "")", default: 0] += 1 }
+                for ch in a.checks where ch.severity >= .warning { problems["\(ch.severity == .error ? "E" : "W") \(ch.title)", default: 0] += 1 }
             }
             let ms = Date().timeIntervalSince(t0) * 1000 / Double(count)
-            print("\(kind.title): feasible \(feasible)/\(count), score 100 \(perfect)/\(count), \(Int(ms)) ms each – " + problems.sorted { ($0.key.hasPrefix("E") ? 1 : 0, $0.value) > ($1.key.hasPrefix("E") ? 1 : 0, $1.value) }.prefix(6).map { "\($0.value)× \($0.key)" }.joined(separator: "; "))
+            let choices = Project.setupChoices(kind).count
+            print("\(kind.title): feasible \(feasible)/\(count), score 100 \(perfect)/\(count), option sets \(setups.count) of \(choices), \(Int(ms)) ms each – "
+                  + problems.sorted { $0.value > $1.value }.prefix(5).map { "\($0.value)× \($0.key)" }.joined(separator: "; "))
         }
-        print("  candidates dropped / searches: " + Project.randomDiag.sorted { $0.value > $1.value }.prefix(8).map { "\($0.value)× \($0.key)" }.joined(separator: "; "))
-        print("randomize: \(total - totalBad)/\(total) feasible, wing sweep changed in \(sweptWing), stab sweep in \(sweptStab)\(totalBad == 0 ? "" : "  ← PROBLEM")")
+        print("randomize (no feasibility check): \(feasibleAll)/\(total) happen to be feasible, wing sweep changed in \(sweptWing), stab sweep in \(sweptStab)")
     }
 
     /// Scan: random variants of every type in every foam (struts on Auto). Lists builds that still fail a
@@ -726,7 +727,8 @@ enum SelfTest {
                               kind.title, fm.mass * 1000, fm.stallSpeed, a.staticMargin * 100, smDesign * 100, "\(hands.state.phase)", hands.state.position.y, hands.airspeed, e0.pitch, e0.roll)
             // Controls from 2 s of level flight.
             let warm = { run(2, base) }
-            let rr = run(0.3, StickInput(roll: 0.6, throttle: 0.6), from: warm())   // (a 3D plane rolls ~250°/s: past 90° in 0.8 s)
+            // (no ailerons – the NutBall: the roll-to-rudder mix, as the pilot's input does by default)
+            let rr = run(0.3, fm.hasAilerons ? StickInput(roll: 0.6, throttle: 0.6) : StickInput(roll: 0.6, yaw: 0.6, throttle: 0.6), from: warm())   // (a 3D plane rolls ~250°/s: past 90° in 0.8 s)
             let pb = run(0.6, StickInput(pitch: 0.6, throttle: 0.6), from: warm())
             let yr = run(1.0, StickInput(yaw: 0.8, throttle: 0.6), from: warm())
             // Each against the same time flown hands-off from the same start (a flat wing drifts a little by itself).
@@ -821,7 +823,22 @@ enum SelfTest {
             func btn(_ b: Bool) -> JoystickManager.Device { .init(name: "t", axes: [], buttons: [false, b]) }
             for b in [false, true, true, false, true, false] { inp.resetSwitchState(inp.resetSwitchActive(btn(b))) }
             let resetOK = resets == 2
+            // Mix: roll-right key on the NutBall → rudder with the mix on, none with it off; never with ailerons.
+            inp.events = nil
+            inp.controls.useTransmitter = false
+            func yawFromRollKey(rudderOnly: Bool, mix: Bool) -> Double {
+                inp.rudderOnly = rudderOnly; inp.controls.rollToRudder = mix
+                inp.releaseAll(); _ = inp.update(1)
+                inp.keyDown(inp.controls.key(.rollRight), repeat: false)
+                var out = StickInput()
+                for _ in 0..<30 { out = inp.update(1.0 / 60) }
+                inp.keyUp(inp.controls.key(.rollRight)); _ = inp.update(1)
+                return out.yaw
+            }
+            let mixOK = yawFromRollKey(rudderOnly: true, mix: true) > 0.1 && yawFromRollKey(rudderOnly: true, mix: false) == 0
+                && yawFromRollKey(rudderOnly: false, mix: true) == 0
             inp.controls = saved
+            print("Roll-to-rudder mix (NutBall, Controls ▸ Mixes): \(mixOK ? "ok" : "PROBLEM")")
             print("Launch switch: button \(buttonOK ? "ok" : "PROBLEM"), axis (inverted) \(axisOK ? "ok" : "PROBLEM"); reset switch \(resetOK ? "ok" : "PROBLEM")")
         }
         // Physics: CG, strips (spin), prop wash, motor torque.

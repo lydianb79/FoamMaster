@@ -225,9 +225,9 @@ final class FlightSim {
         let vb = q.inverse.act(state.velocity)
         let V = simd_length(vb)
         var force = SIMD3<Double>.zero, torque = SIMD3<Double>.zero
-        // Pilot mixing: without ailerons the roll stick also works the rudder; without a rudder only roll is left.
+        // Without ailerons the roll stick does nothing here (the NutBall's roll-to-rudder mix is in the input, an option).
         var da = m.hasAilerons ? surfaces.roll : 0
-        var dr = m.hasRudder ? surfaces.yaw + (m.hasAilerons ? 0 : surfaces.roll) : 0
+        var dr = m.hasRudder ? surfaces.yaw : 0
         da = max(min(da, 1), -1); dr = max(min(dr, 1), -1)
         let de = surfaces.pitch
         // Thrust along the nose, falling off with airspeed.

@@ -71,6 +71,8 @@ final class SimController: ObservableObject {
     struct HUD { var phase = FlightState.Phase.held; var speed = 0.0; var height = 0.0; var throttle = 0.0; var stick = StickInput(); var message = ""; var time = 0.0; var trim = 0.0 }
     @Published var hud = HUD()
     @Published var title = ""
+    /// The loaded model is a NutBall (the roll-to-rudder mix applies).
+    @Published var isNutBall = false
     /// CG behind (+) / ahead of (−) the recommended CG, mm.
     @Published var cgOffset = 0.0
     @Published var showControls = false
@@ -97,6 +99,8 @@ final class SimController: ObservableObject {
         // The model flies trimmed for its recommended CG: say how far the real one is off, and which way to trim.
         cgOffset = a.cg.z - a.recommendedCG
         input.useTrim(for: "\(d.config.kind.rawValue)/\(d.config.name)")
+        input.rudderOnly = d.config.kind.isNutBall
+        isNutBall = d.config.kind.isNutBall
         renderer?.setAircraft(d, a)
         renderer?.sim = s
         renderer?.simulating = true
@@ -196,7 +200,7 @@ struct SimulatorView: View {
         .frame(minWidth: 900, minHeight: 600)
         .background(Color.black)
         .preferredColorScheme(.dark)
-        .sheet(isPresented: $ctl.showControls) { SimControlsSheet(input: ctl.input) { ctl.showControls = false } }
+        .sheet(isPresented: $ctl.showControls) { SimControlsSheet(input: ctl.input, nutBall: ctl.isNutBall) { ctl.showControls = false } }
         .onChange(of: project.revision) { _, _ in
             // A changed design is picked up whenever the plane is not in the air.
             if ctl.hud.phase != .flying { ctl.load(project) }
@@ -308,6 +312,8 @@ struct StickBox: View {
 /// Keyboard bindings, transmitter mapping and calibration, rates and expo.
 struct SimControlsSheet: View {
     let input: SimInputState
+    /// The mix tab's roll-to-rudder option applies to the NutBall only.
+    var nutBall = false
     var done: () -> Void
     @State private var controls: SimControls
     @State private var capture: SimAction?
@@ -323,8 +329,8 @@ struct SimControlsSheet: View {
     @State private var switchStartButtons: [Bool] = []
     private let timer = Timer.publish(every: 1.0 / 20, on: .main, in: .common).autoconnect()
 
-    init(input: SimInputState, done: @escaping () -> Void) {
-        self.input = input; self.done = done
+    init(input: SimInputState, nutBall: Bool = false, done: @escaping () -> Void) {
+        self.input = input; self.nutBall = nutBall; self.done = done
         _controls = State(initialValue: input.controls)
     }
 
@@ -335,6 +341,7 @@ struct SimControlsSheet: View {
                 keyboardTab.tabItem { Text("Keyboard") }
                 transmitterTab.tabItem { Text("Transmitter") }
                 ratesTab.tabItem { Text("Rates & expo") }
+                mixesTab.tabItem { Text("Mixes") }
             }
             .frame(height: 540)
             HStack {
@@ -469,6 +476,23 @@ struct SimControlsSheet: View {
     private func switchMapping(_ tag: String, inverted: Bool) -> SimControls.SwitchMapping? {
         guard tag != "none", let i = Int(tag.dropFirst()) else { return nil }
         return SimControls.SwitchMapping(kind: tag.hasPrefix("b") ? .button : .axis, index: i, inverted: inverted)
+    }
+
+    /// Mixes: the NutBall has no ailerons – its aileron stick can steer the rudder too.
+    private var mixesTab: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: Binding(get: { controls.mixesRollToRudder }, set: { controls.rollToRudder = $0; apply() })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Aileron stick also steers the rudder").font(.system(size: 12, weight: .semibold))
+                    Text(nutBall ? "The NutBall has no ailerons: with this on, the aileron stick (or keys) turns it with the rudder as well – off, only the rudder stick does."
+                                 : "Only for the NutBall (rudder and elevator, no ailerons) – the model you are flying has ailerons.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch).disabled(!nutBall)
+            Spacer()
+        }
+        .padding(8)
     }
 
     private var ratesTab: some View {

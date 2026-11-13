@@ -44,6 +44,43 @@ struct ParameterContent: View {
                     .glass()
 
                     VStack(alignment: .leading, spacing: 10) {
+                        SectionHeader(title: "Material", symbol: "square.stack.3d.up.fill")
+                        MaterialPicker(selection: bind(\.material))
+                        Toggle(isOn: bind(\.sparEnabled)) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Carbon spar").font(.system(size: 12, weight: .semibold))
+                                Text(c.sparEnabled ? c.sparSpec.name : "Foam only").font(.system(size: 10)).foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch).tint(Theme.accent)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Carbon struts").font(.system(size: 12, weight: .semibold))
+                            // One row per group: Auto (only when its check fails), On (also to clear a warning), Off.
+                            strutRow("Wing", bind(\.wingStruts), help: "Wing underside to the bottom of the fuselage. Auto: only when the wing is far too flexible; On: also to clear a flex warning.")
+                            if c.offersTailStruts {
+                                strutRow("Tail", bind(\.tailStruts), help: "Wing to the tail boom, against twist and bending. Auto: only when the fuselage fails; On: also to clear a torsion / bending warning.")
+                            }
+                            if c.offersFinStruts {
+                                strutRow("Fin", bind(\.finStruts), help: "Stabiliser up to the fin. Auto: whenever other struts are fitted; On: always.")
+                            }
+                            if c.offersTorsionTruss {
+                                // Switching it on or off moves mass at the tail: re-balance the battery right away.
+                                Toggle(isOn: Binding(get: { c.torsionTruss }, set: { v in
+                                    guard var n = project.config else { return }
+                                    n.torsionTruss = v
+                                    project.config = Project.balanced(n)
+                                })) {
+                                    Text("Torsion truss – zigzag under the rear fuselage").font(.system(size: 11))
+                                }
+                                .toggleStyle(.switch).controlSize(.small)
+                                .help("Carbon rods zigzagging between the plate edges and the bottom edge of the lower fuselage half, from behind the wing to the tail: closes the + section into a torsion box – much stiffer against twist.")
+                            }
+                            Text(strutSummary(c)).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .glass()
+
+                    VStack(alignment: .leading, spacing: 10) {
                         SectionHeader(title: "Wing", symbol: "airplane")
                         ParamSlider(label: c.kind.isNutBall ? "Width (span)" : "Wingspan", unit: "mm", value: bind(\.wingspan), range: range(\.wingspan, c), step: 5)
                         ParamSlider(label: c.kind.isNutBall ? "Length" : "Root chord", unit: "mm", value: bind(\.rootChord), range: range(\.rootChord, c), step: 1)
@@ -184,45 +221,8 @@ struct ParameterContent: View {
                     .glass()
 
                     VStack(alignment: .leading, spacing: 10) {
-                        SectionHeader(title: "Material", symbol: "square.stack.3d.up.fill")
-                        MaterialPicker(selection: bind(\.material))
-                        Toggle(isOn: bind(\.sparEnabled)) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("Carbon spar").font(.system(size: 12, weight: .semibold))
-                                Text(c.sparEnabled ? c.sparSpec.name : "Foam only").font(.system(size: 10)).foregroundStyle(.secondary)
-                            }
-                        }
-                        .toggleStyle(.switch).tint(Theme.accent)
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Carbon struts").font(.system(size: 12, weight: .semibold))
-                            // One row per group: Auto (only when its check fails), On (also to clear a warning), Off.
-                            strutRow("Wing", bind(\.wingStruts), help: "Wing underside to the bottom of the fuselage. Auto: only when the wing is far too flexible; On: also to clear a flex warning.")
-                            if c.offersTailStruts {
-                                strutRow("Tail", bind(\.tailStruts), help: "Wing to the tail boom, against twist and bending. Auto: only when the fuselage fails; On: also to clear a torsion / bending warning.")
-                            }
-                            if c.offersFinStruts {
-                                strutRow("Fin", bind(\.finStruts), help: "Stabiliser up to the fin. Auto: whenever other struts are fitted; On: always.")
-                            }
-                            if c.offersTorsionTruss {
-                                // Switching it on or off moves mass at the tail: re-balance the battery right away.
-                                Toggle(isOn: Binding(get: { c.torsionTruss }, set: { v in
-                                    guard var n = project.config else { return }
-                                    n.torsionTruss = v
-                                    project.config = Project.balanced(n)
-                                })) {
-                                    Text("Torsion truss – zigzag under the rear fuselage").font(.system(size: 11))
-                                }
-                                .toggleStyle(.switch).controlSize(.small)
-                                .help("Carbon rods zigzagging between the plate edges and the bottom edge of the lower fuselage half, from behind the wing to the tail: closes the + section into a torsion box – much stiffer against twist.")
-                            }
-                            Text(strutSummary(c)).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .glass()
-
-                    VStack(alignment: .leading, spacing: 10) {
                         SectionHeader(title: "Balance", symbol: "scalemass.fill")
-                        ParamSlider(label: "Battery position", unit: "mm", value: bind(\.batteryPosition), range: range(\.batteryPosition, c), step: 1)
+                        ParamSlider(label: "Battery position", unit: "mm", value: bind(\.batteryPosition), range: range(\.batteryPosition, c), step: 1, reversed: true)
                         if let a = project.analysis {
                             Text(String(format: "Target CG %.0f mm · battery for target %.0f mm", a.recommendedCG, a.requiredBatteryPosition))
                                 .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -310,6 +310,8 @@ struct ParamSlider: View {
     @Binding var value: Double
     var range: ClosedRange<Double>
     var step: Double
+    /// Slider moves the other way (right = smaller value), e.g. the battery: right = towards the nose.
+    var reversed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -320,8 +322,8 @@ struct ParamSlider: View {
                     .font(.system(size: 12, weight: .semibold, design: .rounded)).monospacedDigit()
                 Text(unit).font(.system(size: 10)).foregroundStyle(.tertiary)
             }
-            Slider(value: Binding(get: { min(max(value, range.lowerBound), range.upperBound) },
-                                  set: { value = ($0 / step).rounded() * step }), in: range)
+            Slider(value: Binding(get: { let v = min(max(value, range.lowerBound), range.upperBound); return reversed ? range.lowerBound + range.upperBound - v : v },
+                                  set: { x in let v = reversed ? range.lowerBound + range.upperBound - x : x; value = (v / step).rounded() * step }), in: range)
                 .tint(Theme.accent)
                 .controlSize(.small)
         }
