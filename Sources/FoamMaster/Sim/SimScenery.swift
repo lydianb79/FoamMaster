@@ -587,17 +587,53 @@ enum SimScenery {
     /// Grass tufts and wild flowers near the pilot; flowers further out as dots.
     static func grassAndFlowers(_ g: inout Geo) {
         let up = (P(0, 1, 0), P(0, 1, 0), P(0, 1, 0))
-        for i in 0..<36000 {
-            let a = hash(i, 1, 131) * 2 * .pi, r = 3 + hash(i, 2, 131).squareRoot() * 70
+        func onStrip(_ x: Double, _ z: Double) -> Bool { abs(x) < 10.5 && z > -95 && z < 14 }
+        func blade(_ x: Double, _ y: Double, _ z: Double, h: Double, width: Double, dir: Double, lean: P, base: C) {
+            let tip = C(min(base.x * 1.15 + 0.06, 1), min(base.y * 1.18 + 0.06, 1), base.z * 1.05, 1)
+            let side = P(cos(dir), 0, sin(dir)) * (width / 2)
+            g.tri(P(x, y, z) - side, P(x, y, z) + side, P(x, y + h, z) + lean, scale(base, 0.72), scale(base, 0.72), tip, normals: up)
+        }
+        // Meadow: tufts of 3–5 blades, denser close to the pilot, out to 120 m. Lush and tall in patches, short and
+        // dry where people walk (round the pits, along the track).
+        for i in 0..<70000 {
+            let a = hash(i, 1, 131) * 2 * .pi, r = 2 + pow(hash(i, 2, 131), 0.75) * 118
             let x = cos(a) * r, z = sin(a) * r
-            if abs(x) < 10.6, z > -95, z < 14 { continue }
-            if pondDistance(x, z) < 1.1 || trackDistance(x, z) < 2.5 { continue }
-            let h = 0.12 + hash(i, 3, 131) * 0.28 * (0.6 + fbm(x / 9, z / 9, 132))
-            let lean = P(hash(i, 4, 131) - 0.5, 0, hash(i, 5, 131) - 0.5) * h * 0.6
-            let base = rgb(groundColor(x, z))
-            let tip = C(base.x * 1.15 + 0.06, base.y * 1.18 + 0.05, base.z * 1.05, 1)
-            let side = P(cos(a * 13), 0, sin(a * 13)) * 0.025
-            g.tri(P(x, 0, z) - side, P(x, 0, z) + side, P(x, h, z) + lean, scale(base, 0.75), scale(base, 0.75), tip, normals: up)
+            if onStrip(x, z) || pondDistance(x, z) < 1.1 { continue }
+            let track = trackDistance(x, z)
+            if track < 2.5 { continue }
+            let lush = fbm(x / 9, z / 9, 132)
+            let worn = min(1, track / 8) * min(1, hypot(x + 9, z - 6) / 12)
+            let h0 = (0.1 + 0.32 * lush * lush + hash(i, 3, 131) * 0.12) * (0.45 + 0.55 * worn)
+            let base = rgb(groundColor(x, z) * (0.92 + 0.16 * hash(i, 6, 131)))
+            let blades = 3 + Int(hash(i, 7, 131) * 3)
+            for k in 0..<blades {
+                let ox = (hash(i, 10 + k, 131) - 0.5) * 0.12, oz = (hash(i, 20 + k, 131) - 0.5) * 0.12
+                let h = h0 * (0.7 + 0.5 * hash(i, 30 + k, 131))
+                let lean = P(hash(i, 40 + k, 131) - 0.5, 0, hash(i, 50 + k, 131) - 0.5) * h * 0.7
+                blade(x + ox, 0, z + oz, h: h, width: 0.035 + 0.02 * hash(i, 60 + k, 131), dir: a * 13 + Double(k), lean: lean, base: base)
+            }
+        }
+        // The mown strip: short cut grass in the stripe colours.
+        for i in 0..<45000 {
+            let x = (hash(i, 1, 141) - 0.5) * 21, z = -95 + hash(i, 2, 141) * 109
+            let stripe = Int(floor((x + 10.5) / 2.1)) % 2 == 0
+            let base = stripe ? C(0.5, 0.7, 0.33, 1) : C(0.4, 0.6, 0.27, 1)
+            let h = 0.035 + hash(i, 3, 141) * 0.035
+            blade(x, 0.012, z, h: h, width: 0.03, dir: hash(i, 4, 141) * 6.3, lean: P(hash(i, 5, 141) - 0.5, 0, hash(i, 6, 141) - 0.5) * h * 0.5,
+                  base: scale(base, Float(0.92 + 0.16 * hash(i, 7, 141))))
+        }
+        // Further out (120–300 m): wider clumps – thin blades would only flicker at that distance.
+        for i in 0..<26000 {
+            let a = hash(i, 1, 151) * 2 * .pi, r = 120 + hash(i, 2, 151) * 180
+            let x = cos(a) * r, z = sin(a) * r
+            if pondDistance(x, z) < 1.1 || trackDistance(x, z) < 3 || !free(x, z, margin: -30) && hypot(x, z) < 40 { continue }
+            let lush = fbm(x / 12, z / 12, 152)
+            let h = 0.25 + 0.4 * lush * lush
+            let base = rgb(groundColor(x, z) * (0.88 + 0.2 * hash(i, 3, 151)))
+            let y = surfaceHeight(x, z)
+            for k in 0..<2 {
+                blade(x, y, z, h: h, width: 0.35 + 0.25 * hash(i, 4 + k, 151), dir: a + Double(k) * 1.6, lean: P(0.1, 0, 0.05) * h, base: base)
+            }
         }
         let colors: [C] = [[0.97, 0.97, 0.92, 1], [0.98, 0.85, 0.15, 1], [0.66, 0.42, 0.9, 1], [0.95, 0.32, 0.28, 1], [0.35, 0.5, 0.95, 1]]
         for i in 0..<9000 {
