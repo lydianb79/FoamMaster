@@ -33,6 +33,12 @@ struct FoamMasterApp: App {
             MainActor.assumeIsolated { SelfTest.trussCheck(dir) }
             exit(0)
         }
+        if let i = args.firstIndex(of: "--simtest") {
+            let dir: URL? = i + 1 < args.count ? URL(fileURLWithPath: args[i + 1]) : nil
+            if let dir { try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
+            MainActor.assumeIsolated { SelfTest.simTest(dir) }
+            exit(0)
+        }
         if args.contains("--earcheck") {
             MainActor.assumeIsolated { SelfTest.earCheck() }
             exit(0)
@@ -110,6 +116,11 @@ struct FoamMasterApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1480, height: 920)
+        // Flight simulator (opened with the Fly button in the editor).
+        Window("Flight Simulator", id: "simulator") {
+            SimulatorView().environmentObject(project)
+        }
+        .defaultSize(width: 1280, height: 800)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About FoamMaster") { withAnimation { project.showAbout = true } }

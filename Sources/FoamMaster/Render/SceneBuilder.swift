@@ -16,8 +16,20 @@ struct SceneData {
     var label = ""
     /// Rotors (propellers) that can spin in the 3D view: triangles added while `spinGroup` ≥ 0 belong to rotor
     /// `spinGroup` (0 or 1) and are turned in the vertex shader about its axis.
-    struct Rotor { var center: SIMD3<Float>; var axis: SIMD3<Float>; var sense: Float }
-    var rotors: [Rotor] = []
+    /// A group of triangles / lines that turns about an axis: a propeller (with the motor bell) or – in the flight
+    /// simulator – a control surface. Surfaces carry how much stick roll / pitch / yaw turns them (±1 = full throw).
+    struct Group {
+        enum Kind { case prop, surface }
+        var kind: Kind
+        var center: SIMD3<Float>
+        var axis: SIMD3<Float>
+        var sense: Float = 1
+        var roll: Float = 0, pitch: Float = 0, yaw: Float = 0
+        var maxAngle: Float = 0
+    }
+    static let maxGroups = 10
+    var groups: [Group] = []
+    var rotors: [Group] { groups.filter { $0.kind == .prop } }
     var spinGroup = -1
     var triLabels: [Int32] = []
     var labelNames: [String] = []
@@ -25,7 +37,7 @@ struct SceneData {
 
     mutating func addTriangle(_ a: SIMD3<Double>, _ b: SIMD3<Double>, _ c: SIMD3<Double>, color: SIMD4<Float>) {
         let n = simd_normalize(simd_cross(b - a, c - a))
-        let nf = SIMD4<Float>(Float(n.x), Float(n.y), Float(n.z), spinGroup >= 0 ? Float(2 + min(spinGroup, 1)) : 1)
+        let nf = SIMD4<Float>(Float(n.x), Float(n.y), Float(n.z), spinGroup >= 0 ? Float(2 + min(spinGroup, Self.maxGroups - 1)) : 1)
         for p in [a, b, c] {
             triangles.append(GPUVertex(position: SIMD4<Float>(Float(p.x), Float(p.y), Float(p.z), 1), normal: nf, color: color))
         }
@@ -37,8 +49,10 @@ struct SceneData {
     }
 
     mutating func addLine(_ a: SIMD3<Double>, _ b: SIMD3<Double>, color: SIMD4<Float>) {
+        // (lines of a moving group carry its tag negative: moved, but unlit)
+        let tag: Float = spinGroup >= 0 ? -Float(2 + min(spinGroup, Self.maxGroups - 1)) : 0
         for p in [a, b] {
-            lines.append(GPUVertex(position: SIMD4<Float>(Float(p.x), Float(p.y), Float(p.z), 1), normal: .zero, color: color))
+            lines.append(GPUVertex(position: SIMD4<Float>(Float(p.x), Float(p.y), Float(p.z), 1), normal: SIMD4(0, 0, 0, tag), color: color))
         }
     }
 
@@ -87,7 +101,8 @@ enum Palette {
 }
 
 enum SceneBuilder {
-    static func aircraft(_ d: Design, _ a: Analysis?, deflection: Double, showCG: Bool) -> SceneData {
+    /// `animated`: control surfaces become moving groups driven by stick roll / pitch / yaw (flight simulator).
+    static func aircraft(_ d: Design, _ a: Analysis?, deflection: Double, showCG: Bool, animated: Bool = false) -> SceneData {
         var scene = SceneData()
         let base = d.config.material.family == .depron ? Palette.depron : Palette.epp
 
@@ -108,6 +123,11 @@ enum SceneBuilder {
                         transform = m.apply
                         moves.append(m)
                     }
+                    if r.isControl, animated, let g = surfaceGroup(d, part, inst, r.polygon) {
+                        scene.spinGroup = scene.groups.count
+                        scene.groups.append(g)
+                    }
+                    defer { if animated && r.isControl { scene.spinGroup = -1 } }
                     addSlab(&scene, poly, holes: holes, placement: inst, thickness: part.thickness,
                             color: r.isControl ? Palette.control : base, transform: transform)
                 }
@@ -199,8 +219,8 @@ enum SceneBuilder {
                 let pr = c.propRadius
                 let z = c.propPlaneZ
                 let mirroredProp = c.isPusher != right
-                let rotor = scene.rotors.count
-                scene.rotors.append(SceneData.Rotor(center: SIMD3<Float>(Float(p.x), 0, Float(z)), axis: [0, 0, 1], sense: mirroredProp ? -1 : 1))
+                let rotor = scene.groups.count
+                scene.groups.append(SceneData.Group(kind: .prop, center: SIMD3<Float>(Float(p.x), 0, Float(z)), axis: [0, 0, 1], sense: mirroredProp ? -1 : 1))
                 scene.spinGroup = rotor
                 scene.label = "Motor bell – \(c.motor.name)"
                 let bellZ = fw + out * L * 0.62
@@ -548,6 +568,29 @@ enum SceneBuilder {
         }
         let q = simd_quatd(angle: sense * deflection * k.maxSurfaceThrow * .pi / 180, axis: simd_normalize(b3 - a3))
         return SurfaceMove(a: a3, b: b3, q: q, normal: inst.normal, probe: probe)
+    }
+
+    /// Control surface as a moving group for the simulator: stick roll right = right aileron / elevon up, left down;
+    /// pitch back = elevator / elevons up; yaw right = rudder trailing edge right.
+    static func surfaceGroup(_ d: Design, _ part: Part, _ inst: Placement, _ region: [Vec2]) -> SceneData.Group? {
+        guard let axis = hingeAxis(part, region) else { return nil }
+        let a3 = inst.point(axis.0), b3 = inst.point(axis.1)
+        let ax = simd_normalize(b3 - a3)
+        let probe = inst.point(Poly.centroid(region))
+        let moved = simd_quatd(angle: 0.1, axis: ax).act(probe - a3) + a3
+        let k = d.config.kind
+        var g = SceneData.Group(kind: .surface, center: SIMD3<Float>(a3), axis: SIMD3<Float>(ax), maxAngle: Float(k.maxSurfaceThrow * .pi / 180))
+        if abs(inst.normal.y) > 0.5 {
+            let up: Float = moved.y > probe.y ? 1 : -1
+            let side: Float = probe.x > 0 ? 1 : -1
+            if part.role == .wing && !k.isNutBall {
+                g.roll = up * side
+                if k.isTailless { g.pitch = up }        // elevons mix pitch and roll
+            } else { g.pitch = up }
+        } else {
+            g.yaw = moved.x > probe.x ? 1 : -1
+        }
+        return g
     }
 
     static func hingeAxis(_ part: Part, _ region: [Vec2]) -> (Vec2, Vec2)? {

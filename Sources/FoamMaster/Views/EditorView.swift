@@ -19,6 +19,7 @@ struct EditorView: View {
 }
 
 struct ViewportView: View {
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject var project: Project
     /// Object under the mouse in the 3D view and where the mouse is.
     @State private var hoverName: String?
@@ -84,6 +85,8 @@ struct ViewportView: View {
                     .buttonStyle(.plain).help(a.feasible ? "Show analysis" : "Show why it is not feasible and how to fix it")
             }
             Spacer()
+            PillButton(title: "Fly", symbol: "airplane.departure") { openWindow(id: "simulator") }
+                .help("Fly this design in the flight simulator (line of sight, keyboard or USB transmitter)")
             PillButton(title: "Save", symbol: "square.and.arrow.down") { project.saveDesign() }
                 .help("Save this design (⌘S) – Save As: ⇧⌘S, open: ⌘O")
             PillButton(title: project.randomizing ? "Randomizing …" : "Randomize", symbol: project.randomizing ? "hourglass" : "dice.fill", prominent: true) {

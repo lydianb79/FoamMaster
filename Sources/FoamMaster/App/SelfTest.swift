@@ -650,6 +650,55 @@ enum SelfTest {
         }
     }
 
+    /// Flight model check on every type: hand launch hands-off, then each control – the response must go the right way.
+    @MainActor static func simTest(_ dir: URL? = nil) {
+        for kind in AircraftKind.allCases {
+            let c = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+            let d = DesignBuilder.build(c), a = Analysis(design: d)
+            let fm = FlightModel(d, a)
+            func euler(_ q: simd_quatd) -> (pitch: Double, roll: Double, heading: Double) {
+                let f = q.act([0, 0, -1]), r = q.act([1, 0, 0])
+                return (asin(f.y) * 180 / .pi, -asin(r.y) * 180 / .pi, atan2(-f.x, -f.z) * 180 / .pi)
+            }
+            func run(_ t: Double, _ inp: StickInput, from sim: FlightSim? = nil) -> FlightSim {
+                let s = sim ?? { let s = FlightSim(model: fm); s.input = StickInput(throttle: 0.6); s.step(0.5); s.launch(); return s }()
+                s.input = inp
+                var tt = 0.0
+                while tt < t { s.step(1.0 / 60); tt += 1.0 / 60 }
+                return s
+            }
+            let base = StickInput(throttle: 0.6)
+            let hands = run(6, base)
+            let e0 = euler(hands.state.orientation)
+            var line = String(format: "%@: m %.0f g, stall %.1f m/s · hands-off 6 s: %@ alt %.1f m, speed %.1f m/s, pitch %.0f°, roll %.0f°",
+                              kind.title, fm.mass * 1000, fm.stallSpeed, "\(hands.state.phase)", hands.state.position.y, hands.airspeed, e0.pitch, e0.roll)
+            // Controls from 2 s of level flight.
+            let warm = { run(2, base) }
+            let rr = run(0.8, StickInput(roll: 0.6, throttle: 0.6), from: warm())
+            let pb = run(0.6, StickInput(pitch: 0.6, throttle: 0.6), from: warm())
+            let yr = run(1.0, StickInput(yaw: 0.8, throttle: 0.6), from: warm())
+            let w = warm()
+            let er = euler(rr.state.orientation), ep = euler(pb.state.orientation), ey = euler(yr.state.orientation), ew = euler(w.state.orientation)
+            line += String(format: " · roll right → bank %+.0f° · pull → pitch %+.0f° · yaw right → heading %+.0f°, bank %+.0f°",
+                           er.roll - ew.roll, ep.pitch - ew.pitch, ey.heading - ew.heading, ey.roll - ew.roll)
+            print(line)
+            // Frames as the pilot sees them: in the hand, 1.5 s after the launch with a bank to the right.
+            if let dir {
+                let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+                if let r = SimRenderer(view: view) {
+                    let s = FlightSim(model: fm)
+                    r.setAircraft(d, a); r.sim = s
+                    s.input = StickInput(throttle: 0.6); s.step(0.4)
+                    r.spinProp(0.013, throttle: 0.6)
+                    if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_\(kind.rawValue)_hand.png")) }
+                    s.launch(); s.input = StickInput(roll: 0.4, pitch: 0.2, throttle: 0.6)
+                    for _ in 0..<90 { s.step(1.0 / 60) }
+                    if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_\(kind.rawValue)_flying.png")) }
+                }
+            }
+        }
+    }
+
     /// Crash fuzz: every type × setup option, every slider of the fix finder swept from its minimum to its maximum
     /// (11 stations, alone and on random airframes), plus random airframes with sliders at their range ends – each
     /// built, analysed and drawn. A crash here is a trap; the count says how much was covered.
