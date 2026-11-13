@@ -454,37 +454,60 @@ enum SelfTest {
         print("setup builds at score 100: \(total - bad)/\(total)")
     }
 
-    @MainActor static func randomTest(count: Int = 40) {
-        let only = ProcessInfo.processInfo.environment["RANDOM_KINDS"].map { Set($0.split(separator: ",").map(String.init)) }
-        for kind in [AircraftKind.trainer, .glider] {
-            let c = Project.balanced(kind.defaults)
-            let t0 = Date(); _ = PowerOptimizer.best(for: c)
-            let t1 = Date(); _ = Analysis(design: DesignBuilder.build(c))
-            print(String(format: "   %@: one power search %.0f ms, one build + analysis %.0f ms", kind.title, t1.timeIntervalSince(t0) * 1000, Date().timeIntervalSince(t1) * 1000))
+    /// Why random candidates fail: per type, the first geometry problem of N quick builds (struts off) and the
+    /// structure errors of the full builds of those that pass.
+    @MainActor static func randomDiag(n: Int = 200) {
+        for kind in AircraftKind.allCases {
+            let start = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+            var reasons: [String: Int] = [:], ok = 0, structural = 0
+            let t0 = Date()
+            for _ in 0..<n {
+                var c = Project.randomCandidate(like: start)
+                let full = c
+                c.wingStruts = .off; c.tailStruts = .off; c.finStruts = .off; c.torsionTruss = false
+                let d = DesignBuilder.build(c), a = Analysis(design: d)
+                let geo = d.geometryIssues + a.checks.filter { $0.severity == .error && $0.category == "Geometry" && $0.title != "Geometry conflict" }.map(\.title)
+                if let g = geo.first { reasons[String(g.prefix(60)), default: 0] += 1; continue }
+                let af = Analysis(design: DesignBuilder.build(full))
+                if let st = af.checks.first(where: { $0.severity == .error && ($0.category == "Structure" || $0.category == "Geometry") }) { structural += 1; reasons["(full) " + st.title, default: 0] += 1; continue }
+                ok += 1
+            }
+            print(String(format: "%@: %d/%d pass, %.0f ms per candidate – ", kind.title, ok, n, Date().timeIntervalSince(t0) * 1000 / Double(n))
+                  + reasons.sorted { $0.value > $1.value }.prefix(7).map { "\($0.value)× \($0.key)" }.joined(separator: "; "))
         }
-        var total = 0, feasibleAll = 0, sweptWing = 0, sweptStab = 0
+    }
+
+    /// Randomize, as the button does it: 10 per type by default (RANDOM_COUNT for more), the time per click, how many
+    /// build without geometry / structure errors (all must), feasible, option sets, sweeps. RANDOM_DIAG: why random
+    /// candidates fail; RANDOM_KINDS: only some types.
+    @MainActor static func randomTest(count: Int = Int(ProcessInfo.processInfo.environment["RANDOM_COUNT"] ?? "") ?? 10) {
+        if ProcessInfo.processInfo.environment["RANDOM_DIAG"] != nil { randomDiag(); return }
+        let only = ProcessInfo.processInfo.environment["RANDOM_KINDS"].map { Set($0.split(separator: ",").map(String.init)) }
+        var total = 0, feasibleAll = 0, sweptWing = 0, sweptStab = 0, buildErrors = 0
         for kind in AircraftKind.allCases where only?.contains(kind.rawValue) ?? true {
             var feasible = 0, perfect = 0, problems: [String: Int] = [:], setups = Set<String>()
-            let t0 = Date()
-            // Exactly what the Randomize button does (no feasibility check): random options and sliders.
+            // Exactly what the Randomize button does: random options and sliders, no geometry / structure errors.
             let start = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+            var spent = 0.0, slowest = 0.0
             for _ in 0..<count {
+                let tr = Date()
                 let c = Project.randomDesign(like: start)
+                let dt = Date().timeIntervalSince(tr); spent += dt; slowest = max(slowest, dt)
                 total += 1
                 if c.sweep != kind.defaults.sweep { sweptWing += 1 }
                 if kind.hasTail, c.hStabSweep != 0 { sweptStab += 1 }
                 setups.insert("\(c.taillessFins.rawValue)-\(c.ailerons)-\(c.rudder)-\(c.aileronServos)-\(c.motorLayout.rawValue)-\(c.tailWinglets)")
                 let d = DesignBuilder.build(c), a = Analysis(design: d)      // builds and analyses without a crash
                 if a.feasible { feasible += 1; feasibleAll += 1 }
+                if a.checks.contains(where: { $0.severity == .error && ($0.category == "Geometry" || $0.category == "Structure") }) { buildErrors += 1 }
                 if a.feasible && a.score == 100 { perfect += 1 }
                 for ch in a.checks where ch.severity >= .warning { problems["\(ch.severity == .error ? "E" : "W") \(ch.title)", default: 0] += 1 }
             }
-            let ms = Date().timeIntervalSince(t0) * 1000 / Double(count)
             let choices = Project.setupChoices(kind).count
-            print("\(kind.title): feasible \(feasible)/\(count), score 100 \(perfect)/\(count), option sets \(setups.count) of \(choices), \(Int(ms)) ms each – "
+            print("\(kind.title): feasible \(feasible)/\(count), score 100 \(perfect)/\(count), option sets \(setups.count) of \(choices), randomize \(Int(spent * 1000 / Double(count))) ms on average, slowest \(Int(slowest * 1000)) ms – "
                   + problems.sorted { $0.value > $1.value }.prefix(5).map { "\($0.value)× \($0.key)" }.joined(separator: "; "))
         }
-        print("randomize (no feasibility check): \(feasibleAll)/\(total) happen to be feasible, wing sweep changed in \(sweptWing), stab sweep in \(sweptStab)")
+        print("randomize: \(total - buildErrors)/\(total) without geometry or structure errors, \(feasibleAll)/\(total) feasible, wing sweep changed in \(sweptWing), stab sweep in \(sweptStab)\(buildErrors == 0 ? "" : "  ← PROBLEM")")
     }
 
     /// Scan: random variants of every type in every foam (struts on Auto). Lists builds that still fail a
@@ -958,37 +981,24 @@ enum SelfTest {
     /// (11 stations, alone and on random airframes), plus random airframes with sliders at their range ends – each
     /// built, analysed and drawn. A crash here is a trap; the count says how much was covered.
     @MainActor static func fuzz() {
-        var builds = 0, batteryLeft = 0, batteryBlocked = 0
+        var batteryLeft = 0, batteryBlocked = 0
         var leftExamples: [String] = []
         var blockedKinds: [String: Int] = [:]
         let t0 = Date()
-        func run(_ c: AircraftConfig) {
-            let d = DesignBuilder.build(c)
-            if let b = d.components.first(where: { $0.category == "Battery" }), b.position.x < -0.1 {
-                batteryLeft += 1
-                if leftExamples.count < 4 { leftExamples.append("\(c.kind.title) ail servos \(c.aileronServos) battery at \(Int(c.batteryPosition))") }
-            }
-            if let iss = d.geometryIssues.first(where: { $0.contains("battery is in the way") }) {
-                batteryBlocked += 1
-                blockedKinds["\(c.kind.title) ail \(c.aileronServos): " + String(iss.prefix(60)), default: 0] += 1
-            }
-            let a = Analysis(design: d)
-            _ = SceneBuilder.aircraft(d, a, deflection: 1, showCG: true)
-            builds += 1
-        }
+        // All configurations first (cheap), then built, analysed and drawn on every core.
+        var configs: [AircraftConfig] = []
         for kind in AircraftKind.allCases {
             let bases = Project.setupChoices(kind).map { Project.setupConfig(kind, $0) } + (0..<12).map { _ in AircraftConfig.random(kind: kind) }
-            for (bi, base) in bases.enumerated() {
+            for base in bases {
                 for p in FixFinder.params where p.applies(base) {
                     let r = AircraftConfig.range(p.key, kind: kind)
                     for k in 0...10 {
                         var c = base
                         c[keyPath: p.key] = r.lowerBound + (r.upperBound - r.lowerBound) * Double(k) / 10
                         if p.key == \AircraftConfig.rootChord { c.tipChord = min(c.tipChord, c[keyPath: p.key]) }
-                        run(c)
+                        configs.append(c)
                     }
                 }
-                if bi % 4 == 0 { print("   \(kind.title): \(builds) builds so far") }
             }
             for _ in 0..<150 {
                 var c = AircraftConfig.random(kind: kind)
@@ -999,9 +1009,33 @@ enum SelfTest {
                 c.tipChord = min(c.tipChord, c.rootChord)
                 c.aileronServos = Bool.random() ? 1 : 2
                 c.motorLayout = Bool.random() ? .dualTractor : .single
-                run(c)
+                configs.append(c)
             }
         }
+        struct Outcome { var left = false; var leftNote = ""; var blocked: String? }
+        var outcomes = [Outcome](repeating: Outcome(), count: configs.count)
+        let list = configs
+        outcomes.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: list.count) { i in
+                let c = list[i]
+                let d = DesignBuilder.build(c)
+                var o = Outcome()
+                if let b = d.components.first(where: { $0.category == "Battery" }), b.position.x < -0.1 {
+                    o.left = true; o.leftNote = "\(c.kind.title) ail servos \(c.aileronServos) battery at \(Int(c.batteryPosition))"
+                }
+                if let iss = d.geometryIssues.first(where: { $0.contains("battery is in the way") }) {
+                    o.blocked = "\(c.kind.title) ail \(c.aileronServos): " + String(iss.prefix(60))
+                }
+                let a = Analysis(design: d)
+                _ = SceneBuilder.aircraft(d, a, deflection: 1, showCG: true)
+                out[i] = o
+            }
+        }
+        for o in outcomes {
+            if o.left { batteryLeft += 1; if leftExamples.count < 4 { leftExamples.append(o.leftNote) } }
+            if let k = o.blocked { batteryBlocked += 1; blockedKinds[k, default: 0] += 1 }
+        }
+        let builds = configs.count
         print(String(format: "fuzz: %d builds without a crash, %.0f s", builds, Date().timeIntervalSince(t0)))
         print("   battery moved to the left (pushrod on the right): \(batteryLeft) – e.g. \(leftExamples.joined(separator: "; ")); pushrod in the way on both sides: \(batteryBlocked)")
         for (k, v) in blockedKinds.sorted(by: { $0.value > $1.value }).prefix(8) { print("      \(v)× \(k)") }

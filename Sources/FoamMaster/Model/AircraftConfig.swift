@@ -363,11 +363,25 @@ struct AircraftConfig: Codable, Equatable {
             r(\.noseLength); r(\.fuselageHeight); r(\.vStabHeight); r(\.vStabChord)
             rounding(\.finTopRounding, max: (c.vStabChord * 0.5).rounded())
         } else if !kind.isTailless {
-            r(\.noseLength); r(\.fuselageHeight); r(\.tailArm)
+            r(\.noseLength); r(\.fuselageHeight)
             r(\.hStabSpan); r(\.hStabChord)
             c.hStabSweep = 0
             r(\.hStabSweep, in: c.stabSweepLimits)
-            r(\.vStabHeight); r(\.vStabChord)
+            r(\.vStabHeight)
+            if fullRange {
+                // Anywhere in the range – but the tail behind the wing (tail arm = wing LE → stab LE: at least the root
+                // chord plus room, more with a forward-swept stab) and a fin that fits the tail arm (and on the twin
+                // boom no longer than the stab chord): the combinations that could never be built are not drawn.
+                let ta = AircraftConfig.range(\.tailArm, kind: kind)
+                let minArm = min(max(ta.lowerBound, c.rootChord + 25 + max(0, -c.hStabSweep)), ta.upperBound)
+                r(\.tailArm, in: minArm...ta.upperBound)
+                let vr = AircraftConfig.range(\.vStabChord, kind: kind)
+                var maxFin = (c.tailArm + 0.6 * c.hStabChord - c.rootChord - 12) / 1.25
+                if kind.isTwinBoom { maxFin = min(maxFin, c.hStabChord) }
+                r(\.vStabChord, in: vr.lowerBound...max(vr.lowerBound, min(vr.upperBound, maxFin)))
+            } else {
+                r(\.tailArm); r(\.vStabChord)
+            }
             rounding(\.wingTipRounding, max: (c.tipChord * 0.45).rounded())
             rounding(\.finTopRounding, max: (c.vStabChord * 0.5).rounded())
             c.stabTipRounding = 0

@@ -459,16 +459,29 @@ final class Project: ObservableObject {
         return c
     }
 
-    /// Randomize: a random design of `current`'s type with no restriction – random build options (one of the
-    /// combinations the setup sheet offers: fins, controls, aileron servos, single / dual motor, winglets), every
-    /// slider anywhere in its range, a random prop where the type offers the choice, random strut settings, the battery
-    /// anywhere it fits. With the automatic power system on, motor and battery follow it; otherwise they are random too.
-    /// No feasibility check: the analysis shows its warnings and errors.
-    nonisolated static func randomDesign(like current: AircraftConfig) -> AircraftConfig {
+    /// Randomize: a random design of `current`'s type – random build options (one of the combinations the setup
+    /// sheet offers: fins, controls, aileron servos, single / dual motor, winglets), every slider anywhere in its range
+    /// (with the tail behind the wing and a fin that fits), a random prop where the type offers the choice, random strut
+    /// settings, the battery anywhere it fits.
+    /// It must build: no geometry errors (parts colliding, outlines crossing themselves, props hitting the airframe …)
+    /// and no structure errors (wing far too flexible, fuselage twisting, tail boom bending). Anything else – power,
+    /// balance, performance, warnings – is allowed and shown by the analysis.
+    /// Fast: candidates are tried 8 at a time in parallel, each first built without struts (the strut planner is the
+    /// slow part) for the geometry, and only one that passes is built in full for the structure. Motor and battery are
+    /// not searched here – with the automatic power system on, the editor's background search matches them once the
+    /// design is shown. If none passes in time, the one with the fewest such errors is returned.
+    /// One random candidate (see `randomDesign`): options, sliders, prop, struts, spar, battery position.
+    nonisolated static func randomCandidate(like current: AircraftConfig) -> AircraftConfig {
         let kind = current.kind
         let choice = setupChoices(kind).randomElement() ?? kind.defaultSetupChoice
         var c = AircraftConfig.random(kind: kind, base: setupConfig(kind, choice), fullRange: true)
         c.autoPower = current.autoPower
+        c.motor = current.motor; c.battery = current.battery; c.servo = current.servo
+        if !c.autoPower {
+            c.motor = MotorClass.allCases.filter { $0 != .m2204 }.randomElement()!
+            c.battery = BatteryPack.allCases.filter { c.motor.allowedCells.contains($0.cells) }.randomElement()!
+            c.servo = ServoClass.allCases.randomElement()!
+        }
         if c.offersPropChoice, Bool.random() {
             c.propSize = (Double.random(in: AircraftConfig.propSizeRange) * 2).rounded() / 2
             c.propBladeChoice = Bool.random() ? 2 : 3
@@ -478,13 +491,41 @@ final class Project: ObservableObject {
         c.finStruts = StrutMode.allCases.randomElement()!
         c.torsionTruss = c.offersTorsionTruss && Bool.random()
         c.sparEnabled = Double.random(in: 0...1) < 0.85
-        if c.autoPower {
-            c = lightestServo(c)
-            if let r = PowerOptimizer.best(for: c) { c.motor = r.config.motor; c.battery = r.config.battery }
-        }
         let l = Analysis.batteryLimits(c)
         c.batteryPosition = l.upperBound > l.lowerBound ? Double.random(in: l).rounded() : l.lowerBound
         return c
+    }
+
+    nonisolated static func randomDesign(like current: AircraftConfig, deadline: TimeInterval = 4) -> AircraftConfig {
+        let t0 = Date()
+        let batch = max(ProcessInfo.processInfo.activeProcessorCount, 2)
+        func errors(_ a: Analysis, _ d: Design, structure: Bool) -> Int {
+            a.checks.filter { $0.severity == .error && ($0.category == "Geometry" || (structure && $0.category == "Structure")) }.count
+                + (d.geometryIssues.isEmpty ? 0 : 1)
+        }
+        var best: (c: AircraftConfig, errors: Int)?
+        repeat {
+            var results = [(c: AircraftConfig, errors: Int)?](repeating: nil, count: batch)
+            results.withUnsafeMutableBufferPointer { out in
+                DispatchQueue.concurrentPerform(iterations: batch) { i in
+                    let c = randomCandidate(like: current)
+                    // Geometry first, without the struts.
+                    var quick = c
+                    quick.wingStruts = .off; quick.tailStruts = .off; quick.finStruts = .off; quick.torsionTruss = false
+                    let dq = DesignBuilder.build(quick)
+                    let eq = errors(Analysis(design: dq), dq, structure: false)
+                    if eq > 0 { out[i] = (c, 100 + eq); return }
+                    // Then the full build: struts, structure.
+                    let d = DesignBuilder.build(c)
+                    out[i] = (c, errors(Analysis(design: d), d, structure: true))
+                }
+            }
+            for r in results.compactMap({ $0 }) {
+                if r.errors == 0 { return r.c }
+                if best == nil || r.errors < best!.errors { best = r }
+            }
+        } while Date().timeIntervalSince(t0) < deadline
+        return best?.c ?? current
     }
 
     @Published private(set) var randomizing = false
