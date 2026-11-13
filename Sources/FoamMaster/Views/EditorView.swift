@@ -66,6 +66,21 @@ struct ViewportView: View {
                 VStack { HStack { Spacer(); ComponentLegend(config: c, struts: project.design?.struts ?? []) }; Spacer() }
                     .padding(.top, 84).padding(.trailing, 20)
             }
+            if project.design != nil {
+                // Fly: top left of the 3D view, under the back button.
+                VStack {
+                    HStack {
+                        PillButton(title: "Fly", symbol: "airplane.departure", prominent: true) {
+                            // A new simulator session for the design on screen (any earlier one is closed).
+                            SimSession.open(project)
+                        }
+                        .help("Fly this design in the flight simulator (line of sight, keyboard or USB transmitter)")
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .padding(.top, 84).padding(.leading, 20)
+            }
         }
     }
 
@@ -85,11 +100,6 @@ struct ViewportView: View {
                     .buttonStyle(.plain).help(a.feasible ? "Show analysis" : "Show why it is not feasible and how to fix it")
             }
             Spacer()
-            PillButton(title: "Fly", symbol: "airplane.departure") {
-                // A new simulator session for the design on screen (any earlier one is closed).
-                SimSession.open(project)
-            }
-                .help("Fly this design in the flight simulator (line of sight, keyboard or USB transmitter)")
             PillButton(title: "Reset", symbol: "arrow.counterclockwise") { confirmReset = true }
                 .help("Back to the default \(project.config?.kind.title ?? "") – the build a new model of this type starts with")
                 .confirmationDialog("Reset to the default \(project.config?.kind.title ?? "design")?", isPresented: $confirmReset) {
