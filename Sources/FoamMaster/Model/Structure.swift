@@ -34,6 +34,10 @@ struct StructureReport {
     var wingStruts = 0
     var tailStruts = 0
     var finStruts = 0
+    /// Torsion truss: rods fitted and the torsional stiffness of the closed box it forms (N·mm²), over its length.
+    var torsionTrussRods = 0
+    var trussGJ = 0.0
+    var trussLength = 0.0
     var strutsBuckle = false
     /// Sideways tilt of the fin at full rudder (degrees): bare foam fin, and with the fin struts (nil without a fin).
     var finFlexBareDeg: Double?
@@ -189,12 +193,51 @@ struct StructureReport {
                 return k + st.stiffness(c.material, symmetric: symmetric) * lever * lever
             }
         }
+        // Torsion truss: the zigzag panels under the rear fuselage close the + section into a box (Bredt):
+        // GJ = 4A² / ∮ ds/(Gt). Walls: the plate between its edges and the bottom edge (foam, G·t) and the two truss
+        // panels – a panel of height h with one diagonal of length d per bay b (rod + anchors stiffness k) shears like a
+        // sheet of G·t = k·h·b/d². The box covers the trussed length; the rest of the boom stays an open section.
+        let truss = struts.filter { $0.group == .torsion }
+        torsionTrussRods = truss.count
+        var GJt = 0.0, Lt = 0.0
+        if truss.count >= 4 {
+            let zMin = truss.map { min($0.a.rodEnd.z, $0.b.rodEnd.z) }.min()!, zMax = truss.map { max($0.a.rodEnd.z, $0.b.rodEnd.z) }.max()!
+            Lt = zMax - zMin
+            let right = truss.filter { $0.a.surface.x > 0 }
+            var gtSum = 0.0, hSum = 0.0, xa = 0.0, xb = 0.0, ya = 0.0, yb = 0.0
+            for st in right {
+                let pa = st.a.rodEnd, pb = st.b.rodEnd
+                let h = simd_length(SIMD2(pa.x - pb.x, pa.y - pb.y)), b = abs(pa.z - pb.z), dd = st.length
+                gtSum += st.stiffness(c.material, symmetric: false) * h * b / (dd * dd) * b
+                hSum += h; xa += abs(pa.x); xb += abs(pb.x); ya += pa.y; yb += pb.y
+            }
+            let n = Double(max(right.count, 1))
+            // Bays without a rod (blocked) count as gaps: average G·t over the trussed length.
+            let gtPanel = gtSum / max(Lt, 1)
+            let hs = hSum / n, ax = xa / n, bx = xb / n, depth = (ya - yb) / n
+            let area = (ax + bx) * depth                     // trapezoid between the plate edges and the bottom edge
+            let ds = 2 * ax / (G * t) + 2 * bx / (G * t) + 2 * hs / max(gtPanel, 1e-6)
+            GJt = 4 * area * area / ds
+        }
+        trussGJ = GJt; trussLength = Lt
         let kBend = 2 * EIv / boom + strutK([1, 0, 0], about: pivot, symmetric: true)
-        let kTwist = GJ / boom + strutK([0, 0, 1], about: .zero, symmetric: false)
+        let kTorsion = Lt > 0 ? 1 / (min(Lt, boom) / (GJ + GJt) + max(boom - Lt, 0) / GJ) : GJ / boom
+        let kTwist = kTorsion + strutK([0, 0, 1], about: .zero, symmetric: false)
         let Mb = Fh * boom, zv = hBoom + c.vStabHeight / 2, Mt = Fv * zv
         let thB = Mb / kBend, thT = Mt / kTwist
         tailBendDeg = thB * 180 / .pi
         tailTwistDeg = thT * 180 / .pi
+        // Truss rods: the box carries its share of the twisting moment as shear flow q = T/(2A); a diagonal carries q·d.
+        if GJt > 0, let any = truss.first {
+            let share = (GJt / (GJ + GJt)) * Mt
+            let ax = abs(any.a.rodEnd.x), bx = abs(any.b.rodEnd.x), depth = any.a.rodEnd.y - any.b.rodEnd.y
+            let q = share / (2 * max((ax + bx) * depth, 1))
+            for st in truss {
+                let force = q * st.length
+                maxStrutForce = max(maxStrutForce, force)
+                if force * bucklingSafety > st.bucklingLoad { strutsBuckle = true }
+            }
+        }
         // Rod forces: either rod of a pair can be the compressed one when the load reverses.
         for st in tail {
             let lb = simd_dot(simd_cross([1, 0, 0], st.b.rodEnd - pivot), st.direction)

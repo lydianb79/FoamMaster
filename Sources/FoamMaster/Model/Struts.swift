@@ -18,7 +18,7 @@ enum StrutMode: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-enum StrutGroup { case wing, tail, fin }
+enum StrutGroup { case wing, tail, fin, torsion }
 
 /// One end of a strut: a printed anchor glued onto a foam surface, the rod plugged into its inclined boss.
 struct StrutAnchor {
@@ -218,19 +218,22 @@ struct StrutPlanner {
     /// Struts for the design (empty when none are needed or none fit).
     static func plan(_ d: Design, totalMass: Double, stallSpeed: Double) -> [Strut] {
         let c = d.config
-        guard c.struts != .off else { return [] }
+        let truss = c.torsionTruss && c.offersTorsionTruss
+        guard c.struts != .off || truss else { return [] }
         let base = StructureReport(c, totalMass: totalMass, stallSpeed: stallSpeed)
-        let needWing = c.wingStruts == .always || (c.wingStruts == .auto && base.wingDeflectionRatio * 100 >= StructureReport.wingWarnPct)
-        let needTail = c.offersTailStruts && (c.tailStruts == .always || (c.tailStruts == .auto
+        let needWing = c.struts != .off && (c.wingStruts == .always || (c.wingStruts == .auto && base.wingDeflectionRatio * 100 >= StructureReport.wingWarnPct))
+        let needTail = c.struts != .off && c.offersTailStruts && (c.tailStruts == .always || (c.tailStruts == .auto
             && ((base.tailTwistDeg ?? 0) >= StructureReport.twistWarnDeg || (base.tailBendDeg ?? 0) >= StructureReport.bendWarnDeg)))
         let wantFin = c.offersFinStruts && c.finStruts == .always
-        guard needWing || needTail || wantFin else { return [] }
+        guard needWing || needTail || wantFin || truss else { return [] }
         let p = StrutPlanner(design: d, totalMass: totalMass, stallSpeed: stallSpeed)
         var struts: [Strut] = []
         if needTail { struts += p.tailStruts() }
         if needWing { struts += p.wingStruts(avoiding: struts) }
         // Fin bracing: one rod each side from the fixed stabiliser up to the fin – on Auto whenever other struts go in.
-        if c.finStruts == .always || (c.finStruts == .auto && !struts.isEmpty) { struts += p.finStruts(avoiding: struts) }
+        if c.struts != .off && (c.finStruts == .always || (c.finStruts == .auto && !struts.isEmpty)) { struts += p.finStruts(avoiding: struts) }
+        // Torsion truss (on request): zigzag under the rear fuselage, clear of everything fitted so far.
+        if truss { struts += p.torsionTruss(avoiding: struts) }
         // Label S1, S2 … (left/right pairs share a number: S1 L / S1 R).
         var out: [Strut] = []
         var n = 0
@@ -249,8 +252,8 @@ struct StrutPlanner {
     /// bosses, when the joint pad fits on the fixed foam clear of slots and cutouts.
     func combineWingEnds(_ struts: [Strut]) -> [Strut] {
         var out = struts
-        for i in out.indices where out[i].a.shared == nil {
-            for j in out.indices where j > i && out[j].a.shared == nil {
+        for i in out.indices where out[i].a.shared == nil && out[i].group != .torsion {
+            for j in out.indices where j > i && out[j].a.shared == nil && out[j].group != .torsion {
                 let a = out[i].a, b = out[j].a
                 guard a.partIndex == b.partIndex, a.instanceIndex == b.instanceIndex, simd_dot(a.normal, b.normal) > 0.99,
                       simd_distance(a.surface, b.surface) < 22 else { continue }
@@ -309,7 +312,7 @@ struct StrutPlanner {
         var out = struts
         var used: [(part: Int, z0: Double, z1: Double)] = []
         for i in out.indices { out[i].b.saddle = nil }
-        for i in out.indices where out[i].b.surface.x > 0 {
+        for i in out.indices where out[i].b.surface.x > 0 && out[i].group != .torsion {
             let base = out[i].label.hasSuffix("R") ? String(out[i].label.dropLast()) : out[i].label
             guard let j = out.indices.first(where: { k in
                 k != i && abs(out[k].b.surface.x + out[i].b.surface.x) < 0.01 && simd_distance(SIMD2(out[k].b.surface.y, out[k].b.surface.z), SIMD2(out[i].b.surface.y, out[i].b.surface.z)) < 0.01
@@ -625,10 +628,12 @@ struct StrutPlanner {
     }
 
     /// The rod keeps clear of hardware, prop, moving surfaces, foam and the other struts.
-    func isClear(_ s: Strut, others: [Strut]) -> Bool { blocker(s, others: others) == nil }
+    func isClear(_ s: Strut, others: [Strut], pushrodGap: Double? = nil) -> Bool { blocker(s, others: others, pushrodGap: pushrodGap) == nil }
 
     /// What the rod (or one of its bosses) runs into, nil when it is clear.
-    func blocker(_ s: Strut, others: [Strut]) -> String? {
+    /// `pushrodGap`: for rods that run alongside a pushrod (the torsion truss) – the pushrod only slides along its
+    /// length, so the centre lines need just the two radii plus this gap instead of the moving-linkage margin.
+    func blocker(_ s: Strut, others: [Strut], pushrodGap: Double? = nil) -> String? {
         let a = s.a.rodEnd, b = s.b.rodEnd
         let r = s.diameter / 2
         let L = simd_distance(a, b)
@@ -653,7 +658,11 @@ struct StrutPlanner {
                 let q = simd_clamp(p, o.lo, o.hi)
                 if simd_distance(p, q) < need { return "hardware box \(o.name)" }
             }
-            for cp in capsules where Self.distance(p, segment: cp.a, cp.b) < cp.r + need - 1 { return "linkage \(cp.name)" }
+            for cp in capsules {
+                let dist = Self.distance(p, segment: cp.a, cp.b)
+                if let g = pushrodGap, cp.name.hasSuffix("pushrod") { if dist < r + 0.5 + g { return "linkage \(cp.name)" } }
+                else if dist < cp.r + need - 1 { return "linkage \(cp.name)" }
+            }
             if !nearEnd && insideFoam(p, margin: r + 0.5) { return "foam" }
             for o in others where Self.distance(p, segment: o.a.rodEnd, o.b.rodEnd) < r + o.diameter / 2 + 1.5 && !nearEnd { return "other strut" }
         }
@@ -836,6 +845,110 @@ struct StrutPlanner {
 
     /// Rods per side from the aft part of the wing (top and underside) to the top and bottom edges of the tail
     /// boom: they tie the tail to the wing against twisting and bending.
+    /// A torsion-truss rod between two foam spots, glued straight in: only a small glue spot (5 × 5 mm) has to sit on
+    /// fixed foam, clear of slots and cutouts (no printed anchor pads).
+    func trussRod(_ name: String, _ wing: Site, _ body: Site, dia: Double) -> Strut? {
+        guard simd_dot(body.point - wing.point, wing.normal) > 1, simd_dot(wing.point - body.point, body.normal) > 1 else { return nil }
+        var a = anchor(wing, towards: body.point, dia: dia), b = anchor(body, towards: wing.point, dia: dia)
+        let spot = Vec2(5, 5)
+        guard padFits(wing, dir: a.planDir, size: spot), padFits(body, dir: b.planDir, size: spot) else { return nil }
+        a.rodEnd = a.surface; b.rodEnd = b.surface
+        a.padSize = spot; b.padSize = spot
+        return Strut(label: "", name: name, group: .torsion, diameter: dia, a: a, b: b)
+    }
+
+    /// Spot on the UNDERSIDE of the horizontal part (fuselage plate, tail plate, wing) at world (x, z) – rod pointing down.
+    func plateUnderSite(x: Double, z: Double) -> Site? {
+        for (pi, part) in d.parts.enumerated() {
+            for (ii, inst) in part.instances.enumerated() where abs(inst.normal.y) > 0.9 && abs(inst.origin.y) < 0.5 {
+                let q = SIMD3(x, inst.origin.y, z) - inst.origin
+                let p = Vec2(simd_dot(q, inst.u), simd_dot(q, inst.v))
+                guard Poly.contains(part.outline, p), !part.regions.contains(where: { $0.isControl && Poly.contains($0.polygon, p) }) else { continue }
+                let flip: Double = inst.normal.y < 0 ? 1 : -1
+                return Site(part: pi, inst: ii, plan: p, point: inst.point(p, offset: part.thickness / 2 * flip), normal: inst.normal * flip)
+            }
+        }
+        return nil
+    }
+    /// Half width of the horizontal plate at station z (its side edges), where it is a plain boom (not the wing or the
+    /// stabiliser).
+    func plateHalfWidth(z: Double) -> Double? {
+        for part in d.parts where part.role != .wing {
+            for inst in part.instances where abs(inst.normal.y) > 0.9 && abs(inst.origin.y) < 0.5 {
+                let u = simd_dot(SIMD3(0, inst.origin.y, z) - inst.origin, inst.u)
+                let vs = Self.crossings(part.outline, atU: u)
+                guard let lo = vs.min(), let hi = vs.max(), lo < 0, hi > 0 else { continue }
+                return min(-lo, hi)
+            }
+        }
+        return nil
+    }
+
+    /// Torsion truss: carbon rods zigzagging (Warren truss) on both sides under the rear fuselage, from the underside
+    /// of the plate near its edge down to the side of the lower fuselage half near its bottom edge, from just behind
+    /// the wing to where the lower half ends. With the plate and the bottom edge the two zigzag panels close the open
+    /// + section into a torsion box. Each rod gets its own anchors; left and right rods meeting at the bottom edge
+    /// share a one-piece saddle. Rods that would hit something (pushrods, servos, other struts …) are left out.
+    func torsionTruss(avoiding existing: [Strut]) -> [Strut] {
+        guard c.offersTorsionTruss else { return [] }
+        let tw = t * Double(c.fuselageType.webLayers)
+        // Boom stations from just behind the wing to where the plate widens into the stabiliser, wherever the lower
+        // half is deep enough for an anchor near its edge.
+        var zs: [Double] = []
+        var z = c.rootChord + 10
+        let zEnd = c.tailArm + c.hStabChord
+        var lastHW = Double.greatestFiniteMagnitude
+        while z < zEnd {
+            guard let hw = plateHalfWidth(z: z), hw <= lastHW + 1.5 else { if !zs.isEmpty { break }; z += 2; continue }
+            lastHW = hw
+            if let edge = webEdge(z: z, top: false), edge < -(t / 2 + 12) { zs.append(z) } else if !zs.isEmpty { break }
+            z += 2
+        }
+        guard let z0 = zs.first, let z1 = zs.last, z1 - z0 > 40 else { return [] }
+        let gap = 11.0                                     // between neighbouring rod ends
+        // Bays about as long as the lower half is deep (diagonals near 45°), at least two over the trussed length.
+        let depth0 = -(webEdge(z: z0, top: false) ?? -40) - t / 2
+        let nBays = max(2, Int(((z1 - z0) + gap) / (min(max(depth0, 18), 40) + gap)))
+        let bayLen = max(15, ((z1 - z0) - gap * Double(nBays - 1)) / Double(nBays))
+        var out: [Strut] = []
+        var s = z0, i = 0
+        while true {
+            guard let hwA = plateHalfWidth(z: s), let edgeA = webEdge(z: s, top: false) else { break }
+            _ = edgeA
+            let e = s + bayLen
+            guard e <= z1 + 0.5 else { break }
+            // Even bays run plate → bottom edge going aft, odd bays bottom edge → plate: the zigzag.
+            let zPlate = i % 2 == 0 ? s : e, zKeel = i % 2 == 0 ? e : s
+            var pair: [Strut] = []
+            for dia in [1.0, 1.5] {
+                pair = []
+                // Ends as near the plate edge and the bottom edge as the anchor pads allow (wider box = stiffer).
+                // Plate ends from the edge inwards: the first mirrored pair that fits and clears everything (inboard of
+                // the elevator pushrod under the plate if need be – a narrower but still closed box).
+                guard let hwP = plateHalfWidth(z: zPlate) else { break }
+                let xas = Array(stride(from: hwP - 4.5, through: tw / 2 + 4.5, by: -1.5))
+                search: for xa in xas {
+                    for inset in [7.0, 9, 12] {
+                        pair = []
+                        for side in [1.0, -1.0] {
+                            guard let edge = webEdge(z: zKeel, top: false), let a = plateUnderSite(x: side * xa, z: zPlate),
+                                  let b = webSite(z: zKeel, y: edge + inset, side: side),
+                                  let st = trussRod("Torsion truss \(i + 1)", a, b, dia: dia) else { break }
+                            pair.append(st)
+                        }
+                        if pair.count == 2 && pair.allSatisfy({ isClear($0, others: existing + out, pushrodGap: 2) }) { break search }
+                    }
+                }
+                if pair.count == 2 && pair.allSatisfy({ isClear($0, others: existing + out, pushrodGap: 2) }) { break }
+                pair = []
+            }
+            _ = hwA
+            out += pair
+            s = e + gap; i += 1
+        }
+        return out
+    }
+
     func tailStruts(tally: ((String) -> Void)? = nil) -> [Strut] {
         let s = c.semiSpan
         var fallback: (score: Double, struts: [Strut])?

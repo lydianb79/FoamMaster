@@ -27,6 +27,12 @@ struct FoamMasterApp: App {
             MainActor.assumeIsolated { SelfTest.gfx(dir) }
             exit(0)
         }
+        if let i = args.firstIndex(of: "--trusscheck") {
+            let dir = URL(fileURLWithPath: i + 1 < args.count ? args[i + 1] : "trusscheck")
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            MainActor.assumeIsolated { SelfTest.trussCheck(dir) }
+            exit(0)
+        }
         if args.contains("--earcheck") {
             MainActor.assumeIsolated { SelfTest.earCheck() }
             exit(0)

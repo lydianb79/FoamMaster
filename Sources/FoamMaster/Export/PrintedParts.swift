@@ -44,7 +44,7 @@ enum PrintedParts {
 
         // Strut anchors grouped by rod size and boss angle (left and right ends are the same part).
         var anchors: [String: (dia: Double, deg: Int, labels: [String])] = [:]
-        for st in d.struts {
+        for st in d.struts where st.group != .torsion {          // (truss rods are glued in directly)
             for end in [st.a, st.b] where end.saddle == nil && end.shared == nil {
                 let deg = Int((end.elevation * 180 / .pi).rounded())
                 let key = String(format: "d%.1f_%02d", st.diameter, deg)

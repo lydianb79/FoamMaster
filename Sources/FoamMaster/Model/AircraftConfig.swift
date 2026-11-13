@@ -235,6 +235,9 @@ struct AircraftConfig: Codable, Equatable {
     var tailWinglets: Bool = false
     /// Carbon stabilisation struts per group. Auto: wing / tail struts when their stiffness check would give a
     /// warning or an error, fin struts whenever other struts are fitted. On: always. Off: never.
+    /// Optional torsion truss: carbon rods zigzagging under the rear fuselage between the plate edges and the bottom
+    /// edge of the lower fuselage half – closes the + section into a torsion box behind the wing.
+    var torsionTruss = false
     var wingStruts: StrutMode = .auto
     var tailStruts: StrutMode = .auto
     var finStruts: StrutMode = .auto
@@ -248,6 +251,8 @@ struct AircraftConfig: Codable, Equatable {
     }
     /// Groups this airframe can have: tail struts need a boom (not the twin boom), fin struts a stabiliser and a fin.
     var offersTailStruts: Bool { kind.hasTail && !kind.isTwinBoom }
+    /// The torsion truss needs the horizontal plate and a lower fuselage half behind the wing.
+    var offersTorsionTruss: Bool { kind.hasFuselage }
     var offersFinStruts: Bool { (kind.hasTail || kind.isNutBall) && !kind.isTwinBoom }
     var hasWinglets: Bool { kind.isTailless ? taillessFins.hasWinglets : tailWinglets }
     /// Tailless types: a fin on the centre line (alone or with winglets).

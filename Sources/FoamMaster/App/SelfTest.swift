@@ -622,6 +622,34 @@ enum SelfTest {
         }
     }
 
+    /// Torsion truss on every fuselage type (default setups, and soft EPP variants): rods fitted, twist with / without.
+    @MainActor static func trussCheck(_ dir: URL) {
+        let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+        let r = Renderer(view: view)
+        for kind in AircraftKind.allCases where kind.hasFuselage {
+            for m in [FoamMaterial.depron6, .epp6, .depron3] {
+                var c = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+                c.material = m; c.struts = .off
+                let d0 = DesignBuilder.build(c), a0 = Analysis(design: d0)
+                c.torsionTruss = true
+                c = Project.balanced(c)              // as the editor does when the truss is switched on
+                let d1 = DesignBuilder.build(c), a1 = Analysis(design: d1)
+                let st = a1.structure
+                print(String(format: "%@ %@: twist %.2f° → %.2f° with %d truss rods (box GJ %.0f N·mm² over %.0f mm, open GJ %.0f), +%.1f g, score %d → %d%@",
+                             kind.title, m.displayName, a0.structure?.tailTwistDeg ?? 0, st?.tailTwistDeg ?? 0, st?.torsionTrussRods ?? 0, st?.trussGJ ?? 0, st?.trussLength ?? 0,
+                             a0.structure?.torsionStiffness ?? 0, a1.totalMass - a0.totalMass, a0.score, a1.score, st?.strutsBuckle == true ? " BUCKLES" : ""))
+                let new = a1.checks.filter { ch in ch.severity >= .warning && !a0.checks.contains(where: { $0.title == ch.title }) }
+                for ch in new { print("     + \(ch.severity == .error ? "E" : "W") \(ch.title): \(ch.detail.prefix(150))") }
+                if m == .depron6, let r {
+                    r.setScene(SceneBuilder.aircraft(d1, a1, deflection: 0, showCG: false), resetCamera: true)
+                    r.target = SIMD3<Float>(0, -10, Float(c.rootChord + c.tailArm) / 2 + 20); r.yaw = 0.9; r.pitch = -0.45; r.zoom = 0.4
+                    if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("truss_\(kind.rawValue).png")) }
+                    try? PlanPDF.render(d1, a1).write(to: dir.appendingPathComponent("plans_\(kind.rawValue).pdf"))
+                }
+            }
+        }
+    }
+
     /// Crash fuzz: every type × setup option, every slider of the fix finder swept from its minimum to its maximum
     /// (11 stations, alone and on random airframes), plus random airframes with sliders at their range ends – each
     /// built, analysed and drawn. A crash here is a trap; the count says how much was covered.

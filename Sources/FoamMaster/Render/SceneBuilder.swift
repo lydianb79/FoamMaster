@@ -342,7 +342,8 @@ enum SceneBuilder {
 
         // Carbon struts with their printed anchors (same mesh as the STL).
         for st in d.struts {
-            scene.label = "Carbon strut \(st.label) – \(st.rod.name), \(Int(st.length.rounded())) mm"
+            scene.label = st.group == .torsion ? "Torsion truss \(st.label) – \(st.rod.name), \(Int(st.length.rounded())) mm, glued into the foam"
+                                               : "Carbon strut \(st.label) – \(st.rod.name), \(Int(st.length.rounded())) mm"
             let a3 = st.a.rodEnd, dir = st.direction
             let side = simd_normalize(abs(dir.y) < 0.9 ? simd_cross(dir, [0, 1, 0]) : simd_cross(dir, [1, 0, 0]))
             let up = simd_cross(side, dir)
@@ -352,6 +353,7 @@ enum SceneBuilder {
                 .transformed { p in a3 + side * p.x + up * p.y + dir * p.z }
             scene.addMesh(rod, color: Palette.carbon)
             scene.addLine(a3, st.b.rodEnd, color: Palette.strutLine)
+            if st.group == .torsion { continue }      // glued straight into the foam – no anchors
             for end in [st.a, st.b] {
                 if let sd = end.saddle {
                     // Drawn once for the pair (with the right-hand strut).

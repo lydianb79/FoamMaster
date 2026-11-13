@@ -288,18 +288,25 @@ struct Analysis {
             }
         }
         let wingHint = strutHint(c.wingStruts, fitted: st.wingStruts, group: "Wing")
-        let tailHint = c.offersTailStruts ? strutHint(c.tailStruts, fitted: st.tailStruts, group: "Tail") : ""
+        let tailHint = (c.offersTailStruts ? strutHint(c.tailStruts, fitted: st.tailStruts, group: "Tail") : "")
+            + (c.offersTorsionTruss && !c.torsionTruss ? " Or switch the torsion truss on." : "")
         let wingFix = (c.sparEnabled ? "Use thicker foam, a bigger spar or reduce span." : "Enable the carbon spar.") + wingHint
         let wingWith = (c.sparEnabled ? " with the \(c.sparSpec.name) spar" : "") + (st.wingStruts > 0 ? " and \(st.wingStruts) carbon struts" : "")
         if pct >= StructureReport.wingErrorPct { add(.error, "Structure", "Wing far too flexible", "Tip bends \(f0(st.wingTipDeflection)) mm (\(f0(pct)) % of the half span) at 3 g\(wingWith). \(wingFix)") }
         else if pct >= StructureReport.wingWarnPct { add(.warning, "Structure", "Wing flexes noticeably", "Tip bends \(f0(st.wingTipDeflection)) mm (\(f1(pct)) %) at 3 g\(wingWith). \(wingFix)") }
         else { add(.ok, "Structure", "Wing stiffness OK", "Tip deflection \(f1(st.wingTipDeflection)) mm (\(f1(pct)) %) at 3 g\(wingWith).") }
+        if st.torsionTrussRods > 0 {
+            add(.info, "Structure", "Torsion truss", "\(st.torsionTrussRods) carbon rods zigzag under the rear fuselage over \(f0(st.trussLength)) mm, glued straight into the foam: they close the + section into a torsion box (adds \(f0(st.trussGJ / 1000)) N·m²·10⁻³ of torsional stiffness there).")
+        } else if c.torsionTruss && c.offersTorsionTruss {
+            add(.warning, "Structure", "Torsion truss does not fit", "No truss rod fits under the rear fuselage – the lower fuselage half is too shallow there or the space is taken (pushrods, servos, struts). Increase the fuselage height or the tail arm.")
+        }
         if !d.struts.isEmpty {
             let rods = Dictionary(grouping: d.struts, by: \.diameter).sorted { $0.key < $1.key }
                 .map { "\($0.value.count) × \(CarbonSpar.strutRod($0.key).name)" }.joined(separator: ", ")
             let saddles = d.struts.filter { $0.b.saddle != nil }.count / 2
             let doubles = d.struts.filter { $0.a.shared != nil }.count / 2
-            let anchors = d.struts.count * 2 - saddles * 2 - doubles * 2
+            let trussRods = d.struts.filter { $0.group == .torsion }.count
+            let anchors = (d.struts.count - trussRods) * 2 - saddles * 2 - doubles * 2
             let mounts = [anchors > 0 ? "\(anchors) printed anchors" : nil, doubles > 0 ? "\(doubles) double anchors on the wing" : nil,
                           saddles > 0 ? "\(saddles) one-piece saddle\(saddles > 1 ? "s" : "") under the fuselage" : nil]
                 .compactMap { $0 }.joined(separator: " + ")

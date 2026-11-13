@@ -197,6 +197,18 @@ struct ParameterContent: View {
                             if c.offersFinStruts {
                                 strutRow("Fin", bind(\.finStruts), help: "Stabiliser up to the fin. Auto: whenever other struts are fitted; On: always.")
                             }
+                            if c.offersTorsionTruss {
+                                // Switching it on or off moves mass at the tail: re-balance the battery right away.
+                                Toggle(isOn: Binding(get: { c.torsionTruss }, set: { v in
+                                    guard var n = project.config else { return }
+                                    n.torsionTruss = v
+                                    project.config = Project.balanced(n)
+                                })) {
+                                    Text("Torsion truss – zigzag under the rear fuselage").font(.system(size: 11))
+                                }
+                                .toggleStyle(.switch).controlSize(.small)
+                                .help("Carbon rods zigzagging between the plate edges and the bottom edge of the lower fuselage half, from behind the wing to the tail: closes the + section into a torsion box – much stiffer against twist.")
+                            }
                             Text(strutSummary(c)).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -237,8 +249,8 @@ struct ParameterContent: View {
         let struts = project.design?.struts ?? []
         if struts.isEmpty { return c.struts == .off ? "No struts – stiffness from foam and spar only" : "None fitted – not needed on Auto, or none fit" }
         let wing = struts.filter { $0.group == .wing }.count, tail = struts.filter { $0.group == .tail }.count
-        let fin = struts.filter { $0.group == .fin }.count
-        let parts = [wing > 0 ? "\(wing) wing" : nil, tail > 0 ? "\(tail) tail" : nil, fin > 0 ? "\(fin) fin" : nil].compactMap { $0 }.joined(separator: " + ")
+        let fin = struts.filter { $0.group == .fin }.count, truss = struts.filter { $0.group == .torsion }.count
+        let parts = [wing > 0 ? "\(wing) wing" : nil, tail > 0 ? "\(tail) tail" : nil, fin > 0 ? "\(fin) fin" : nil, truss > 0 ? "\(truss) torsion-truss" : nil].compactMap { $0 }.joined(separator: " + ")
         let mass = struts.reduce(0) { $0 + $1.rodMass }
         return "\(parts) struts fitted (\(String(format: "%.1f", mass)) g carbon + printed anchors) – marked S1… on the plans"
     }

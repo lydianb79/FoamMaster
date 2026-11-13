@@ -199,7 +199,7 @@ enum DesignBuilder {
         addPushrodSlots(&b.parts, controls: b.controls)
         var d = Design(config: c, parts: b.parts, components: b.components, controls: b.controls,
                        servoCutouts: b.servoCutouts, geometryIssues: b.issues, trussLength: b.trussLength)
-        if c.struts != .off { addStruts(&d) }
+        if c.struts != .off || (c.torsionTruss && c.offersTorsionTruss) { addStruts(&d) }
         return d
     }
 
@@ -257,6 +257,17 @@ enum DesignBuilder {
         for st in struts {
             d.components.append(MassItem(name: "Carbon strut \(st.label) – \(st.rod.name)", mass: st.rodMass,
                                          position: (st.a.rodEnd + st.b.rodEnd) / 2, category: "Hardware"))
+            if st.group == .torsion {
+                // Torsion truss: rod ends glued straight into the foam – glue only, and a small mark at each end.
+                d.components.append(MassItem(name: "Glue – torsion truss \(st.label)", mass: 0.1, position: (st.a.rodEnd + st.b.rodEnd) / 2, category: "Hardware"))
+                for end in [st.a, st.b] {
+                    let key = "\(end.partIndex)-\(Int((end.plan.x * 2).rounded()))-\(Int((end.plan.y * 2).rounded()))"
+                    guard marked.insert(key).inserted else { continue }
+                    let face = abs(end.normal.x) > 0.9 ? " L+R" : " under"
+                    d.parts[end.partIndex].features.append(.strutAnchor(end.plan, end.planDir, Vec2(3, 3), String(st.label.dropLast()) + face))
+                }
+                continue
+            }
             for end in [st.a, st.b] {
                 let base = String(st.label.dropLast())
                 if let sd = end.saddle {
