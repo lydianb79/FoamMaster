@@ -12,7 +12,7 @@ let shaderSource = """
 using namespace metal;
 
 struct Vtx { float4 pos; float4 nrm; float4 col; };
-struct Uni { float4x4 viewProj; float4x4 model; float4 light; float4 eye; float4 tint; float4 sky; };
+struct Uni { float4x4 viewProj; float4x4 model; float4 light; float4 eye; float4 tint; float4 sky; float4 fog; };
 struct Out { float4 pos [[position]]; float3 n; float3 w; float4 c; float lit; };
 
 // Rodrigues rotation of p about the unit axis k by angle a.
@@ -41,8 +41,15 @@ vertex Out vmain(const device Vtx* v [[buffer(0)]], constant Uni& u [[buffer(1)]
     return o;
 }
 
+// Distance haze (simulator): colour fades towards the horizon colour, fog.w = density per metre.
+float4 hazed(float4 c, float3 w, constant Uni& u) {
+    if (u.fog.w <= 0) { return c; }
+    float f = 1.0 - exp(-distance(w, u.eye.xyz) * u.fog.w);
+    return float4(mix(c.rgb, u.fog.rgb, f), c.a);
+}
+
 fragment float4 fmain(Out in [[stage_in]], constant Uni& u [[buffer(1)]]) {
-    if (in.lit < 0.5) { return in.c; }
+    if (in.lit < 0.5) { return hazed(in.c, in.w, u); }
     float3 n = normalize(in.n);
     float3 v = normalize(u.eye.xyz - in.w);
     if (dot(n, v) < 0) { n = -n; }
@@ -53,8 +60,10 @@ fragment float4 fmain(Out in [[stage_in]], constant Uni& u [[buffer(1)]]) {
     float3 h = normalize(l + v);
     float spec = pow(max(dot(n, h), 0.0), 48.0) * 0.35;
     float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.45 * u.sky.w;
-    float3 col = in.c.rgb * (0.32 + 0.62 * diff + fill) + spec + rim * float3(0.35, 0.65, 1.0);
-    return float4(col, in.c.a);
+    // sky.xyz: sky light from above (outdoors), adds a soft blue fill on up-facing surfaces.
+    float skyFill = max(n.y, 0.0) * 0.25;
+    float3 col = in.c.rgb * (0.32 + 0.62 * diff + fill) + spec + rim * float3(0.35, 0.65, 1.0) + in.c.rgb * u.sky.rgb * skyFill;
+    return hazed(float4(col, in.c.a), in.w, u);
 }
 """
 
@@ -289,8 +298,10 @@ struct Uniforms {
     var eye: SIMD4<Float>
     /// w > 0: flat colour for everything (shadow pass).
     var tint: SIMD4<Float> = .zero
-    /// w: strength of the blue rim light (1 in the editor, lower outdoors).
+    /// w: strength of the blue rim light (1 in the editor, lower outdoors); rgb: sky fill light.
     var sky: SIMD4<Float> = [0, 0, 0, 1]
+    /// Distance haze: horizon colour, density per metre (0 = none).
+    var fog: SIMD4<Float> = .zero
 }
 
 /// Centre and axis + angle (w) of each moving group, as the shader reads them (buffer 2, 10 groups).

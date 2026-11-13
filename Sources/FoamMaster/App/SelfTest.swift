@@ -694,9 +694,15 @@ enum SelfTest {
                     s.launch(); s.input = StickInput(roll: 0.4, pitch: 0.2, throttle: 0.6)
                     for _ in 0..<90 { s.step(1.0 / 60) }
                     if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_\(kind.rawValue)_flying.png")) }
+                    // The site without zoom: the model high up to the left and far out.
+                    r.autoZoom = false
+                    s.place([-60, 18, -110])
+                    if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_\(kind.rawValue)_site.png")) }
                 }
             }
         }
+        let snd = SimAudio.renderTest(to: dir?.appendingPathComponent("sim_audio.wav"))
+        print(String(format: "Sound: peak %.2f, rms %.3f%@", snd.peak, snd.rms, snd.peak.isFinite && snd.peak < 1 && snd.rms > 0.01 ? "" : "  ← PROBLEM"))
     }
 
     /// Crash fuzz: every type × setup option, every slider of the fix finder swept from its minimum to its maximum

@@ -11,6 +11,9 @@ final class SimRenderer: NSObject, MTKViewDelegate {
     private var depthState: MTLDepthStencilState!
     private var lineDepthState: MTLDepthStencilState!
     private var world: (tri: MTLBuffer?, triCount: Int, line: MTLBuffer?, lineCount: Int) = (nil, 0, nil, 0)
+    private var skyDome: (tri: MTLBuffer?, triCount: Int, line: MTLBuffer?, lineCount: Int) = (nil, 0, nil, 0)
+    private var skyDepthState: MTLDepthStencilState!
+    private static var sceneryCache: (world: SceneData, sky: SceneData)?
     private var plane: (tri: MTLBuffer?, triCount: Int, line: MTLBuffer?, lineCount: Int) = (nil, 0, nil, 0)
     private var groups: [SceneData.Group] = []
     private var cgMM = SIMD3<Float>.zero
@@ -23,6 +26,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
     var onTick: ((FlightSim, StickInput) -> Void)?
     private var tickAccum = 0.0
     var autoZoom = true
+    var audio: SimAudio?
 
     init?(view: MTKView) {
         guard let dev = view.device ?? MTLCreateSystemDefaultDevice(), let q = dev.makeCommandQueue() else { return nil }
@@ -32,7 +36,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         view.colorPixelFormat = .bgra8Unorm
         view.depthStencilPixelFormat = .depth32Float
         view.sampleCount = 4
-        view.clearColor = MTLClearColor(red: 0.58, green: 0.76, blue: 0.94, alpha: 1)
+        view.clearColor = MTLClearColor(red: 0.74, green: 0.83, blue: 0.93, alpha: 1)
         view.preferredFramesPerSecond = 60
         do {
             let lib = try dev.makeLibrary(source: shaderSource, options: nil)
@@ -51,8 +55,12 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         depthState = dev.makeDepthStencilState(descriptor: ds)
         let ls = MTLDepthStencilDescriptor(); ls.depthCompareFunction = .lessEqual; ls.isDepthWriteEnabled = false
         lineDepthState = dev.makeDepthStencilState(descriptor: ls)
-        let w = Self.field()
-        world = buffers(w)
+        let ks = MTLDepthStencilDescriptor(); ks.depthCompareFunction = .always; ks.isDepthWriteEnabled = false
+        skyDepthState = dev.makeDepthStencilState(descriptor: ks)
+        let sc = Self.sceneryCache ?? (SimScenery.build(), SimScenery.sky())
+        Self.sceneryCache = sc
+        world = buffers(sc.world)
+        skyDome = buffers(sc.sky)
     }
 
     private func buffers(_ s: SceneData) -> (MTLBuffer?, Int, MTLBuffer?, Int) {
@@ -69,39 +77,6 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         span = d.config.wingspan / 1000
     }
 
-    /// Grass field (metres): mown strip, 10 m grid, a ring of trees, the pilot's spot.
-    static func field() -> SceneData {
-        var s = SceneData()
-        let grass = SIMD4<Float>(0.33, 0.56, 0.26, 1), strip = SIMD4<Float>(0.45, 0.66, 0.33, 1)
-        s.label = "Field"
-        s.addMesh(.box(min: [-1500, -0.2, -1500], max: [1500, 0, 1500]), color: grass)
-        s.addMesh(.box(min: [-6, 0, -70], max: [6, 0.004, 10]), color: strip)
-        for k in stride(from: -200.0, through: 200.0, by: 10) {
-            s.addLine([k, 0.01, -200], [k, 0.01, 200], color: SIMD4(1, 1, 1, 0.08))
-            s.addLine([-200, 0.01, k], [200, 0.01, k], color: SIMD4(1, 1, 1, 0.08))
-        }
-        // Pilot's spot (a small mat) and a few cones on the strip as distance marks.
-        s.addMesh(.box(min: [-0.6, 0, -0.6], max: [0.6, 0.02, 0.6]), color: SIMD4(0.85, 0.85, 0.8, 1))
-        for z in [-20.0, -40.0, -60.0] {
-            s.addMesh(SceneBuilder.cylinder(center: [6.5, 0.15, z], radius: 0.15, length: 0.3).rotated(.pi / 2, axis: [1, 0, 0]).translated([0, 0, 0]), color: SIMD4(1, 0.5, 0.1, 1))
-        }
-        // Trees around the field (fixed positions).
-        var rng = SystemRandomNumberGenerator()
-        _ = rng
-        var seed: UInt64 = 12345
-        func rnd() -> Double { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Double(seed >> 33) / Double(1 << 31) }
-        for _ in 0..<70 {
-            let a = rnd() * 2 * .pi, r = 90 + rnd() * 160
-            let x = cos(a) * r, z = sin(a) * r
-            let h = 6 + rnd() * 9
-            s.addMesh(SceneBuilder.cylinder(center: [x, h * 0.2, z], radius: 0.35, length: h * 0.4).rotated(.pi / 2, axis: [1, 0, 0]).translated([0, 0, 0]),
-                      color: SIMD4(0.35, 0.25, 0.15, 1))
-            let crown = SceneBuilder.sphere(center: [0, 0, 0], radius: 1).transformed { p in [x + p.x * h * 0.28, h * 0.62 + p.y * h * 0.4, z + p.z * h * 0.28] }
-            s.addMesh(crown, color: SIMD4(0.16 + Float(rnd()) * 0.08, 0.36 + Float(rnd()) * 0.1, 0.16, 1))
-        }
-        return s
-    }
-
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
@@ -114,6 +89,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         sim.step(dt)
         tickAccum += dt
         if tickAccum > 1.0 / 15 { tickAccum = 0; onTick?(sim, stick) }
+        audio?.update(sim: sim, eye: [0, 1.7, 0], dt: dt)
         propAngle += Float(dt) * 2 * .pi * Float(20 * sim.surfaces.throttle)
         propAngle = propAngle.truncatingRemainder(dividingBy: 2 * .pi * 100)
 
@@ -142,9 +118,8 @@ final class SimRenderer: NSObject, MTKViewDelegate {
             fov = Float(min(max(want, lo), hi))
         }
         let viewM = lookAt(eye: eye, center: target, up: [0, 1, 0])
-        let proj = perspective(fovY: fov, aspect: aspect, near: 0.05, far: 4000)
+        let proj = perspective(fovY: fov, aspect: aspect, near: 0.05, far: 7000)
         var uni = Uniforms(viewProj: proj * viewM, light: SIMD4(0.35, 0.9, 0.3, 0), eye: SIMD4(eye, 1))
-        uni.sky = [0, 0, 0, 0.25]
         enc.setRenderPipelineState(pipeline)
         enc.setCullMode(.none)
         var none = groupBuffer([]) { _, _ in 0 }
@@ -155,7 +130,16 @@ final class SimRenderer: NSObject, MTKViewDelegate {
             if lines, let l = b.line { enc.setDepthStencilState(lineDepthState); enc.setVertexBuffer(l, offset: 0, index: 0); enc.drawPrimitives(type: .line, vertexStart: 0, vertexCount: b.lineCount) }
         }
         enc.setVertexBytes(&none, length: MemoryLayout<SIMD4<Float>>.stride * none.count, index: 2)
+        // Sky dome around the eye (no depth, no haze), then the site in the haze with a blue sky fill from above.
+        uni.model = translation(eye) * simd_float4x4(diagonal: [0.25, 0.25, 0.25, 1])
+        enc.setVertexBytes(&uni, length: MemoryLayout<Uniforms>.stride, index: 1)
+        enc.setFragmentBytes(&uni, length: MemoryLayout<Uniforms>.stride, index: 1)
+        if let t = skyDome.tri { enc.setDepthStencilState(skyDepthState); enc.setVertexBuffer(t, offset: 0, index: 0); enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: skyDome.triCount) }
+        uni.model = matrix_identity_float4x4
+        uni.sky = [0.55, 0.7, 1.0, 0.25]
+        uni.fog = SIMD4(SimScenery.horizon.x, SimScenery.horizon.y, SimScenery.horizon.z, 0.00028)
         draw(world)
+        uni.fog.w = 0.00012
         // Aircraft: CG at its position, its attitude, mm → m; surfaces and props move.
         let s = sim.surfaces
         let pa = propAngle
@@ -164,7 +148,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         let q = simd_quatf(ix: Float(st.orientation.imag.x), iy: Float(st.orientation.imag.y), iz: Float(st.orientation.imag.z), r: Float(st.orientation.real))
         let body = simd_float4x4(q) * simd_float4x4(diagonal: [0.001, 0.001, 0.001, 1]) * translation(-cgMM)
         // Shadow on the grass (flattened, translucent), then the aircraft.
-        uni.model = translation([target.x, 0.012, target.z]) * simd_float4x4(diagonal: [1, 0, 1, 1]) * body
+        uni.model = translation([target.x, Float(SimScenery.height(Double(target.x), Double(target.z))) + 0.03, target.z]) * simd_float4x4(diagonal: [1, 0, 1, 1]) * body
         uni.tint = [0.05, 0.1, 0.03, 0.35]
         draw(plane, lines: false)
         uni.model = translation(target) * body
@@ -187,7 +171,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = msaa; pass.colorAttachments[0].resolveTexture = resolve
         pass.colorAttachments[0].loadAction = .clear; pass.colorAttachments[0].storeAction = .multisampleResolve
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.58, green: 0.76, blue: 0.94, alpha: 1)
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.74, green: 0.83, blue: 0.93, alpha: 1)
         pass.depthAttachment.texture = depth; pass.depthAttachment.clearDepth = 1
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return nil }
         encode(enc, sim: sim, aspect: Float(width) / Float(height))

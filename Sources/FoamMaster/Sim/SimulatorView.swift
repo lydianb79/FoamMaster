@@ -10,7 +10,10 @@ final class SimController: ObservableObject {
     @Published var title = ""
     @Published var showControls = false
     @Published var autoZoom: Bool
+    @Published var volume = Double(SimAudio.volume)
+    @Published var muted = SimAudio.muted
     let input = SimInputState()
+    let audio = SimAudio()
     private(set) var sim: FlightSim?
     weak var renderer: SimRenderer?
     private(set) var loadedRevision = -1
@@ -31,6 +34,8 @@ final class SimController: ObservableObject {
         renderer = r
         r.input = input
         r.autoZoom = autoZoom
+        r.audio = audio
+        audio.start()
         r.onTick = { [weak self] sim, stick in
             Task { @MainActor in
                 self?.hud = HUD(phase: sim.state.phase, speed: sim.airspeed, height: sim.height, throttle: stick.throttle, stick: stick,
@@ -47,6 +52,8 @@ final class SimController: ObservableObject {
         default: break
         }
     }
+    func setVolume(_ v: Double) { volume = v; SimAudio.volume = Float(v); if v > 0, muted { setMuted(false) } }
+    func setMuted(_ m: Bool) { muted = m; SimAudio.muted = m }
     func setAutoZoom(_ on: Bool) {
         autoZoom = on; renderer?.autoZoom = on
         input.controls.autoZoom = on; input.controls.save()
@@ -99,6 +106,8 @@ struct SimulatorView: View {
         .background(Color.black)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $ctl.showControls) { SimControlsSheet(input: ctl.input) { ctl.showControls = false } }
+        .onAppear { if ctl.renderer != nil { ctl.audio.start() } }
+        .onDisappear { ctl.audio.stop() }
         .onChange(of: project.revision) { _, _ in
             // A changed design is picked up whenever the plane is not in the air.
             if ctl.hud.phase != .flying { ctl.load(project) }
@@ -112,6 +121,12 @@ struct SimulatorView: View {
                 Image(systemName: "airplane.departure").foregroundStyle(Theme.accent)
                 Text(ctl.title).font(.system(size: 13, weight: .semibold))
                 Spacer()
+                Button { ctl.setMuted(!ctl.muted) } label: {
+                    Image(systemName: ctl.muted ? "speaker.slash.fill" : ctl.volume < 0.4 ? "speaker.wave.1.fill" : "speaker.wave.3.fill").frame(width: 18)
+                }
+                .buttonStyle(.plain).help(ctl.muted ? "Sound off – click to turn on" : "Sound on – click to mute")
+                Slider(value: Binding(get: { ctl.muted ? 0 : ctl.volume }, set: { ctl.setVolume($0) }), in: 0...1).frame(width: 90).controlSize(.small)
+                    .help("Volume: motor, airflow, wind, birds")
                 Toggle("Auto zoom", isOn: Binding(get: { ctl.autoZoom }, set: { ctl.setAutoZoom($0) })).toggleStyle(.switch).controlSize(.small)
                 Button { ctl.load(project) } label: { Label("Reload design", systemImage: "arrow.clockwise") }
                 Button { ctl.showControls = true } label: { Label("Controls…", systemImage: "gamecontroller") }

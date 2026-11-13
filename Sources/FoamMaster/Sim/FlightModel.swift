@@ -130,6 +130,8 @@ final class FlightSim {
     init(model: FlightModel) { self.model = model }
 
     func reset() { state = FlightState(); surfaces = StickInput() }
+    /// Place the model (self-test views).
+    func place(_ p: SIMD3<Double>) { state.position = p }
 
     /// Hand launch: a firm throw along the nose, a little above stall speed.
     func launch() {
@@ -204,10 +206,11 @@ final class FlightSim {
         if wl > 1e-9 { state.orientation = simd_normalize(state.orientation * simd_quatd(angle: wl * h, axis: state.omega / wl)) }
         state.maxAltitude = max(state.maxAltitude, state.position.y)
         // Ground: a touch-down slower than ~2.5 m/s down and below ~2.2× stall speed lands, anything harder crashes.
-        if state.position.y < m.groundClearance {
+        let ground = SimScenery.height(state.position.x, state.position.z)
+        if state.position.y < ground + m.groundClearance {
             let vdown = -state.velocity.y, speed = simd_length(state.velocity)
             let up = state.orientation.act([0, 1, 0])
-            state.position.y = m.groundClearance
+            state.position.y = ground + m.groundClearance
             if vdown > 2.5 || speed > max(2.2 * m.stallSpeed, 7) || up.y < 0.3 {
                 state.phase = .crashed
                 state.message = String(format: "Crashed – %.1f m/s down, %.1f m/s · press R", vdown, speed)
@@ -228,5 +231,5 @@ final class FlightSim {
 
     /// Airspeed (m/s), height (m), attitude helpers for the HUD.
     var airspeed: Double { simd_length(state.velocity) }
-    var height: Double { state.position.y - model.groundClearance }
+    var height: Double { state.position.y - SimScenery.height(state.position.x, state.position.z) - model.groundClearance }
 }
