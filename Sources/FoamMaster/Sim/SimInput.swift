@@ -5,19 +5,19 @@ import Carbon
 
 /// Keyboard actions of the simulator.
 enum SimAction: String, CaseIterable, Codable, Identifiable {
-    case throttleUp, throttleDown, pitchUp, pitchDown, rollLeft, rollRight, yawLeft, yawRight, trimUp, trimDown, launch, reset, zoom
+    case throttleUp, throttleDown, pitchUp, pitchDown, rollLeft, rollRight, yawLeft, yawRight, trimUp, trimDown, launch, reset, zoom, camera
     var id: String { rawValue }
     var title: String {
         [.throttleUp: "Throttle up", .throttleDown: "Throttle down", .pitchUp: "Elevator up (pull)", .pitchDown: "Elevator down (push)",
          .rollLeft: "Aileron left", .rollRight: "Aileron right", .yawLeft: "Rudder left", .yawRight: "Rudder right",
          .trimUp: "Pitch trim nose up", .trimDown: "Pitch trim nose down",
-         .launch: "Launch (let go)", .reset: "Reset", .zoom: "Auto zoom on / off"][self]!
+         .launch: "Launch (let go)", .reset: "Reset", .zoom: "Auto zoom on / off", .camera: "Camera: pilot / chase / onboard"][self]!
     }
     var defaultKey: UInt16 {
         [.throttleUp: UInt16(kVK_ANSI_W), .throttleDown: UInt16(kVK_ANSI_S), .pitchUp: UInt16(kVK_DownArrow), .pitchDown: UInt16(kVK_UpArrow),
          .rollLeft: UInt16(kVK_LeftArrow), .rollRight: UInt16(kVK_RightArrow), .yawLeft: UInt16(kVK_ANSI_A), .yawRight: UInt16(kVK_ANSI_D),
          .trimUp: UInt16(kVK_ANSI_T), .trimDown: UInt16(kVK_ANSI_G),
-         .launch: UInt16(kVK_Space), .reset: UInt16(kVK_ANSI_R), .zoom: UInt16(kVK_ANSI_Z)][self]!
+         .launch: UInt16(kVK_Space), .reset: UInt16(kVK_ANSI_R), .zoom: UInt16(kVK_ANSI_Z), .camera: UInt16(kVK_ANSI_C)][self]!
     }
 }
 
@@ -55,6 +55,10 @@ struct SimControls: Codable, Equatable {
     var resetSwitch: SwitchMapping?
     /// Mix: the aileron stick also steers the rudder (NutBall – no ailerons). Optional: on unless switched off.
     var rollToRudder: Bool?
+    /// View settings (optional: older settings load): camera, zoom inset, smoke trail.
+    var camera: SimCamera?
+    var inset: Bool?
+    var smoke: Bool?
     var mixesRollToRudder: Bool { rollToRudder ?? true }
 
     func key(_ a: SimAction) -> UInt16 { keys[a.rawValue] ?? a.defaultKey }
@@ -249,7 +253,7 @@ final class SimInputState {
         if code == controls.key(.trimUp) { adjustTrim(Self.trimStep); return }
         if code == controls.key(.trimDown) { adjustTrim(-Self.trimStep); return }
         guard !isRepeat else { return }
-        for a in [SimAction.launch, .reset, .zoom] where controls.key(a) == code { events?(a) }
+        for a in [SimAction.launch, .reset, .zoom, .camera] where controls.key(a) == code { events?(a) }
     }
     func keyUp(_ code: UInt16) { pressed.remove(code) }
     /// Forget held keys (the window lost them, e.g. on close).

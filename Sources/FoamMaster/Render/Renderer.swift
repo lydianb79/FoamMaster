@@ -12,8 +12,8 @@ let shaderSource = """
 using namespace metal;
 
 struct Vtx { float4 pos; float4 nrm; float4 col; };
-struct Uni { float4x4 viewProj; float4x4 model; float4 light; float4 eye; float4 tint; float4 sky; float4 fog; float4 ground; };
-struct Out { float4 pos [[position]]; float3 n; float3 w; float4 c; float lit; };
+struct Uni { float4x4 viewProj; float4x4 model; float4 light; float4 eye; float4 tint; float4 sky; float4 fog; float4 ground; float4 clip; };
+struct Out { float4 pos [[position]]; float3 n; float3 w; float4 c; float lit; float water; float clip [[clip_distance]]; };
 
 // Rodrigues rotation of p about the unit axis k by angle a.
 float3 rot(float3 p, float3 k, float a) { return p * cos(a) + cross(k, p) * sin(a) + k * dot(k, p) * (1 - cos(a)); }
@@ -38,8 +38,19 @@ vertex Out vmain(const device Vtx* v [[buffer(0)]], constant Uni& u [[buffer(1)]
     bool flat = u.tint.w > 0;
     o.c = flat ? u.tint : v[id].col;
     o.lit = flat ? 0.0 : lit;
+    // Water surfaces carry the tag 0.75 (lit, plus ripples and reflections in the simulator).
+    o.water = (tag > 0.6 && tag < 0.9) ? 1.0 : 0.0;
+    // Clip plane (the simulator's mirrored reflection pass keeps only what is above the water): (0,0,0,1) keeps all.
+    o.clip = dot(float4(wp.xyz, 1), u.clip);
     return o;
 }
+
+// Clears the depth (to far: 0 with reversed Z) inside the current viewport – the simulator's zoom inset.
+vertex float4 vclear(uint id [[vertex_id]]) {
+    float2 p = float2((id << 1) & 2, id & 2);
+    return float4(p * 2 - 1, 0, 1);
+}
+fragment float4 fclear() { return float4(0); }
 
 // Distance haze (simulator): colour fades towards the horizon colour, fog.w = density per metre.
 float4 hazed(float4 c, float3 w, constant Uni& u) {
@@ -93,7 +104,8 @@ float4 shade(Out in, constant Uni& u, float sun) {
 fragment float4 fmain(Out in [[stage_in]], constant Uni& u [[buffer(1)]]) { return shade(in, u, 1.0); }
 
 // Simulator: sun shadows from two shadow maps rendered from the sun – the field (static) and the model (follows it).
-struct ShadowUni { float4x4 worldVP; float4x4 modelVP; float4 params; };   // params: x world on, y model on, z / w texel size
+struct ShadowUni { float4x4 worldVP; float4x4 modelVP; float4 params; float4 view; };
+// params: x world on, y model on, z / w texel size; view: xy = 1 / target size (pixels), z time (s), w reflection on
 float shadowLookup(depth2d<float> map, sampler s, float4x4 vp, float3 w, float texel, float bias) {
     float4 p = vp * float4(w, 1);
     float3 q = p.xyz / p.w;
@@ -105,14 +117,35 @@ float shadowLookup(depth2d<float> map, sampler s, float4x4 vp, float3 w, float t
     } }
     return sum / 9.0;
 }
+// The pond: moving ripples, the mirrored scene (planar reflection, rendered for this camera) mixed in by Fresnel,
+// sun glints on the ripples.
+float4 waterShade(Out in, constant Uni& u, constant ShadowUni& sh, texture2d<float> reflection, sampler lin, float sun) {
+    float t = sh.view.z;
+    float2 q = in.w.xz;
+    float2 g = float2(cos(q.x * 1.7 + t * 1.3) * 0.5 + cos((q.x + q.y) * 2.9 - t * 1.9) * 0.3 + cos(q.x * 6.1 - t * 3.1) * 0.12,
+                      cos(q.y * 1.9 - t * 1.1) * 0.5 + cos((q.x - q.y) * 3.3 + t * 2.3) * 0.3 + cos(q.y * 5.3 + t * 2.7) * 0.12);
+    float3 n = normalize(float3(-g.x * 0.07, 1, -g.y * 0.07));
+    float3 v = normalize(u.eye.xyz - in.w);
+    float3 l = normalize(u.light.xyz);
+    float fres = 0.05 + 0.95 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
+    float3 refl = u.fog.rgb;
+    if (sh.view.w > 0) { refl = reflection.sample(lin, in.pos.xy * sh.view.xy + n.xz * 0.025).rgb; }
+    float3 body = in.c.rgb * (0.3 + 0.35 * max(dot(n, l), 0.0) * sun);
+    float3 col = mix(body, refl, clamp(0.25 + fres * 0.75, 0.0, 1.0));
+    float glint = pow(max(dot(reflect(-l, n), v), 0.0), 220.0) * 2.5 * sun;
+    return hazed(float4(col + glint, 1), in.w, u);
+}
+
 fragment float4 fsim(Out in [[stage_in]], constant Uni& u [[buffer(1)]], constant ShadowUni& sh [[buffer(3)]],
-                     depth2d<float> worldMap [[texture(0)]], depth2d<float> modelMap [[texture(1)]], sampler cmp [[sampler(0)]]) {
+                     depth2d<float> worldMap [[texture(0)]], depth2d<float> modelMap [[texture(1)]], sampler cmp [[sampler(0)]],
+                     texture2d<float> reflection [[texture(2)]], sampler lin [[sampler(1)]]) {
     float sun = 1.0;
     if (in.lit > 0.5) {
         // (biases in depth units: the field's map is 2400 m deep – 0.0003 ≈ 0.7 m; the model's 100 m – 0.002 = 0.2 m)
         if (sh.params.x > 0) { sun = min(sun, shadowLookup(worldMap, cmp, sh.worldVP, in.w, sh.params.z, 0.0003)); }
         if (sh.params.y > 0) { sun = min(sun, shadowLookup(modelMap, cmp, sh.modelVP, in.w, sh.params.w, 0.002)); }
     }
+    if (in.water > 0.5) { return waterShade(in, u, sh, reflection, lin, sun); }
     return shade(in, u, sun);
 }
 """
@@ -353,6 +386,7 @@ struct Uniforms {
     /// Distance haze: horizon colour, density per metre (0 = none).
     var fog: SIMD4<Float> = .zero
     var ground: SIMD4<Float> = .zero
+    var clip: SIMD4<Float> = [0, 0, 0, 1]
 }
 
 /// Centre and axis + angle (w) of each moving group, as the shader reads them (buffer 2, 10 groups).

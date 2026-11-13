@@ -782,6 +782,37 @@ enum SelfTest {
                     if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_\(kind.rawValue)_site.png")) }
                     if kind == AircraftKind.allCases.first {
                         // The model 2.5 m up, 6 m out: its sun shadow lies on the grass right below / beside it.
+                        // Cameras, inset, pond, effects.
+                        do {
+                            r.autoZoom = false
+                            var st = s.state
+                            st.position = [10, 12, -40]; st.velocity = [0, 0, -9]
+                            st.orientation = simd_quatd(angle: 0.35, axis: [0, 0, 1])
+                            s.setState(st)
+                            for cam in [SimCamera.chase, .onboard] {
+                                r.camera = cam
+                                if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_camera_\(cam.rawValue).png")) }
+                            }
+                            r.camera = .pilot
+                            st.position = [-40, 25, -90]; s.setState(st)
+                            r.showInset = true
+                            if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_inset.png")) }
+                            // the pond close up: ripples, the sky and the trees in it, glints
+                            r.showInset = false
+                            r.eye = [-30, 5, -55]
+                            st.position = [-70, 1.5, -88]; s.setState(st)
+                            if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_pond_close.png")) }
+                            r.eye = [0, 1.7, 0]
+                            // effects: a crash on the grass, a splash, a smoke trail
+                            r.effects.clear()
+                            r.effects.crash(at: [4, 0.1, -12], speed: 9, tree: false)
+                            r.effects.splash(at: [-60, 0.05, -78], speed: 7)
+                            for k in 0..<120 { r.effects.smoke(from: [-6 + Float(k) * 0.15, 6 + sin(Float(k) * 0.05) * 2, -20], dt: 0.03) }
+                            for _ in 0..<10 { r.effects.update(1.0 / 30) }
+                            st.position = [2, 3, -14]; s.setState(st)
+                            if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_effects.png")) }
+                            r.effects.clear()
+                        }
                         // Overviews from 60 m up (test only): the village, the hamlet, the far forests and fields.
                         r.autoZoom = false
                         r.eye = [0, 60, 0]

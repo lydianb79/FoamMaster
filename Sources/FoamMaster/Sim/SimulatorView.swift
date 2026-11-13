@@ -68,7 +68,8 @@ final class SimSession: NSObject, NSWindowDelegate {
 /// Flight simulator state shared by the view, the HUD and the controls sheet.
 @MainActor
 final class SimController: ObservableObject {
-    struct HUD { var phase = FlightState.Phase.held; var speed = 0.0; var height = 0.0; var throttle = 0.0; var stick = StickInput(); var message = ""; var time = 0.0; var trim = 0.0 }
+    struct HUD { var phase = FlightState.Phase.held; var speed = 0.0; var height = 0.0; var throttle = 0.0; var stick = StickInput(); var message = ""; var time = 0.0; var trim = 0.0
+        var climb = 0.0; var noseAngle = 0.0; var towards = false; var inset = false }
     @Published var hud = HUD()
     @Published var title = ""
     /// The loaded model is a NutBall (the roll-to-rudder mix applies).
@@ -77,6 +78,9 @@ final class SimController: ObservableObject {
     @Published var cgOffset = 0.0
     @Published var showControls = false
     @Published var autoZoom: Bool
+    @Published var camera: SimCamera = SimControls.load().camera ?? .pilot
+    @Published var inset = SimControls.load().inset ?? true
+    @Published var smoke = SimControls.load().smoke ?? false
     @Published var volume = Double(SimAudio.volume)
     @Published var muted = SimAudio.muted
     let input = SimInputState()
@@ -102,6 +106,7 @@ final class SimController: ObservableObject {
         input.rudderOnly = d.config.kind.isNutBall
         isNutBall = d.config.kind.isNutBall
         renderer?.setAircraft(d, a)
+        renderer?.effects.clear()
         renderer?.sim = s
         renderer?.simulating = true
         input.events = { [weak self] a in self?.event(a) }
@@ -111,10 +116,15 @@ final class SimController: ObservableObject {
         r.input = input
         r.autoZoom = autoZoom
         r.audio = audio            // starts with the first frame that draws a model, stops when frames stop
-        r.onTick = { [weak self] sim, stick in
+        r.camera = camera; r.showInset = inset; r.smoke = smoke
+        r.onTick = { [weak self, weak r] sim, stick in
+            let nose = r?.noseOnScreen(sim) ?? (angle: 0, towards: false)
+            let insetShown = r?.insetVisible ?? false
+            let climb = sim.state.velocity.y
             Task { @MainActor in
                 self?.hud = HUD(phase: sim.state.phase, speed: sim.airspeed, height: sim.height, throttle: stick.throttle, stick: stick,
-                                message: sim.state.message, time: sim.state.time, trim: self?.input.trim ?? 0)
+                                message: sim.state.message, time: sim.state.time, trim: self?.input.trim ?? 0,
+                                climb: climb, noseAngle: nose.angle, towards: nose.towards, inset: insetShown)
             }
         }
         load(project)
@@ -124,6 +134,7 @@ final class SimController: ObservableObject {
         case .launch: sim?.launch()
         case .reset: sim?.reset()
         case .zoom: setAutoZoom(!autoZoom)
+        case .camera: setCamera(camera.next)
         default: break
         }
     }
@@ -142,6 +153,9 @@ final class SimController: ObservableObject {
     func resetTrim() { input.setTrim(0); hud.trim = 0 }
     func setVolume(_ v: Double) { volume = v; SimAudio.volume = Float(v); if v > 0, muted { setMuted(false) } }
     func setMuted(_ m: Bool) { muted = m; SimAudio.muted = m }
+    func setCamera(_ c: SimCamera) { camera = c; renderer?.camera = c; input.controls.camera = c; input.controls.save() }
+    func setInset(_ on: Bool) { inset = on; renderer?.showInset = on; input.controls.inset = on; input.controls.save() }
+    func setSmoke(_ on: Bool) { smoke = on; renderer?.smoke = on; input.controls.smoke = on; input.controls.save() }
     func setAutoZoom(_ on: Bool) {
         autoZoom = on; renderer?.autoZoom = on
         input.controls.autoZoom = on; input.controls.save()
@@ -196,6 +210,20 @@ struct SimulatorView: View {
                 Text("Open or create a design first, then press Fly.").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             hud
+            if ctl.hud.inset {
+                GeometryReader { geo in
+                    let r = SimRenderer.insetRect
+                    RoundedRectangle(cornerRadius: 4).stroke(.white.opacity(0.7), lineWidth: 1.5)
+                        .frame(width: geo.size.width * r.w, height: geo.size.height * r.h)
+                        .overlay(alignment: .topLeading) {
+                            Text("Zoom").font(.system(size: 10, weight: .bold)).padding(.horizontal, 5).padding(.vertical, 2)
+                                .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 3)).padding(4)
+                        }
+                        .offset(x: geo.size.width * r.x, y: geo.size.height * r.y)
+                }
+                .allowsHitTesting(false)
+                .foregroundStyle(.white)
+            }
         }
         .frame(minWidth: 900, minHeight: 600)
         .background(Color.black)
@@ -220,6 +248,15 @@ struct SimulatorView: View {
                 .buttonStyle(.plain).help(ctl.muted ? "Sound off – click to turn on" : "Sound on – click to mute")
                 Slider(value: Binding(get: { ctl.muted ? 0 : ctl.volume }, set: { ctl.setVolume($0) }), in: 0...1).frame(width: 90).controlSize(.small)
                     .help("Volume: motor, airflow, wind, birds")
+                Picker("", selection: Binding(get: { ctl.camera }, set: { ctl.setCamera($0) })) {
+                    ForEach(SimCamera.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 190).controlSize(.small)
+                .help("Camera (\(keyName(ctl.input.controls.key(.camera)))): your view as the pilot, behind the model, or on board")
+                Toggle("Inset", isOn: Binding(get: { ctl.inset }, set: { ctl.setInset($0) })).toggleStyle(.switch).controlSize(.small)
+                    .help("Pilot view: a zoomed picture of the model in the corner when it is far out")
+                Toggle("Smoke", isOn: Binding(get: { ctl.smoke }, set: { ctl.setSmoke($0) })).toggleStyle(.switch).controlSize(.small)
+                    .help("A smoke trail behind the model")
                 Toggle("Auto zoom", isOn: Binding(get: { ctl.autoZoom }, set: { ctl.setAutoZoom($0) })).toggleStyle(.switch).controlSize(.small)
                 Button { ctl.load(project) } label: { Label("Reload design", systemImage: "arrow.clockwise") }
                 Button { ctl.showControls = true } label: { Label("Controls…", systemImage: "gamecontroller") }
@@ -257,6 +294,8 @@ struct SimulatorView: View {
                 .font(.system(size: 12, weight: .medium, design: .rounded)).monospacedDigit()
                 StickBox(x: h.stick.yaw, y: 2 * h.throttle - 1, label: "Throttle · Rudder")
                 StickBox(x: h.stick.roll, y: -h.stick.pitch, label: "Elevator · Aileron")
+                Variometer(climb: h.climb)
+                NoseArrow(angle: h.noseAngle, towards: h.towards)
             }
             .padding(10).background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
             Text(statusText(h)).font(.system(size: 14, weight: .bold)).padding(8)
@@ -288,7 +327,44 @@ struct SimulatorView: View {
     private var keysHint: String {
         let c = ctl.input.controls
         let k = { (a: SimAction) in keyName(c.key(a)) }
-        return "\(k(.launch)) launch · \(k(.reset)) reset · \(k(.throttleUp))/\(k(.throttleDown)) throttle · \(k(.pitchUp))/\(k(.pitchDown)) elevator · \(k(.rollLeft))/\(k(.rollRight)) aileron · \(k(.yawLeft))/\(k(.yawRight)) rudder · \(k(.trimUp))/\(k(.trimDown)) pitch trim · \(k(.zoom)) zoom\(c.escExits ? " · Esc exit" : "") – or fly with your transmitter (USB, joystick mode)"
+        return "\(k(.launch)) launch · \(k(.reset)) reset · \(k(.throttleUp))/\(k(.throttleDown)) throttle · \(k(.pitchUp))/\(k(.pitchDown)) elevator · \(k(.rollLeft))/\(k(.rollRight)) aileron · \(k(.yawLeft))/\(k(.yawRight)) rudder · \(k(.trimUp))/\(k(.trimDown)) pitch trim · \(k(.zoom)) zoom · \(k(.camera)) camera\(c.escExits ? " · Esc exit" : "") – or fly with your transmitter (USB, joystick mode)"
+    }
+}
+
+/// Variometer: climb (+) / sink (−) in m/s, ±5 m/s on the scale.
+struct Variometer: View {
+    var climb: Double
+    var body: some View {
+        VStack(spacing: 3) {
+            ZStack(alignment: .center) {
+                RoundedRectangle(cornerRadius: 6).stroke(.white.opacity(0.3)).frame(width: 22, height: 60)
+                Rectangle().fill(.white.opacity(0.4)).frame(width: 18, height: 1)
+                let v = min(max(climb / 5, -1), 1)
+                Capsule().fill(climb >= 0 ? Theme.accent : Theme.orange).frame(width: 10, height: max(abs(v) * 28, 2))
+                    .offset(y: -v * 14)
+            }
+            .frame(width: 30, height: 60)
+            Text(String(format: "%+.1f", climb)).font(.system(size: 9)).monospacedDigit().foregroundStyle(.secondary)
+        }
+        .help("Variometer: climb / sink in m/s")
+    }
+}
+
+/// Where the model's nose points on screen (and whether it is coming towards you) – handy when it is a dot.
+struct NoseArrow: View {
+    var angle: Double, towards: Bool
+    var body: some View {
+        VStack(spacing: 3) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6).stroke(.white.opacity(0.3))
+                Image(systemName: "arrow.right").font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(towards ? Theme.orange : Theme.accent)
+                    .rotationEffect(.radians(-angle))
+            }
+            .frame(width: 60, height: 60)
+            Text(towards ? "Nose · towards you" : "Nose · away").font(.system(size: 9)).foregroundStyle(.secondary)
+        }
+        .help("Direction of the model's nose on the screen; orange while it flies towards you")
     }
 }
 

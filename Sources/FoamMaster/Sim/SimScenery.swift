@@ -481,6 +481,9 @@ enum SimScenery {
         let n = 64
         let centre = P(pondCenter.x, 0.05, pondCenter.y)
         let deep = C(0.17, 0.3, 0.38, 1), shallow = C(0.36, 0.5, 0.56, 1)
+        let saveTag = g.tag
+        g.tag = 0.75                          // water: ripples, reflection and glints in the simulator's shader
+        defer { g.tag = saveTag }
         for i in 0..<n {
             let a0 = Double(i) / Double(n) * 2 * .pi, a1 = Double(i + 1) / Double(n) * 2 * .pi
             func rim(_ a: Double, _ k: Double) -> P { P(pondCenter.x + cos(a) * pondRadius(a) * 1.35 * k, 0.05, pondCenter.y + sin(a) * pondRadius(a) * k) }
@@ -489,6 +492,7 @@ enum SimScenery {
             g.tri(rim(a0, 0.7), rim(a1, 0.7), rim(a1, 1.02), deep, deep, shallow, normals: up)
             g.tri(rim(a0, 0.7), rim(a1, 1.02), rim(a0, 1.02), deep, shallow, shallow, normals: up)
         }
+        g.tag = saveTag
         // Reeds in clumps round the shore.
         for i in 0..<520 {
             let a = hash(i, 1, 101) * 2 * .pi

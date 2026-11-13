@@ -3,6 +3,14 @@ import Metal
 import MetalKit
 import simd
 
+/// Where the simulator looks from.
+enum SimCamera: String, CaseIterable, Identifiable, Codable {
+    case pilot, chase, onboard
+    var id: String { rawValue }
+    var title: String { [.pilot: "Pilot", .chase: "Chase", .onboard: "Onboard"][self]! }
+    var next: SimCamera { let all = Self.allCases; return all[(all.firstIndex(of: self)! + 1) % all.count] }
+}
+
 /// Draws the flying field and the aircraft for the flight simulator and advances the simulation every frame.
 final class SimRenderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
@@ -13,6 +21,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
     private var world: (tri: MTLBuffer?, triCount: Int, line: MTLBuffer?, lineCount: Int) = (nil, 0, nil, 0)
     private var skyDome: (tri: MTLBuffer?, triCount: Int, line: MTLBuffer?, lineCount: Int) = (nil, 0, nil, 0)
     private var skyDepthState: MTLDepthStencilState!
+    private var clearDepthState: MTLDepthStencilState!
     private static var sceneryCache: (world: SceneData, sky: SceneData)?
     private var plane: (tri: MTLBuffer?, triCount: Int, line: MTLBuffer?, lineCount: Int) = (nil, 0, nil, 0)
     private var groups: [SceneData.Group] = []
@@ -31,6 +40,24 @@ final class SimRenderer: NSObject, MTKViewDelegate {
     var audio: SimAudio?
     /// The pilot's eye (self-test overviews can raise it).
     var eye = SIMD3<Float>(0, 1.7, 0)
+    /// Camera: the pilot's view (line of sight), behind the model (chase) or on board.
+    var camera: SimCamera = .pilot
+    /// Zoomed inset of the model (pilot view, model far out) and a smoke trail.
+    var showInset = true, smoke = false
+    /// The inset's place on screen (fractions of the view, from the top left).
+    static let insetRect = (x: 0.70, y: 0.58, w: 0.28, h: 0.28)
+    private(set) var insetVisible = false
+    private var chaseEye: SIMD3<Float>?
+    private var lastViewProj = matrix_identity_float4x4
+    let effects = SimEffects()
+    private var lastPhase: FlightState.Phase = .held
+    // Pond reflection: the scene mirrored in the water plane, rendered for the current camera (half resolution).
+    private var reflectPipeline: MTLRenderPipelineState?
+    private var clearPipeline: MTLRenderPipelineState?
+    private var linearSampler: MTLSamplerState!
+    private var reflectColor: MTLTexture?, reflectDepth: MTLTexture?, dummyColor: MTLTexture?
+    private var reflectSize = (0, 0)
+    static let waterLevel: Float = 0.05
     // Sun shadows: depth maps rendered from the sun – the field (static, drawn once) and the model (every frame).
     private var shadowPipeline: MTLRenderPipelineState?
     private var shadowDepthState: MTLDepthStencilState!
@@ -41,7 +68,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
     static let worldShadowSize = 4096, modelShadowSize = 1024
     /// Field covered by the static shadow map (m): the area the model flies over, trees and pits included.
     static let worldShadowCentre = SIMD3<Float>(0, 0, -60), worldShadowHalf: Float = 320
-    struct ShadowUniforms { var worldVP: simd_float4x4; var modelVP: simd_float4x4; var params: SIMD4<Float> }
+    struct ShadowUniforms { var worldVP: simd_float4x4; var modelVP: simd_float4x4; var params: SIMD4<Float>; var view: SIMD4<Float> = .zero }
 
     init?(view: MTKView) {
         guard let dev = view.device ?? MTLCreateSystemDefaultDevice(), let q = dev.makeCommandQueue() else { return nil }
@@ -66,12 +93,28 @@ final class SimRenderer: NSObject, MTKViewDelegate {
             ca.sourceRGBBlendFactor = .sourceAlpha; ca.destinationRGBBlendFactor = .oneMinusSourceAlpha
             ca.sourceAlphaBlendFactor = .one; ca.destinationAlphaBlendFactor = .oneMinusSourceAlpha
             pipeline = try dev.makeRenderPipelineState(descriptor: d)
+            // The mirrored scene for the pond (one sample, its own target).
+            let rd = MTLRenderPipelineDescriptor()
+            rd.vertexFunction = d.vertexFunction; rd.fragmentFunction = d.fragmentFunction
+            rd.depthAttachmentPixelFormat = .depth32Float
+            rd.colorAttachments[0].pixelFormat = view.colorPixelFormat
+            rd.colorAttachments[0].isBlendingEnabled = true
+            rd.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha; rd.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+            reflectPipeline = try dev.makeRenderPipelineState(descriptor: rd)
+            // Depth clear inside the inset (no colour written).
+            let cd = MTLRenderPipelineDescriptor()
+            cd.vertexFunction = lib.makeFunction(name: "vclear"); cd.fragmentFunction = lib.makeFunction(name: "fclear")
+            cd.rasterSampleCount = view.sampleCount
+            cd.depthAttachmentPixelFormat = view.depthStencilPixelFormat
+            cd.colorAttachments[0].pixelFormat = view.colorPixelFormat
+            cd.colorAttachments[0].writeMask = []
+            clearPipeline = try dev.makeRenderPipelineState(descriptor: cd)
             // Depth only, from the sun.
             let sd = MTLRenderPipelineDescriptor()
             sd.vertexFunction = lib.makeFunction(name: "vmain"); sd.fragmentFunction = nil
             sd.depthAttachmentPixelFormat = .depth32Float
             shadowPipeline = try dev.makeRenderPipelineState(descriptor: sd)
-        } catch { return nil }
+        } catch { FileHandle.standardError.write("SimRenderer: \(error)\n".data(using: .utf8)!); return nil }
         let sds = MTLDepthStencilDescriptor(); sds.depthCompareFunction = .less; sds.isDepthWriteEnabled = true
         shadowDepthState = dev.makeDepthStencilState(descriptor: sds)
         let smp = MTLSamplerDescriptor()
@@ -84,12 +127,20 @@ final class SimRenderer: NSObject, MTKViewDelegate {
             return dev.makeTexture(descriptor: t)
         }
         worldShadow = depthMap(Self.worldShadowSize); modelShadow = depthMap(Self.modelShadowSize)
+        let ls2 = MTLSamplerDescriptor(); ls2.minFilter = .linear; ls2.magFilter = .linear
+        ls2.sAddressMode = .clampToEdge; ls2.tAddressMode = .clampToEdge
+        linearSampler = dev.makeSamplerState(descriptor: ls2)
+        let dt = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: view.colorPixelFormat, width: 1, height: 1, mipmapped: false)
+        dt.usage = [.shaderRead]
+        dummyColor = dev.makeTexture(descriptor: dt)
         let ds = MTLDepthStencilDescriptor(); ds.depthCompareFunction = .greater; ds.isDepthWriteEnabled = true
         depthState = dev.makeDepthStencilState(descriptor: ds)
         let ls = MTLDepthStencilDescriptor(); ls.depthCompareFunction = .greaterEqual; ls.isDepthWriteEnabled = false
         lineDepthState = dev.makeDepthStencilState(descriptor: ls)
         let ks = MTLDepthStencilDescriptor(); ks.depthCompareFunction = .always; ks.isDepthWriteEnabled = false
         skyDepthState = dev.makeDepthStencilState(descriptor: ks)
+        let cs = MTLDepthStencilDescriptor(); cs.depthCompareFunction = .always; cs.isDepthWriteEnabled = true
+        clearDepthState = dev.makeDepthStencilState(descriptor: cs)
         let sc = Self.sceneryCache ?? (SimScenery.build(), SimScenery.sky())
         Self.sceneryCache = sc
         world = buffers(sc.world)
@@ -136,12 +187,16 @@ final class SimRenderer: NSObject, MTKViewDelegate {
             propAngle += Float(dt) * 2 * .pi * Float(20 * sim.surfaces.throttle)
             propAngle = propAngle.truncatingRemainder(dividingBy: 2 * .pi * 100)
             worldTime += Float(dt)
+            advanceEffects(sim, dt: Float(dt))
         }
         guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable, let cmd = queue.makeCommandBuffer() else { return }
-        if let sim { encodeShadows(cmd, sim: sim) }
-        guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
         let size = view.drawableSize
-        if let sim { encode(enc, sim: sim, aspect: Float(size.width / max(size.height, 1))) } else { enc.endEncoding() }
+        if let sim {
+            encodeShadows(cmd, sim: sim)
+            encodeReflection(cmd, sim: sim, width: Int(size.width), height: Int(size.height))
+        }
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
+        if let sim { encode(enc, sim: sim, width: Float(size.width), height: Float(size.height)) } else { enc.endEncoding() }
         cmd.present(drawable)
         cmd.commit()
     }
@@ -206,28 +261,156 @@ final class SimRenderer: NSObject, MTKViewDelegate {
     /// Advance the propeller animation (for snapshots outside the view loop).
     func spinProp(_ dt: Double, throttle: Double) { propAngle += Float(dt) * 2 * .pi * Float(20 * throttle) }
 
-    func encode(_ enc: MTLRenderCommandEncoder, sim: FlightSim, aspect: Float) {
-        // Line of sight from the pilot's eyes; optional auto zoom keeps a small model visible far out.
-        let eye = self.eye
+    /// Effects follow the flight: a crash, a landing, the pond, the smoke trail.
+    private func advanceEffects(_ sim: FlightSim, dt: Float) {
+        let st = sim.state
+        let pos = SIMD3<Float>(st.position)
+        if st.phase != lastPhase {
+            let speed = Float(simd_length(st.velocity))
+            switch st.phase {
+            case .crashed:
+                switch st.impact {
+                case .water: effects.splash(at: pos, speed: max(speed, Float(lastSpeed)))
+                case .ground: effects.crash(at: pos, speed: Float(lastSpeed), tree: false)
+                case .tree: effects.crash(at: pos, speed: Float(lastSpeed), tree: true)
+                default: break
+                }
+            case .landed: effects.landing(at: pos, speed: Float(lastSpeed))
+            case .held: break
+            case .flying: break
+            }
+            lastPhase = st.phase
+        }
+        if st.phase == .flying {
+            lastSpeed = sim.airspeed
+            if smoke {
+                let tail = pos + simd_act(quat(st), [0, 0, Float(span) * 0.55])
+                effects.smoke(from: tail, dt: dt)
+            }
+        }
+        effects.update(dt)
+    }
+    private var lastSpeed = 0.0
+
+    private func quat(_ st: FlightState) -> simd_quatf {
+        simd_quatf(ix: Float(st.orientation.imag.x), iy: Float(st.orientation.imag.y), iz: Float(st.orientation.imag.z), r: Float(st.orientation.real))
+    }
+
+    /// Camera for the main view: eye, the point looked at, up, field of view.
+    private func mainCamera(_ sim: FlightSim) -> (eye: SIMD3<Float>, center: SIMD3<Float>, up: SIMD3<Float>, fov: Float) {
         let st = sim.state
         let target = SIMD3<Float>(st.position)
-        let dist = Double(simd_length(target - eye))
-        var fov: Float = 50 * .pi / 180
-        if autoZoom {
-            // The model spans about a third of the view height (never narrower than 6°, never wider than 60°).
-            let want: Double = 2 * atan(span * 1.6 / max(dist, 0.5))
-            let lo: Double = 6 * Double.pi / 180, hi: Double = 60 * Double.pi / 180
-            fov = Float(min(max(want, lo), hi))
+        let q = quat(st)
+        switch camera {
+        case .pilot:
+            // Line of sight from the pilot's eyes; optional auto zoom keeps a small model visible far out.
+            let dist = Double(simd_length(target - eye))
+            var fov: Float = 50 * .pi / 180
+            if autoZoom {
+                // The model spans about a third of the view height (never narrower than 6°, never wider than 60°).
+                let want: Double = 2 * atan(span * 1.6 / max(dist, 0.5))
+                let lo: Double = 6 * Double.pi / 180, hi: Double = 60 * Double.pi / 180
+                fov = Float(min(max(want, lo), hi))
+            }
+            return (eye, target, [0, 1, 0], fov)
+        case .chase:
+            // Behind and a little above the model, following its heading smoothly.
+            var fwd = q.act([0, 0, -1]); fwd.y = 0
+            if simd_length(fwd) < 0.1 { fwd = [0, 0, -1] }
+            fwd = simd_normalize(fwd)
+            let d = Float(max(span * 4, 2.5))
+            var want = target - fwd * d + SIMD3<Float>(0, d * 0.32, 0)
+            let ground = Float(SimScenery.surfaceHeight(Double(want.x), Double(want.z))) + 0.4
+            want.y = max(want.y, ground)
+            let now = CACurrentMediaTime()
+            let k = Float(min(max((now - lastChaseTime) * 4, 0), 1))
+            lastChaseTime = now
+            chaseEye = chaseEye.map { $0 + (want - $0) * (k == 0 ? 1 : k) } ?? want
+            return (chaseEye!, target, [0, 1, 0], 55 * .pi / 180)
+        case .onboard:
+            // From the cockpit: just ahead of the CG, looking along the nose, rolling with the model.
+            let e = target + q.act([0, 0.035, -Float(span) * 0.12])
+            return (e, e + q.act([0, -0.08, -1]), q.act([0, 1, 0]), 75 * .pi / 180)
         }
-        let viewM = lookAt(eye: eye, center: target, up: [0, 1, 0])
-        let proj = reversedPerspective(fovY: fov, aspect: aspect, near: 0.05, far: 7000)
-        var uni = Uniforms(viewProj: proj * viewM, light: SIMD4(SIMD3<Float>(SimScenery.sunDir), 0), eye: SIMD4(eye, 1))
+    }
+    private var lastChaseTime = CACurrentMediaTime()
+
+    /// Mirror in the water plane (y = water level).
+    private static var mirror: simd_float4x4 {
+        translation([0, 2 * waterLevel, 0]) * simd_float4x4(diagonal: [1, -1, 1, 1])
+    }
+
+    /// The pond's reflection: the scene mirrored in the water, for the main camera, at half resolution.
+    private func encodeReflection(_ cmd: MTLCommandBuffer, sim: FlightSim, width: Int, height: Int) {
+        guard let reflectPipeline, camera != .onboard else { return }
+        let w = max(width / 2, 1), h = max(height / 2, 1)
+        if reflectSize != (w, h) || reflectColor == nil {
+            let cd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
+            cd.usage = [.renderTarget, .shaderRead]; cd.storageMode = .private
+            let dd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float, width: w, height: h, mipmapped: false)
+            dd.usage = [.renderTarget]; dd.storageMode = .private
+            reflectColor = device.makeTexture(descriptor: cd); reflectDepth = device.makeTexture(descriptor: dd)
+            reflectSize = (w, h)
+        }
+        guard let reflectColor, let reflectDepth else { return }
+        let p = MTLRenderPassDescriptor()
+        p.colorAttachments[0].texture = reflectColor; p.colorAttachments[0].loadAction = .clear; p.colorAttachments[0].storeAction = .store
+        p.colorAttachments[0].clearColor = MTLClearColor(red: 0.74, green: 0.83, blue: 0.93, alpha: 1)
+        p.depthAttachment.texture = reflectDepth; p.depthAttachment.loadAction = .clear; p.depthAttachment.clearDepth = 0
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: p) else { return }
+        let cam = mainCamera(sim)
+        let view = lookAt(eye: cam.eye, center: cam.center, up: cam.up) * Self.mirror
+        let proj = reversedPerspective(fovY: cam.fov, aspect: Float(width) / Float(max(height, 1)), near: 0.05, far: 7000)
+        enc.setRenderPipelineState(reflectPipeline)
+        drawScene(enc, sim: sim, viewProj: proj * view, eye: cam.eye, model: true, reflection: true, targetSize: [Float(w), Float(h)])
+        enc.endEncoding()
+    }
+
+    func encode(_ enc: MTLRenderCommandEncoder, sim: FlightSim, width: Float, height: Float) {
+        let cam = mainCamera(sim)
+        let viewM = lookAt(eye: cam.eye, center: cam.center, up: cam.up)
+        let proj = reversedPerspective(fovY: cam.fov, aspect: width / max(height, 1), near: 0.05, far: 7000)
+        lastViewProj = proj * viewM
         enc.setRenderPipelineState(pipeline)
+        drawScene(enc, sim: sim, viewProj: lastViewProj, eye: cam.eye, model: camera != .onboard, reflection: false, targetSize: [width, height])
+        // Zoom inset (pilot view): the model seen close up from the pilot's eye, in the lower right corner.
+        let target = SIMD3<Float>(sim.state.position)
+        let dist = simd_length(target - eye)
+        insetVisible = camera == .pilot && showInset && dist > 25
+        if insetVisible, let clearPipeline {
+            let r = Self.insetRect
+            let vp = MTLViewport(originX: r.x * Double(width), originY: r.y * Double(height), width: r.w * Double(width), height: r.h * Double(height), znear: 0, zfar: 1)
+            enc.setViewport(vp)
+            enc.setScissorRect(MTLScissorRect(x: Int(vp.originX), y: Int(vp.originY), width: Int(vp.width), height: Int(vp.height)))
+            enc.setRenderPipelineState(clearPipeline)
+            enc.setDepthStencilState(clearDepthState)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            let wantFov: Double = 2 * atan(span * 1.3 / Double(dist))
+            let minFov: Double = Double.pi / 180, maxFov: Double = 30 * Double.pi / 180
+            let fov = Float(min(max(wantFov, minFov), maxFov))
+            let insetProj = reversedPerspective(fovY: fov, aspect: Float(vp.width / vp.height), near: 0.05, far: 7000)
+            enc.setRenderPipelineState(pipeline)
+            drawScene(enc, sim: sim, viewProj: insetProj * lookAt(eye: eye, center: target, up: [0, 1, 0]), eye: eye, model: true, reflection: false,
+                      targetSize: [width, height], noReflection: true)
+        }
+        enc.endEncoding()
+    }
+
+    /// Sky, site, model and effects with one camera (main view, inset or the mirrored reflection).
+    private func drawScene(_ enc: MTLRenderCommandEncoder, sim: FlightSim, viewProj: simd_float4x4, eye: SIMD3<Float>, model drawModel: Bool,
+                           reflection: Bool, targetSize: SIMD2<Float>, noReflection: Bool = false) {
+        let st = sim.state
+        let target = SIMD3<Float>(st.position)
+        var uni = Uniforms(viewProj: viewProj, light: SIMD4(SIMD3<Float>(SimScenery.sunDir), 0), eye: SIMD4(eye, 1))
+        if reflection { uni.clip = [0, 1, 0, -(Self.waterLevel + 0.01)] }   // only what is above the water
         enc.setCullMode(.none)
         enc.setFragmentTexture(worldShadow, index: 0); enc.setFragmentTexture(modelShadow, index: 1)
-        enc.setFragmentSamplerState(compareSampler, index: 0)
+        enc.setFragmentTexture(reflection || noReflection ? dummyColor : reflectColor, index: 2)
+        enc.setFragmentSamplerState(compareSampler, index: 0); enc.setFragmentSamplerState(linearSampler, index: 1)
+        let reflOn: Float = (reflection || noReflection || reflectColor == nil || camera == .onboard) ? 0 : 1
         var shadowU = ShadowUniforms(worldVP: worldShadowVP, modelVP: modelShadowVP,
-                                     params: [worldShadowReady ? 1 : 0, 1, 1 / Float(Self.worldShadowSize), 1 / Float(Self.modelShadowSize)])
+                                     params: [worldShadowReady ? 1 : 0, 1, 1 / Float(Self.worldShadowSize), 1 / Float(Self.modelShadowSize)],
+                                     view: [1 / targetSize.x, 1 / targetSize.y, worldTime, reflOn])
         enc.setFragmentBytes(&shadowU, length: MemoryLayout<ShadowUniforms>.stride, index: 3)
         var none = groupBuffer([]) { _, _ in 0 }
         func draw(_ b: (tri: MTLBuffer?, triCount: Int, line: MTLBuffer?, lineCount: Int), lines: Bool = true) {
@@ -239,9 +422,11 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         enc.setVertexBytes(&none, length: MemoryLayout<SIMD4<Float>>.stride * none.count, index: 2)
         // Sky dome around the eye (no depth, no haze), then the site in the haze with a blue sky fill from above.
         uni.model = translation(eye) * simd_float4x4(diagonal: [0.25, 0.25, 0.25, 1])
+        if reflection { uni.clip = [0, 0, 0, 1] }
         enc.setVertexBytes(&uni, length: MemoryLayout<Uniforms>.stride, index: 1)
         enc.setFragmentBytes(&uni, length: MemoryLayout<Uniforms>.stride, index: 1)
         if let t = skyDome.tri { enc.setDepthStencilState(skyDepthState); enc.setVertexBuffer(t, offset: 0, index: 0); enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: skyDome.triCount) }
+        if reflection { uni.clip = [0, 1, 0, -(Self.waterLevel + 0.01)] }
         uni.model = matrix_identity_float4x4
         uni.sky = [0.55, 0.7, 1.0, 0.25]
         uni.fog = SIMD4(SimScenery.horizon.x, SimScenery.horizon.y, SimScenery.horizon.z, 0.00026)
@@ -252,20 +437,46 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         draw(world)
         uni.ground = .zero
         uni.fog.w = 0.00012
-        // Aircraft: CG at its position, its attitude, mm → m; surfaces and props move.
-        let s = sim.surfaces
-        let pa = propAngle
-        var grp = groupBuffer(groups) { _, g in Self.groupAngle(g, s, prop: pa) }
-        enc.setVertexBytes(&grp, length: MemoryLayout<SIMD4<Float>>.stride * grp.count, index: 2)
-        let q = simd_quatf(ix: Float(st.orientation.imag.x), iy: Float(st.orientation.imag.y), iz: Float(st.orientation.imag.z), r: Float(st.orientation.real))
-        let body = simd_float4x4(q) * simd_float4x4(diagonal: [0.001, 0.001, 0.001, 1]) * translation(-cgMM)
-        // The aircraft (its shadow comes from the model shadow map; it does not shade itself).
+        // Aircraft: CG at its position, its attitude, mm → m; surfaces and props move. It does not shade itself.
         shadowU.params.y = 0
         enc.setFragmentBytes(&shadowU, length: MemoryLayout<ShadowUniforms>.stride, index: 3)
-        uni.model = translation(target) * body
-        uni.tint = .zero
-        draw(plane)
-        enc.endEncoding()
+        if drawModel {
+            let s = sim.surfaces
+            let pa = propAngle
+            var grp = groupBuffer(groups) { _, g in Self.groupAngle(g, s, prop: pa) }
+            enc.setVertexBytes(&grp, length: MemoryLayout<SIMD4<Float>>.stride * grp.count, index: 2)
+            uni.model = bodyMatrix(st)
+            draw(plane)
+        }
+        _ = target
+        // Effects: camera-facing quads, translucent, not writing depth.
+        if !effects.particles.isEmpty {
+            let inv = viewProj.inverse
+            let right = simd_normalize(SIMD3<Float>(inv.columns.0.x, inv.columns.0.y, inv.columns.0.z))
+            let up = simd_normalize(SIMD3<Float>(inv.columns.1.x, inv.columns.1.y, inv.columns.1.z))
+            let verts = effects.vertices(right: right, up: up)
+            if !verts.isEmpty, let buf = device.makeBuffer(bytes: verts, length: MemoryLayout<GPUVertex>.stride * verts.count) {
+                uni.model = matrix_identity_float4x4
+                enc.setVertexBytes(&none, length: MemoryLayout<SIMD4<Float>>.stride * none.count, index: 2)
+                enc.setVertexBytes(&uni, length: MemoryLayout<Uniforms>.stride, index: 1)
+                enc.setFragmentBytes(&uni, length: MemoryLayout<Uniforms>.stride, index: 1)
+                enc.setDepthStencilState(lineDepthState)
+                enc.setVertexBuffer(buf, offset: 0, index: 0)
+                enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: verts.count)
+            }
+        }
+    }
+
+    /// Where the model's nose points on screen (radians, 0 = right, counter-clockwise) and whether it comes towards
+    /// the pilot – for the HUD's direction arrow.
+    func noseOnScreen(_ sim: FlightSim) -> (angle: Double, towards: Bool) {
+        let st = sim.state
+        let p = SIMD3<Float>(st.position), n = p + quat(st).act([0, 0, -Float(max(span, 0.3))])
+        func screen(_ w: SIMD3<Float>) -> SIMD2<Float> { let c = lastViewProj * SIMD4(w, 1); return SIMD2(c.x, c.y) / max(abs(c.w), 1e-4) }
+        let d = screen(n) - screen(p)
+        let fwd = quat(st).act([0, 0, -1])
+        let towards = simd_dot(fwd, simd_normalize(eye - p)) > 0
+        return (Double(atan2(d.y, d.x)), towards)
     }
 
     /// The current frame as an image (self-test).
@@ -285,8 +496,9 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.74, green: 0.83, blue: 0.93, alpha: 1)
         pass.depthAttachment.texture = depth; pass.depthAttachment.clearDepth = 0
         encodeShadows(cmd, sim: sim)
+        encodeReflection(cmd, sim: sim, width: width, height: height)
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return nil }
-        encode(enc, sim: sim, aspect: Float(width) / Float(height))
+        encode(enc, sim: sim, width: Float(width), height: Float(height))
         cmd.commit(); cmd.waitUntilCompleted()
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
         resolve.getBytes(&bytes, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
