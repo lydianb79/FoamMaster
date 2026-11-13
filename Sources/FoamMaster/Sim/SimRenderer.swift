@@ -19,6 +19,8 @@ final class SimRenderer: NSObject, MTKViewDelegate {
     private var cgMM = SIMD3<Float>.zero
     private var span: Double = 0.5
     private var propAngle: Float = 0
+    private var worldGroups: [SceneData.Group] = []
+    private var worldTime: Float = 0
     private var lastTime = CACurrentMediaTime()
     var sim: FlightSim?
     var input: SimInputState?
@@ -60,6 +62,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         let sc = Self.sceneryCache ?? (SimScenery.build(), SimScenery.sky())
         Self.sceneryCache = sc
         world = buffers(sc.world)
+        worldGroups = sc.world.groups
         skyDome = buffers(sc.sky)
     }
 
@@ -87,11 +90,14 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         let stick = input.update(dt)
         sim.input = stick
         sim.step(dt)
+        // After a crash: a second to take it in (and hear it), then the model is back in the hand.
+        if sim.state.phase == .crashed, sim.state.crashAge > 1 { sim.reset() }
         tickAccum += dt
         if tickAccum > 1.0 / 15 { tickAccum = 0; onTick?(sim, stick) }
         audio?.update(sim: sim, eye: [0, 1.7, 0], dt: dt)
         propAngle += Float(dt) * 2 * .pi * Float(20 * sim.surfaces.throttle)
         propAngle = propAngle.truncatingRemainder(dividingBy: 2 * .pi * 100)
+        worldTime += Float(dt)
 
         guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let cmd = queue.makeCommandBuffer(), let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
@@ -119,7 +125,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         }
         let viewM = lookAt(eye: eye, center: target, up: [0, 1, 0])
         let proj = perspective(fovY: fov, aspect: aspect, near: 0.05, far: 7000)
-        var uni = Uniforms(viewProj: proj * viewM, light: SIMD4(0.35, 0.9, 0.3, 0), eye: SIMD4(eye, 1))
+        var uni = Uniforms(viewProj: proj * viewM, light: SIMD4(SIMD3<Float>(SimScenery.sunDir), 0), eye: SIMD4(eye, 1))
         enc.setRenderPipelineState(pipeline)
         enc.setCullMode(.none)
         var none = groupBuffer([]) { _, _ in 0 }
@@ -137,8 +143,13 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         if let t = skyDome.tri { enc.setDepthStencilState(skyDepthState); enc.setVertexBuffer(t, offset: 0, index: 0); enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: skyDome.triCount) }
         uni.model = matrix_identity_float4x4
         uni.sky = [0.55, 0.7, 1.0, 0.25]
-        uni.fog = SIMD4(SimScenery.horizon.x, SimScenery.horizon.y, SimScenery.horizon.z, 0.00028)
+        uni.fog = SIMD4(SimScenery.horizon.x, SimScenery.horizon.y, SimScenery.horizon.z, 0.00026)
+        uni.ground = [1, 0, 0, 0]
+        let t = worldTime
+        var birds = groupBuffer(worldGroups) { _, g in t * g.sense }
+        enc.setVertexBytes(&birds, length: MemoryLayout<SIMD4<Float>>.stride * birds.count, index: 2)
         draw(world)
+        uni.ground = .zero
         uni.fog.w = 0.00012
         // Aircraft: CG at its position, its attitude, mm → m; surfaces and props move.
         let s = sim.surfaces
@@ -148,7 +159,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         let q = simd_quatf(ix: Float(st.orientation.imag.x), iy: Float(st.orientation.imag.y), iz: Float(st.orientation.imag.z), r: Float(st.orientation.real))
         let body = simd_float4x4(q) * simd_float4x4(diagonal: [0.001, 0.001, 0.001, 1]) * translation(-cgMM)
         // Shadow on the grass (flattened, translucent), then the aircraft.
-        uni.model = translation([target.x, Float(SimScenery.height(Double(target.x), Double(target.z))) + 0.03, target.z]) * simd_float4x4(diagonal: [1, 0, 1, 1]) * body
+        uni.model = translation([target.x, Float(SimScenery.surfaceHeight(Double(target.x), Double(target.z))) + 0.03, target.z]) * simd_float4x4(diagonal: [1, 0, 1, 1]) * body
         uni.tint = [0.05, 0.1, 0.03, 0.35]
         draw(plane, lines: false)
         uni.model = translation(target) * body

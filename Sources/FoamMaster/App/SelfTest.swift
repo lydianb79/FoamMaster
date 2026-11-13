@@ -698,7 +698,25 @@ enum SelfTest {
                     r.autoZoom = false
                     s.place([-60, 18, -110])
                     if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_\(kind.rawValue)_site.png")) }
+                    if kind == AircraftKind.allCases.first {
+                        for (tag, p) in [("pond", SIMD3<Double>(-75, 6, -125)), ("farm", SIMD3<Double>(-170, 22, 140)), ("village", SIMD3<Double>(60, 30, -130))] {
+                            s.place(p)
+                            if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_view_\(tag).png")) }
+                        }
+                    }
                 }
+            }
+        }
+        // Obstacles: a model flown into the first tree of the layout crashes on it; the pond is water.
+        if let t = SimScenery.layout.trees.first, let kind = AircraftKind.allCases.first {
+            do {
+                let c = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+                let d = DesignBuilder.build(c), a = Analysis(design: d)
+                let s = FlightSim(model: FlightModel(d, a))
+                s.launch(); s.place([t.x + 0.2, t.y + t.h * 0.6, t.z]); s.step(1.0 / 60)
+                let ok = s.state.phase == .crashed && s.state.impact == .tree
+                for _ in 0..<70 { s.step(1.0 / 60) }
+                print("Tree crash: \(s.state.message), after \(String(format: "%.2f", s.state.crashAge)) s\(ok ? "" : "  ← PROBLEM"); pond centre is water: \(SimScenery.isWater(SimScenery.pondCenter.x, SimScenery.pondCenter.y))")
             }
         }
         let snd = SimAudio.renderTest(to: dir?.appendingPathComponent("sim_audio.wav"))

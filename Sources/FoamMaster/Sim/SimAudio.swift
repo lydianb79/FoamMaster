@@ -19,7 +19,7 @@ final class SimAudio {
         var viewAzimuth: Float = 0      // radians, where the pilot looks (for world-fixed birds)
         var volume: Float = 0.8
     }
-    enum Event { case launch, land, crash }
+    enum Event { case launch, land, crash(propStrike: Bool), splash }
 
     private let engine = AVAudioEngine()
     private var source: AVAudioSourceNode?
@@ -27,6 +27,7 @@ final class SimAudio {
     private var running = false
     private var lastPhase: FlightState.Phase = .held
     private var lastDistance: Float = 2
+    private var lastThrottle: Float = 0
 
     static var volume: Float {
         get { UserDefaults.standard.object(forKey: "simVolume") as? Float ?? 0.8 }
@@ -59,6 +60,10 @@ final class SimAudio {
         do { try engine.start(); running = true } catch { running = false }
     }
 
+    deinit { if running { engine.stop() } }
+
+    var isRunning: Bool { running }
+
     func stop() {
         guard running else { return }
         engine.stop()
@@ -89,12 +94,18 @@ final class SimAudio {
             switch st.phase {
             case .flying where lastPhase == .held: events.append(.launch)
             case .landed: events.append(.land)
-            case .crashed where st.message.hasPrefix("Crashed"): events.append(.crash)
+            case .crashed:
+                switch st.impact {
+                case .water: events.append(.splash)
+                case .ground, .tree: events.append(.crash(propStrike: lastThrottle > 0.12))
+                default: break
+                }
             default: break
             }
             lastPhase = st.phase
         }
         lastDistance = dist
+        if st.phase == .flying { lastThrottle = Float(sim.surfaces.throttle) }
         lock.withLock { s in s.0 = p; s.1.append(contentsOf: events) }
     }
 }
@@ -122,10 +133,14 @@ final class Synth {
     var cricketPhase: Float = 0, cricketPulse: Float = 0, cricketChirp: Float = 0
 
     // One-shots.
-    struct Shot { var kind: SimAudio.Event; var t: Float = 0; var lp: Float = 0; var phase: Float = 0 }
+    struct Shot { var kind: SimAudio.Event; var t: Float = 0; var lp: Float = 0; var lp2: Float = 0; var phase: Float = 0; var phase2: Float = 0; var crackle: Float = 0; var gain: Float = 1 }
     var shots: [Shot] = []
 
-    func trigger(_ e: SimAudio.Event) { shots.append(Shot(kind: e)) }
+    func trigger(_ e: SimAudio.Event) {
+        // Impacts carry far: a soft distance law, never inaudible.
+        let g = min(max(6 / (dist + 3), 0.35), 1.3)
+        shots.append(Shot(kind: e, gain: g))
+    }
 
     @inline(__always) func white() -> Float {
         seed = seed &* 1_664_525 &+ 1_013_904_223
@@ -251,15 +266,39 @@ final class Synth {
                     s.phase += (90 - 60 * s.t) * dt
                     s.lp += (white() - s.lp) * coef(1200)
                     v = sin(s.phase * twoPi) * exp(-s.t * 18) * 0.5 + s.lp * exp(-s.t * 7) * 0.25
-                    v *= min(1.6 / max(dist, 1.2), 1) * 2
-                case .crash:
-                    // Crunching foam: a bang and crackle grains.
-                    if s.t > 0.8 { shots.remove(at: j); continue }
-                    s.phase += 60 * dt
-                    let crackle: Float = abs(white()) > 0.985 - 0.02 * exp(-s.t * 4) ? white() * 0.9 : 0
-                    s.lp += (white() - s.lp) * coef(2500)
-                    v = (sin(s.phase * twoPi) * exp(-s.t * 14) * 0.6 + s.lp * exp(-s.t * 5) * 0.5 + crackle * exp(-s.t * 3))
-                    v *= min(1.6 / max(dist, 1.2), 1) * 2.5
+                    v *= s.gain
+                case .crash(let propStrike):
+                    // Foam hitting the ground: a deep thud, the crunch of breaking foam with crackling bits,
+                    // the prop chopping into the grass if it was turning, then debris settling.
+                    if s.t > 1.3 { shots.remove(at: j); continue }
+                    s.phase += (58 - 25 * min(s.t * 4, 1)) * dt; if s.phase >= 1 { s.phase -= 1 }
+                    let thud = sin(s.phase * twoPi) * exp(-s.t * 9) * 1.1
+                    let n0 = white()
+                    s.lp += (n0 - s.lp) * coef(3200)
+                    s.lp2 += (s.lp - s.lp2) * coef(350)
+                    let crunch = (s.lp - s.lp2) * exp(-s.t * 5) * (0.8 + 0.6 * abs(white())) * 1.6
+                    if abs(white()) > 0.997 - 0.02 * exp(-s.t * 3.5) { s.crackle = white() * 1.2 }
+                    s.crackle *= 0.93
+                    var chop: Float = 0
+                    if propStrike, s.t < 0.35 {
+                        s.phase2 += 70 * dt; if s.phase2 >= 1 { s.phase2 -= 1 }
+                        chop = (s.phase2 < 0.12 ? white() : 0) * exp(-s.t * 9) * 1.4
+                    }
+                    let debris: Float = s.t > 0.25 && abs(white()) > 0.9993 ? white() * 0.5 * exp(-(s.t - 0.25) * 2) : 0
+                    v = (thud + crunch + s.crackle + chop + debris) * s.gain
+                case .splash:
+                    // Into the pond: a slap, a hiss of spray, bubbling.
+                    if s.t > 1.4 { shots.remove(at: j); continue }
+                    s.lp += (white() - s.lp) * coef(max(5000 * exp(-s.t * 3), 300))
+                    let spray = s.lp * exp(-s.t * 3.5) * 1.1
+                    let slap = white() * exp(-s.t * 40) * 1.2
+                    s.phase2 -= dt
+                    if s.phase2 <= 0 { s.phase2 = 0.03 + abs(white()) * 0.12; s.crackle = 0.12; s.phase = 0 }
+                    s.crackle = max(s.crackle - dt, 0)
+                    let bf = 500 + (0.12 - s.crackle) * 9000
+                    s.phase += bf * dt; if s.phase >= 1 { s.phase -= 1 }
+                    let bubble = sin(s.phase * twoPi) * (s.crackle / 0.12) * 0.35 * exp(-s.t * 1.2) * (s.t > 0.15 ? 1 : 0)
+                    v = (spray + slap + bubble) * s.gain
                 }
                 shots[j] = s
                 shotL += v
@@ -287,7 +326,7 @@ extension SimAudio {
         p.volume = 0.8; p.motorOn = true
         var t: Float = 0
         var launched = false, crashed = false
-        while t < 8 {
+        while t < 9.5 {
             p.throttle = t < 1 ? 0 : 0.7
             if t > 1.5, !launched { synth.trigger(.launch); launched = true }
             // Fly-by: from 60 m out, past the pilot at 5 m, away again at 12 m/s.
@@ -295,7 +334,7 @@ extension SimAudio {
             p.distance = max((x * x + 25).squareRoot(), 1)
             p.radialSpeed = t < 1.5 ? 0 : 12 * x / p.distance
             p.airspeed = t < 1.5 ? 0 : 12
-            if t > 7.2, !crashed { synth.trigger(.crash); crashed = true; p.motorOn = false }
+            if t > 7.2, !crashed { synth.trigger(.crash(propStrike: true)); crashed = true; p.motorOn = false }
             l.withUnsafeMutableBufferPointer { lb in r.withUnsafeMutableBufferPointer { rb in synth.render(p, lb.baseAddress!, rb.baseAddress!, 512) } }
             for i in 0..<512 { all.append(l[i]); all.append(r[i]) }
             t += 512 / rate

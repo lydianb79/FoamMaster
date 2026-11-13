@@ -116,6 +116,10 @@ struct FlightState {
     var time = 0.0
     var maxAltitude = 0.0
     var message = ""
+    /// What ended the flight, and how long ago (the simulator puts the model back in the hand after a second).
+    enum Impact { case ground, tree, water, lost }
+    var impact: Impact?
+    var crashAge = 0.0
 }
 
 /// The flight simulation: hand launch, flight, ground contact.
@@ -146,6 +150,14 @@ final class FlightSim {
         let n = max(1, Int((dt / (1.0 / 600)).rounded(.up)))
         let h = dt / Double(n)
         for _ in 0..<n { substep(h) }
+        if state.phase == .crashed { state.crashAge += dt }
+    }
+
+    private func crash(_ kind: FlightState.Impact, _ text: String) {
+        state.phase = .crashed
+        state.impact = kind
+        state.message = text
+        state.velocity = .zero; state.omega = .zero
     }
 
     private func substep(_ h: Double) {
@@ -206,15 +218,15 @@ final class FlightSim {
         if wl > 1e-9 { state.orientation = simd_normalize(state.orientation * simd_quatd(angle: wl * h, axis: state.omega / wl)) }
         state.maxAltitude = max(state.maxAltitude, state.position.y)
         // Ground: a touch-down slower than ~2.5 m/s down and below ~2.2× stall speed lands, anything harder crashes.
-        let ground = SimScenery.height(state.position.x, state.position.z)
+        let ground = SimScenery.surfaceHeight(state.position.x, state.position.z)
         if state.position.y < ground + m.groundClearance {
             let vdown = -state.velocity.y, speed = simd_length(state.velocity)
             let up = state.orientation.act([0, 1, 0])
             state.position.y = ground + m.groundClearance
-            if vdown > 2.5 || speed > max(2.2 * m.stallSpeed, 7) || up.y < 0.3 {
-                state.phase = .crashed
-                state.message = String(format: "Crashed – %.1f m/s down, %.1f m/s · press R", vdown, speed)
-                state.velocity = .zero; state.omega = .zero
+            if SimScenery.isWater(state.position.x, state.position.z) {
+                crash(.water, "Splash – into the pond")
+            } else if vdown > 2.5 || speed > max(2.2 * m.stallSpeed, 7) || up.y < 0.3 {
+                crash(.ground, String(format: "Crashed – %.1f m/s down, %.1f m/s", vdown, speed))
             } else {
                 state.phase = .landed
                 state.message = String(format: "Landed – %.1f s flight · press R", state.time)
@@ -224,12 +236,14 @@ final class FlightSim {
                 let heading = atan2(-fwd.x, -fwd.z)
                 state.orientation = simd_quatd(angle: heading, axis: [0, 1, 0])
             }
+        } else if let what = SimScenery.obstacle(at: state.position) {
+            crash(.tree, "Crashed into \(what)")
         }
         // Far away or way out: stop.
-        if simd_length(SIMD2(state.position.x, state.position.z)) > 600 { state.phase = .crashed; state.message = "Out of sight · press R" }
+        if state.phase == .flying, simd_length(SIMD2(state.position.x, state.position.z)) > 600 { crash(.lost, "Out of sight") }
     }
 
     /// Airspeed (m/s), height (m), attitude helpers for the HUD.
     var airspeed: Double { simd_length(state.velocity) }
-    var height: Double { state.position.y - SimScenery.height(state.position.x, state.position.z) - model.groundClearance }
+    var height: Double { state.position.y - SimScenery.surfaceHeight(state.position.x, state.position.z) - model.groundClearance }
 }

@@ -52,6 +52,20 @@ final class SimController: ObservableObject {
         default: break
         }
     }
+    /// Closes the simulator window (set by the view).
+    var exitAction: (() -> Void)?
+    /// The window is going away: silence and stop.
+    func windowClosed() {
+        audio.stop()
+        renderer?.sim = nil
+        input.releaseAll()
+    }
+    /// Shown again: the current design in the hand, sound on.
+    func windowReopened(_ project: Project) {
+        guard renderer != nil else { return }
+        load(project)
+        audio.start()
+    }
     func setVolume(_ v: Double) { volume = v; SimAudio.volume = Float(v); if v > 0, muted { setMuted(false) } }
     func setMuted(_ m: Bool) { muted = m; SimAudio.muted = m }
     func setAutoZoom(_ on: Bool) {
@@ -60,14 +74,77 @@ final class SimController: ObservableObject {
     }
 }
 
-/// MTKView that takes the keyboard (the sim's keys) while the simulator window is in front.
+/// MTKView that takes the keyboard (the sim's keys) while the simulator window is in front; Esc leaves.
 final class SimMTKView: MTKView {
     var onKey: ((UInt16, Bool, Bool) -> Void)?
     override var acceptsFirstResponder: Bool { true }
-    override func keyDown(with e: NSEvent) { onKey?(e.keyCode, true, e.isARepeat) }
+    override func keyDown(with e: NSEvent) {
+        if e.keyCode == 53 { window?.performClose(nil); return }          // Esc
+        onKey?(e.keyCode, true, e.isARepeat)
+    }
     override func keyUp(with e: NSEvent) { onKey?(e.keyCode, false, false) }
-    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); window?.makeFirstResponder(self) }
     override func mouseDown(with event: NSEvent) { window?.makeFirstResponder(self) }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); window?.makeFirstResponder(self) }
+}
+
+/// Invisible view in the simulator window: puts the window in full screen and reports it closing
+/// (sound and rendering stop there).
+final class SimWindowHook: NSView {
+    var onClose: (() -> Void)?
+    /// The window is shown again after a close (SwiftUI reuses the window of a single `Window` scene).
+    var onReopen: (() -> Void)?
+    private var closed = false
+    private var observers: [NSObjectProtocol] = []
+    private var enteredFullScreen = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        observers.forEach { NotificationCenter.default.removeObserver($0) }; observers = []
+        guard let w = window else { return }
+        // SwiftUI makes a single `Window` a full-screen auxiliary; the simulator gets its own full-screen space.
+        w.collectionBehavior.remove([.fullScreenAuxiliary, .fullScreenNone])
+        w.collectionBehavior.insert(.fullScreenPrimary)
+        w.styleMask.insert(.resizable)
+        enteredFullScreen = false
+        let nc = NotificationCenter.default
+        observers.append(nc.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak self] _ in
+            self?.closed = true
+            self?.onClose?()
+        })
+        observers.append(nc.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: w, queue: .main) { [weak self] _ in
+            guard let self, self.closed, let w = self.window, w.isVisible else { return }
+            self.closed = false
+            self.enteredFullScreen = w.styleMask.contains(.fullScreen)
+            self.onReopen?()
+            for delay in [0.0, 0.4, 1.2] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.goFullScreen() } }
+        })
+        observers.append(nc.addObserver(forName: NSWindow.willEnterFullScreenNotification, object: w, queue: .main) { [weak self] _ in self?.enteredFullScreen = true })
+        observers.append(nc.addObserver(forName: NSWindow.didBecomeKeyNotification, object: w, queue: .main) { [weak self] _ in self?.goFullScreen() })
+        // Asked for now and again a little later: macOS ignores it while the window is still being set up.
+        for delay in [0.0, 0.4, 1.2] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.goFullScreen() } }
+    }
+    private func goFullScreen() {
+        guard let w = window, !enteredFullScreen, w.isVisible else { return }
+        if w.styleMask.contains(.fullScreen) { enteredFullScreen = true; return }
+        NSApp.activate(ignoringOtherApps: true)
+        w.makeKeyAndOrderFront(nil)
+        w.toggleFullScreen(nil)
+    }
+    deinit { observers.forEach { NotificationCenter.default.removeObserver($0) } }
+}
+
+struct SimWindowHookView: NSViewRepresentable {
+    var onClose: () -> Void
+    var onReopen: () -> Void
+    var onExitAction: (@escaping () -> Void) -> Void
+    func makeNSView(context: Context) -> SimWindowHook {
+        let v = SimWindowHook()
+        v.onClose = onClose
+        v.onReopen = onReopen
+        onExitAction { [weak v] in v?.window?.performClose(nil) }
+        return v
+    }
+    func updateNSView(_ v: SimWindowHook, context: Context) { v.onClose = onClose; v.onReopen = onReopen }
 }
 
 struct SimMetalView: NSViewRepresentable {
@@ -82,6 +159,7 @@ struct SimMetalView: NSViewRepresentable {
         }
         let input = controller.input
         v.onKey = { code, down, rep in if down { input.keyDown(code, repeat: rep) } else { input.keyUp(code) } }
+
         return v
     }
     func updateNSView(_ v: SimMTKView, context: Context) {}
@@ -102,6 +180,8 @@ struct SimulatorView: View {
             }
             hud
         }
+        .background(SimWindowHookView(onClose: { [ctl] in ctl.windowClosed() },
+                                      onReopen: { [ctl, project] in ctl.windowReopened(project) }, onExitAction: { [ctl] f in ctl.exitAction = f }))
         .frame(minWidth: 900, minHeight: 600)
         .background(Color.black)
         .preferredColorScheme(.dark)
@@ -130,6 +210,8 @@ struct SimulatorView: View {
                 Toggle("Auto zoom", isOn: Binding(get: { ctl.autoZoom }, set: { ctl.setAutoZoom($0) })).toggleStyle(.switch).controlSize(.small)
                 Button { ctl.load(project) } label: { Label("Reload design", systemImage: "arrow.clockwise") }
                 Button { ctl.showControls = true } label: { Label("Controls…", systemImage: "gamecontroller") }
+                Button { ctl.exitAction?() } label: { Label("Exit", systemImage: "xmark.circle.fill") }
+                    .help("Leave the simulator (Esc)")
             }
             .padding(10).background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
             HStack(alignment: .top, spacing: 14) {
@@ -163,13 +245,14 @@ struct SimulatorView: View {
         switch h.phase {
         case .held: return "In your hand – set the throttle, then press \(keyName(ctl.input.controls.key(.launch))) to let it go"
         case .flying: return String(format: "Flying · %.0f s", h.time)
-        case .landed, .crashed: return h.message
+        case .landed: return h.message
+        case .crashed: return h.message + " · back in your hand in a moment"
         }
     }
     private var keysHint: String {
         let c = ctl.input.controls
         let k = { (a: SimAction) in keyName(c.key(a)) }
-        return "\(k(.launch)) launch · \(k(.reset)) reset · \(k(.throttleUp))/\(k(.throttleDown)) throttle · \(k(.pitchUp))/\(k(.pitchDown)) elevator · \(k(.rollLeft))/\(k(.rollRight)) aileron · \(k(.yawLeft))/\(k(.yawRight)) rudder · \(k(.zoom)) zoom – or fly with your transmitter (USB, joystick mode)"
+        return "\(k(.launch)) launch · \(k(.reset)) reset · \(k(.throttleUp))/\(k(.throttleDown)) throttle · \(k(.pitchUp))/\(k(.pitchDown)) elevator · \(k(.rollLeft))/\(k(.rollRight)) aileron · \(k(.yawLeft))/\(k(.yawRight)) rudder · \(k(.zoom)) zoom · Esc exit – or fly with your transmitter (USB, joystick mode)"
     }
 }
 

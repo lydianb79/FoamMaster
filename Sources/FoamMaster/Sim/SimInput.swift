@@ -172,6 +172,8 @@ final class SimInputState {
         for a in [SimAction.launch, .reset, .zoom] where controls.key(a) == code { events?(a) }
     }
     func keyUp(_ code: UInt16) { pressed.remove(code) }
+    /// Forget held keys (the window lost them, e.g. on close).
+    func releaseAll() { pressed.removeAll() }
     private func held(_ a: SimAction) -> Bool { pressed.contains(controls.key(a)) }
 
     /// Raw −1…1 (sticks) / 0…1 (throttle) value of a channel from the transmitter, calibrated; nil without one.

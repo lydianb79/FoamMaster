@@ -12,7 +12,7 @@ let shaderSource = """
 using namespace metal;
 
 struct Vtx { float4 pos; float4 nrm; float4 col; };
-struct Uni { float4x4 viewProj; float4x4 model; float4 light; float4 eye; float4 tint; float4 sky; float4 fog; };
+struct Uni { float4x4 viewProj; float4x4 model; float4 light; float4 eye; float4 tint; float4 sky; float4 fog; float4 ground; };
 struct Out { float4 pos [[position]]; float3 n; float3 w; float4 c; float lit; };
 
 // Rodrigues rotation of p about the unit axis k by angle a.
@@ -48,6 +48,14 @@ float4 hazed(float4 c, float3 w, constant Uni& u) {
     return float4(mix(c.rgb, u.fog.rgb, f), c.a);
 }
 
+// Value noise for the ground texture (simulator).
+float hash2(float2 p) { return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
+float vnoise(float2 p) {
+    float2 i = floor(p), f = fract(p);
+    float2 s = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash2(i), hash2(i + float2(1, 0)), s.x), mix(hash2(i + float2(0, 1)), hash2(i + float2(1, 1)), s.x), s.y);
+}
+
 fragment float4 fmain(Out in [[stage_in]], constant Uni& u [[buffer(1)]]) {
     if (in.lit < 0.5) { return hazed(in.c, in.w, u); }
     float3 n = normalize(in.n);
@@ -62,7 +70,19 @@ fragment float4 fmain(Out in [[stage_in]], constant Uni& u [[buffer(1)]]) {
     float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.45 * u.sky.w;
     // sky.xyz: sky light from above (outdoors), adds a soft blue fill on up-facing surfaces.
     float skyFill = max(n.y, 0.0) * 0.25;
-    float3 col = in.c.rgb * (0.32 + 0.62 * diff + fill) + spec + rim * float3(0.35, 0.65, 1.0) + in.c.rgb * u.sky.rgb * skyFill;
+    float3 base = in.c.rgb;
+    if (u.ground.x > 0 && n.y > 0.55) {
+        // ground.x: grass texture strength – blotches of a few metres, finer tufts close by, fading with distance.
+        float d = distance(in.w, u.eye.xyz);
+        float2 q = in.w.xz;
+        float big = vnoise(q * 0.13) * 0.45 + vnoise(q * 0.55) * 0.35 + vnoise(q * 2.1) * 0.2;
+        float fine = vnoise(q * 7.0) * 0.6 + vnoise(q * 19.0) * 0.4;
+        float nearF = clamp(1.0 - d / 90.0, 0.0, 1.0), midF = clamp(1.0 - d / 700.0, 0.0, 1.0);
+        float k = (big - 0.5) * 0.45 * midF + (fine - 0.5) * 0.35 * nearF;
+        base *= 1.0 + k * u.ground.x;
+        base.g *= 1.0 + (big - 0.5) * 0.08 * u.ground.x * midF;
+    }
+    float3 col = base * (0.32 + 0.62 * diff + fill) + spec + rim * float3(0.35, 0.65, 1.0) + base * u.sky.rgb * skyFill;
     return hazed(float4(col, in.c.a), in.w, u);
 }
 """
@@ -302,6 +322,7 @@ struct Uniforms {
     var sky: SIMD4<Float> = [0, 0, 0, 1]
     /// Distance haze: horizon colour, density per metre (0 = none).
     var fog: SIMD4<Float> = .zero
+    var ground: SIMD4<Float> = .zero
 }
 
 /// Centre and axis + angle (w) of each moving group, as the shader reads them (buffer 2, 10 groups).

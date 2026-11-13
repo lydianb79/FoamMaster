@@ -511,7 +511,7 @@ enum SceneBuilder {
             scene.addLine([-70, a.cg.y, a.cgRange.upperBound], [70, a.cg.y, a.cgRange.upperBound], color: SIMD4(0.3, 1, 0.6, 0.35))
             scene.addLine(a.cg + [0, -80, 0], a.cg + [0, 40, 0], color: SIMD4(1, 0.3, 0.7, 0.6))
         }
-        addGrid(&scene, y: Double(scene.center.y - scene.radius * 0.55))
+        if !animated { addGrid(&scene, y: Double(scene.center.y - scene.radius * 0.55)) }   // the editor floor grid, not in the simulator
         return scene
     }
 
