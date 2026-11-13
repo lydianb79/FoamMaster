@@ -417,19 +417,8 @@ final class Project: ObservableObject {
         let t0 = Date()
         var powerSearches = 0
         for _ in 0..<attempts where Date().timeIntervalSince(t0) < deadline {
-            var c = AircraftConfig.random(kind: current.kind)
+            var c = withOptions(AircraftConfig.random(kind: current.kind), of: current)
             randomStats.candidates += 1
-            c.fuselageType = current.fuselageType
-            c.aileronServos = current.aileronServos
-            c.ailerons = current.ailerons
-            c.rudder = current.rudder
-            c.taillessFins = current.taillessFins
-            c.motorLayout = current.motorLayout
-            c.tailWinglets = current.tailWinglets
-            c.wingStruts = current.wingStruts; c.tailStruts = current.tailStruts; c.finStruts = current.finStruts
-            c.autoPower = current.autoPower
-            c.sparEnabled = true
-            c.motor = current.motor; c.battery = current.battery; c.servo = current.servo
             // Quick screen: the airframe itself must be clean (geometry, structure, stability) – power, balance,
             // servos and flight performance are sorted out below.
             let d0 = DesignBuilder.build(c)
@@ -452,27 +441,83 @@ final class Project: ObservableObject {
         return nil
     }
 
-    /// A random variant of `current`'s type with its options (fuselage, surfaces, layout, struts): random airframe
-    /// (spar on) → lightest sufficient servo → automatic power system → balanced. No score requirement – it may come
-    /// with warnings or errors; only airframes whose parts collide (geometry conflicts) are skipped so it can be built.
-    nonisolated static func randomDesign(like current: AircraftConfig, attempts: Int = 200) -> AircraftConfig {
-        var c = current
-        for _ in 0..<attempts {
-            c = AircraftConfig.random(kind: current.kind)
-            c.fuselageType = current.fuselageType
-            c.aileronServos = current.aileronServos
-            c.ailerons = current.ailerons
-            c.rudder = current.rudder
-            c.taillessFins = current.taillessFins
-            c.motorLayout = current.motorLayout
-            c.tailWinglets = current.tailWinglets
-            c.wingStruts = current.wingStruts; c.tailStruts = current.tailStruts; c.finStruts = current.finStruts
-            c.autoPower = current.autoPower
-            c.sparEnabled = true
-            c.motor = current.motor; c.battery = current.battery; c.servo = current.servo
-            if DesignBuilder.build(c).geometryIssues.isEmpty { break }
+    /// The current design's options (fuselage, surfaces, layout, fins, struts, power mode) on a random airframe.
+    nonisolated static func withOptions(_ r: AircraftConfig, of current: AircraftConfig) -> AircraftConfig {
+        var c = r
+        c.fuselageType = current.fuselageType
+        c.aileronServos = current.aileronServos
+        c.ailerons = current.ailerons
+        c.rudder = current.rudder
+        c.taillessFins = current.taillessFins
+        c.motorLayout = current.motorLayout
+        c.tailWinglets = current.tailWinglets
+        c.wingStruts = current.wingStruts; c.tailStruts = current.tailStruts; c.finStruts = current.finStruts
+        c.autoPower = current.autoPower
+        c.sparEnabled = true
+        c.motor = current.motor; c.battery = current.battery; c.servo = current.servo
+        return c
+    }
+
+    /// A random variant of `current`'s type with its options – the same on every type: a random airframe (every slider
+    /// of the type, see `AircraftConfig.random`) → lightest sufficient servo → power system (kept if it already works,
+    /// else the automatic search) → balanced. It must be feasible (no errors; warnings are fine). Airframes with an
+    /// error of their own (geometry, structure, stability, controls) are dropped before the slow power search. If none
+    /// is found in time, the variant with the fewest errors is returned.
+    nonisolated(unsafe) static var randomDiag: [String: Int] = [:]
+    nonisolated static func randomDesign(like current: AircraftConfig, deadline: TimeInterval = 7) -> AircraftConfig {
+        let t0 = Date()
+        var best: (c: AircraftConfig, errors: Int)?
+        var powerSearches = 0
+        let later: Set<String> = ["Power", "Balance", "Servos", "Performance"]
+        // The power system a search found is tried first on the following candidates (searches are slow).
+        var power = (motor: current.motor, battery: current.battery)
+        for _ in 0..<600 where Date().timeIntervalSince(t0) < deadline {
+            var c = withOptions(AircraftConfig.random(kind: current.kind), of: current)
+            if c.autoPower { c.motor = power.motor; c.battery = power.battery }
+            // Battery where it fits for this airframe (balanced later) – not where the default puts it.
+            c.batteryPosition = Analysis.fittingPosition(c.batteryPosition, c)
+            let d0 = DesignBuilder.build(c)
+            guard d0.geometryIssues.isEmpty else { randomDiag["geometry: " + String(d0.geometryIssues[0].prefix(60)), default: 0] += 1; continue }
+            let a0 = Analysis(design: d0)
+            let ownErrors = a0.checks.filter { $0.severity == .error && !later.contains($0.category) }.count
+            if ownErrors > 0 {
+                randomDiag[a0.checks.first { $0.severity == .error && !later.contains($0.category) }!.title, default: 0] += 1
+                if best == nil { best = (c, ownErrors + 100) }
+                continue
+            }
+            c = balanced(lightestServo(c))
+            var a = Analysis(design: DesignBuilder.build(c))
+            // Balancing can move the battery into a servo or pushrod: such a variant is dropped, no power search.
+            // A CG out of the battery's reach is the airframe's own problem: dropped too (a motor search rarely helps
+            // and takes seconds). Only power / performance / servo errors are worth a search.
+            let fixable = a.checks.filter { $0.severity == .error }.allSatisfy { ["Power", "Performance", "Servos"].contains($0.category) }
+            if !fixable { randomDiag["after balance: " + (a.checks.first { $0.severity == .error }?.title ?? ""), default: 0] += 1 }
+            if !a.feasible, fixable, c.autoPower, powerSearches < 3 {
+                randomDiag["power search", default: 0] += 1
+                powerSearches += 1
+                let tp = Date()
+                if let r = PowerOptimizer.best(for: c) { c.motor = r.config.motor; c.battery = r.config.battery; power = (c.motor, c.battery) }
+                randomDiag["ms in power search", default: 0] += Int(Date().timeIntervalSince(tp) * 1000)
+                c = balanced(lightestServo(c))
+                a = Analysis(design: DesignBuilder.build(c))
+            }
+            var errors = a.checks.filter { $0.severity == .error }.count
+            if errors > 0 {
+                // The balanced battery sits in a servo or pushrod: the nearest position where it fits (as the
+                // editor does) – kept if the CG is still acceptable there.
+                let fit = Analysis.fittingPosition(c.batteryPosition, c)
+                if fit != c.batteryPosition {
+                    var f = c; f.batteryPosition = fit
+                    let fe = Analysis(design: DesignBuilder.build(f)).checks.filter { $0.severity == .error }.count
+                    if fe < errors { c = f; errors = fe }
+                }
+            }
+            if errors == 0 { randomDiag["ms total", default: 0] += Int(Date().timeIntervalSince(t0) * 1000); return c }
+            if best == nil || errors < best!.errors { best = (c, errors) }
         }
-        return powered(c)
+        randomDiag["ms total", default: 0] += Int(Date().timeIntervalSince(t0) * 1000)
+        randomDiag["timed out", default: 0] += 1
+        return best?.c ?? powered(current)
     }
 
     @Published private(set) var randomizing = false

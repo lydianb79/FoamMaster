@@ -85,7 +85,11 @@ struct ViewportView: View {
                     .buttonStyle(.plain).help(a.feasible ? "Show analysis" : "Show why it is not feasible and how to fix it")
             }
             Spacer()
-            PillButton(title: "Fly", symbol: "airplane.departure") { openWindow(id: "simulator") }
+            PillButton(title: "Fly", symbol: "airplane.departure") {
+                // The simulator flies the design on screen now (also when its window was open before, or reused).
+                NotificationCenter.default.post(name: .flyDesign, object: nil)
+                openWindow(id: "simulator")
+            }
                 .help("Fly this design in the flight simulator (line of sight, keyboard or USB transmitter)")
             PillButton(title: "Save", symbol: "square.and.arrow.down") { project.saveDesign() }
                 .help("Save this design (⌘S) – Save As: ⇧⌘S, open: ⌘O")

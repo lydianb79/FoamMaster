@@ -319,39 +319,50 @@ struct AircraftConfig: Codable, Equatable {
         }
     }
 
-    /// Produces a random (but plausible) variation of the given kind.
+    /// Produces a random variation of the given kind – the same rule for every type: each slider the editor shows
+    /// for it (wing, sweep, control chord, fins, fuselage, tail, stab sweep, roundings …) moves from the type's default
+    /// by up to a quarter of its own range, either way, and stays inside the range. Sliders at 0 by default (wing sweep,
+    /// stab sweep, roundings) move too.
     static func random(kind: AircraftKind) -> AircraftConfig {
         var c = kind.defaults
-        func r(_ kp: WritableKeyPath<AircraftConfig, Double>, spread: Double) {
-            let range = AircraftConfig.range(kp, kind: kind)
-            let v = c[keyPath: kp] * (1 + Double.random(in: -spread...spread))
-            c[keyPath: kp] = min(max(v, range.lowerBound), range.upperBound)
+        let spread = 0.25
+        func r(_ kp: WritableKeyPath<AircraftConfig, Double>, in given: ClosedRange<Double>? = nil) {
+            let rg = given ?? AircraftConfig.range(kp, kind: kind)
+            let w = rg.upperBound - rg.lowerBound
+            var v = c[keyPath: kp] + Double.random(in: -spread...spread) * w
+            v = min(max(v, rg.lowerBound), rg.upperBound)
+            c[keyPath: kp] = w > 5 ? v.rounded() : (v * 100).rounded() / 100
         }
-        r(\.wingspan, spread: 0.2); r(\.rootChord, spread: 0.2); r(\.tipChord, spread: 0.25)
-        r(\.sweep, spread: 0.3); r(\.controlChordPct, spread: 0.15)
+        /// Rounding radius: a quarter of the variants square, the others anywhere up to the slider's maximum.
+        func rounding(_ kp: WritableKeyPath<AircraftConfig, Double>, max m: Double) {
+            c[keyPath: kp] = Double.random(in: 0...1) < 0.25 ? 0 : (Double.random(in: 0.3...1) * m).rounded()
+        }
+        // Wing.
+        r(\.wingspan); r(\.rootChord); r(\.controlChordPct)
+        if !kind.isNutBall {
+            r(\.tipChord); c.tipChord = min(c.tipChord, c.rootChord)
+            r(\.sweep)
+        }
+        // Fins (tailless types), winglets (also the tail winglets option).
+        r(\.wingletHeight)
+        if kind.isTailless {
+            r(\.centreFinHeight)
+            r(\.finPosition, in: 0...max(10, c.rootChord * 0.58 - c.motorNotchDepth - 4))
+        }
+        // Fuselage / spine and tail.
         if kind.isNutBall {
-            c.sweep = 0; r(\.noseLength, spread: 0.3); r(\.vStabHeight, spread: 0.15); r(\.vStabChord, spread: 0.15)
-            c.rootChord = min(max(c.rootChord, 250), 600)
+            r(\.noseLength); r(\.fuselageHeight); r(\.vStabHeight); r(\.vStabChord)
+            rounding(\.finTopRounding, max: (c.vStabChord * 0.5).rounded())
         } else if !kind.isTailless {
-                        r(\.fuselageHeight, spread: 0.15); r(\.noseLength, spread: 0.15); r(\.tailArm, spread: 0.15)
-            r(\.hStabSpan, spread: 0.15); r(\.hStabChord, spread: 0.15)
-            // Stab sweep: up to half the chord on the Sport Jet, a quarter on the others (straight on the twin boom about a third of the time).
-            // Stab sweep within its limits: back up to the limit on the Sport Jet, mostly mild on the others, sometimes forward.
-            let sl = c.stabSweepLimits
-            c.hStabSweep = (kind.isJet ? Double.random(in: max(0, sl.lowerBound)...sl.upperBound)
-                                       : (Bool.random() ? 0 : Double.random(in: max(sl.lowerBound, -c.hStabChord * 0.25)...min(sl.upperBound, c.hStabChord * 0.25)))).rounded()
-            r(\.vStabHeight, spread: 0.15); r(\.vStabChord, spread: 0.15)
-        } else {
-            r(\.wingletHeight, spread: 0.3); r(\.centreFinHeight, spread: 0.3); r(\.noseLength, spread: 0.3)
-        }
-        c.tipChord = min(c.tipChord, c.rootChord)
-        if kind.hasTail {
-            // Rounded edges: about a quarter of the variants stay square, the others get random radii within the
-            // same ranges as the editor sliders (wing tips, fin / rudder top, elevator tips – not on the twin boom).
-            func radius(max m: Double) -> Double { Double.random(in: 0...1) < 0.25 ? 0 : Double.random(in: 0.3...1) * m }
-            c.wingTipRounding = radius(max: (c.tipChord * 0.45).rounded()).rounded()
-            c.finTopRounding = radius(max: (c.vStabChord * 0.5).rounded()).rounded()
-            c.stabTipRounding = kind.isTwinBoom ? 0 : radius(max: (c.hStabChord * 0.4).rounded()).rounded()
+            r(\.noseLength); r(\.fuselageHeight); r(\.tailArm)
+            r(\.hStabSpan); r(\.hStabChord)
+            c.hStabSweep = 0
+            r(\.hStabSweep, in: c.stabSweepLimits)
+            r(\.vStabHeight); r(\.vStabChord)
+            rounding(\.wingTipRounding, max: (c.tipChord * 0.45).rounded())
+            rounding(\.finTopRounding, max: (c.vStabChord * 0.5).rounded())
+            c.stabTipRounding = 0
+            if !kind.isTwinBoom { rounding(\.stabTipRounding, max: (c.hStabChord * 0.4).rounded()) }
         }
         let foams: [FoamMaterial] = [.depron3, .depron5, .depron6, .epp5, .epp6, .depron8, .epp8, .depron10, .epp10]
         c.material = foams.filter { $0.thickness <= (kind == .glider ? 5 : 10) }.randomElement()!

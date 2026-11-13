@@ -51,6 +51,8 @@ struct SimControls: Codable, Equatable {
         var kind: Kind; var index: Int; var inverted: Bool
     }
     var launchSwitch: SwitchMapping?
+    /// A transmitter switch / button that puts the model back in the hand (like the reset key).
+    var resetSwitch: SwitchMapping?
 
     func key(_ a: SimAction) -> UInt16 { keys[a.rawValue] ?? a.defaultKey }
     /// Esc leaves the simulator unless one of its actions is bound to Esc.
@@ -192,6 +194,7 @@ final class SimInputState {
     private var trimKey = ""
     static let trimStep = 0.01, trimLimit = 0.3
     private var lastSwitch: Bool?
+    private var lastReset: Bool?
 
     /// The trim saved for this design.
     func useTrim(for design: String) {
@@ -207,9 +210,9 @@ final class SimInputState {
         controls.save()
     }
 
-    /// Whether the launch switch is in its active position (nil: none set up or not on this transmitter).
-    func launchSwitchActive(_ dev: JoystickManager.Device) -> Bool? {
-        guard let sw = controls.launchSwitch else { return nil }
+    /// Whether a switch is in its active position (nil: not set up or not on this transmitter).
+    func switchActive(_ sw: SimControls.SwitchMapping?, _ dev: JoystickManager.Device) -> Bool? {
+        guard let sw else { return nil }
         switch sw.kind {
         case .button:
             guard sw.index < dev.buttons.count else { return nil }
@@ -221,11 +224,18 @@ final class SimInputState {
             return sw.inverted ? n < 0.25 : n > 0.75
         }
     }
+    func launchSwitchActive(_ dev: JoystickManager.Device) -> Bool? { switchActive(controls.launchSwitch, dev) }
+    func resetSwitchActive(_ dev: JoystickManager.Device) -> Bool? { switchActive(controls.resetSwitch, dev) }
 
     /// Feeds the launch switch position; a flip into the active position launches.
     func switchState(_ active: Bool?) {
         if let active, let last = lastSwitch, active, !last { events?(.launch) }
         lastSwitch = active
+    }
+    /// Feeds the reset switch position; a flip (or press) into the active position puts the model back in the hand.
+    func resetSwitchState(_ active: Bool?) {
+        if let active, let last = lastReset, active, !last { events?(.reset) }
+        lastReset = active
     }
 
     func keyDown(_ code: UInt16, repeat isRepeat: Bool) {
@@ -278,8 +288,9 @@ final class SimInputState {
             // Launch switch: flipping it into its active position throws the model (a switch already there when
             // the simulator starts has to be flipped again).
             switchState(launchSwitchActive(dev))
+            resetSwitchState(resetSwitchActive(dev))
         } else {
-            lastSwitch = nil
+            lastSwitch = nil; lastReset = nil
         }
         out.roll = controls.shaped(.roll, out.roll); out.pitch = controls.shaped(.pitch, out.pitch); out.yaw = controls.shaped(.yaw, out.yaw)
         out.pitch = min(max(out.pitch + trim, -1), 1)

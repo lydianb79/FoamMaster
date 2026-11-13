@@ -2,6 +2,11 @@ import SwiftUI
 import MetalKit
 import AppKit
 
+extension Notification.Name {
+    /// Posted by the Fly button: the simulator loads the design on screen.
+    static let flyDesign = Notification.Name("FoamMaster.flyDesign")
+}
+
 /// Flight simulator state shared by the view, the HUD and the controls sheet.
 @MainActor
 final class SimController: ObservableObject {
@@ -18,9 +23,20 @@ final class SimController: ObservableObject {
     weak var renderer: SimRenderer?
     private(set) var loadedRevision = -1
 
-    init() { autoZoom = SimControls.load().autoZoom }
+    private weak var project: Project?
+    private var flyObserver: NSObjectProtocol?
+
+    init() {
+        autoZoom = SimControls.load().autoZoom
+        // Fly in the editor: load the design on screen, in the hand (whatever the simulator showed before).
+        flyObserver = NotificationCenter.default.addObserver(forName: .flyDesign, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { if let self, let p = self.project { self.load(p) } }
+        }
+    }
+    deinit { if let o = flyObserver { NotificationCenter.default.removeObserver(o) } }
 
     func load(_ project: Project) {
+        self.project = project
         guard let d = project.design, let a = project.analysis else { return }
         let s = FlightSim(model: FlightModel(d, a))
         sim = s
@@ -280,7 +296,9 @@ struct SimulatorView: View {
             let sw = ctl.input.controls.launchSwitch != nil ? " or flip the launch switch" : ""
             return "In your hand – set the throttle, then press \(keyName(ctl.input.controls.key(.launch)))\(sw) to let it go"
         case .flying: return String(format: "Flying · %.0f s", h.time)
-        case .landed: return h.message
+        case .landed:
+            let sw = ctl.input.controls.resetSwitch != nil ? " or flip the reset switch" : ""
+            return h.message + " · press \(keyName(ctl.input.controls.key(.reset)))\(sw) to take it back in your hand"
         case .crashed: return h.message + " · back in your hand in a moment"
         }
     }
@@ -321,7 +339,7 @@ struct SimControlsSheet: View {
     @State private var detecting: SimChannel?
     @State private var detectStart: [Double] = []
     @State private var monitor: Any?
-    @State private var detectingSwitch = false
+    @State private var detectingSwitch: WritableKeyPath<SimControls, SimControls.SwitchMapping?>?
     @State private var switchStartAxes: [Double] = []
     @State private var switchStartButtons: [Bool] = []
     private let timer = Timer.publish(every: 1.0 / 20, on: .main, in: .common).autoconnect()
@@ -415,7 +433,10 @@ struct SimControlsSheet: View {
                         }
                     }
                     Divider()
-                    launchSwitchRow(dev)
+                    switchRow(dev, "Launch switch", \.launchSwitch, activeLabel: "LAUNCH",
+                              help: "Flip this switch on the transmitter to throw the model (like Space). Set it in the radio as a button or a channel; Detect takes whichever moves, the position you flip it to launches.")
+                    switchRow(dev, "Reset switch", \.resetSwitch, activeLabel: "RESET",
+                              help: "A switch or button that puts the model back in your hand (like the reset key) – any time, in the air or after a landing.")
                     Divider()
                     if calibrating {
                         Text("Move all sticks to every corner and the throttle from low to high. Then centre the sticks, throttle low, and press Finish.")
@@ -433,33 +454,33 @@ struct SimControlsSheet: View {
         }
     }
 
-    /// Launch switch: any button or axis of the transmitter, found with Detect (flip it to the launch position).
-    @ViewBuilder private func launchSwitchRow(_ dev: JoystickManager.Device) -> some View {
+    /// A transmitter switch (launch or reset): any button or axis, found with Detect (flip it to the active position).
+    @ViewBuilder private func switchRow(_ dev: JoystickManager.Device, _ title: String, _ key: WritableKeyPath<SimControls, SimControls.SwitchMapping?>,
+                                        activeLabel: String, help: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Launch switch").frame(width: 120, alignment: .leading)
-                Picker("", selection: Binding(get: { switchTag(controls.launchSwitch) }, set: { tag in
-                    controls.launchSwitch = switchMapping(tag, inverted: controls.launchSwitch?.inverted ?? false); apply()
+                Text(title).frame(width: 120, alignment: .leading)
+                Picker("", selection: Binding(get: { switchTag(controls[keyPath: key]) }, set: { tag in
+                    controls[keyPath: key] = switchMapping(tag, inverted: controls[keyPath: key]?.inverted ?? false); apply()
                 })) {
                     Text("None").tag("none")
                     ForEach(Array(dev.buttons.indices), id: \.self) { i in Text("Button \(i + 1)").tag("b\(i)") }
                     ForEach(Array(dev.axes.enumerated()), id: \.offset) { i, ax in Text("Axis \(i + 1) · \(JoystickManager.usageName(ax.usage))").tag("a\(i)") }
                 }
                 .labelsHidden().frame(width: 150)
-                Toggle("Invert", isOn: Binding(get: { controls.launchSwitch?.inverted ?? false }, set: { v in
-                    controls.launchSwitch?.inverted = v; apply()
+                Toggle("Invert", isOn: Binding(get: { controls[keyPath: key]?.inverted ?? false }, set: { v in
+                    controls[keyPath: key]?.inverted = v; apply()
                 }))
-                .disabled(controls.launchSwitch == nil)
-                Button(detectingSwitch ? "Flip it to launch…" : "Detect") {
-                    detectingSwitch = true; switchStartAxes = dev.axes.map(\.value); switchStartButtons = dev.buttons
+                .disabled(controls[keyPath: key] == nil)
+                Button(detectingSwitch == key ? "Flip it…" : "Detect") {
+                    detectingSwitch = key; switchStartAxes = dev.axes.map(\.value); switchStartButtons = dev.buttons
                 }
-                if let active = input.launchSwitchActive(dev) {
-                    Text(active ? "LAUNCH" : "ready").font(.system(size: 11, weight: .bold))
+                if let active = input.switchActive(controls[keyPath: key], dev) {
+                    Text(active ? activeLabel : "ready").font(.system(size: 11, weight: .bold))
                         .foregroundStyle(active ? Theme.orange : .secondary)
                 }
             }
-            Text("Flip this switch on the transmitter to throw the model (like Space). Set it in the radio as a button or a channel; Detect takes whichever moves, the position you flip it to launches.")
-                .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(help).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
     private func switchTag(_ m: SimControls.SwitchMapping?) -> String {
@@ -513,18 +534,18 @@ struct SimControlsSheet: View {
         }
     }
 
-    /// Launch-switch detect: a button that changed, else the axis that moved most (≥ 40 %) – not one a stick drives.
+    /// Switch detect: a button that changed, else the axis that moved most (≥ 40 %) – not one a stick drives.
     private func detectSwitch(_ dev: JoystickManager.Device) {
-        guard detectingSwitch, switchStartAxes.count == dev.axes.count, switchStartButtons.count == dev.buttons.count else { return }
+        guard let key = detectingSwitch, switchStartAxes.count == dev.axes.count, switchStartButtons.count == dev.buttons.count else { return }
         if let i = dev.buttons.indices.first(where: { dev.buttons[$0] != switchStartButtons[$0] }) {
-            controls.launchSwitch = SimControls.SwitchMapping(kind: .button, index: i, inverted: !dev.buttons[i])
-            detectingSwitch = false; apply(); return
+            controls[keyPath: key] = SimControls.SwitchMapping(kind: .button, index: i, inverted: !dev.buttons[i])
+            detectingSwitch = nil; apply(); return
         }
         let sticks = Set(controls.mapping.values.map(\.axis))
         let moves = dev.axes.enumerated().map { i, ax in sticks.contains(i) ? 0 : (ax.value - switchStartAxes[i]) / max(ax.max - ax.min, 1) }
         if let best = moves.indices.max(by: { abs(moves[$0]) < abs(moves[$1]) }), abs(moves[best]) > 0.4 {
-            controls.launchSwitch = SimControls.SwitchMapping(kind: .axis, index: best, inverted: moves[best] < 0)
-            detectingSwitch = false; apply()
+            controls[keyPath: key] = SimControls.SwitchMapping(kind: .axis, index: best, inverted: moves[best] < 0)
+            detectingSwitch = nil; apply()
         }
     }
 

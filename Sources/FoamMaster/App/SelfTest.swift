@@ -455,25 +455,35 @@ enum SelfTest {
     }
 
     @MainActor static func randomTest(count: Int = 40) {
+        let only = ProcessInfo.processInfo.environment["RANDOM_KINDS"].map { Set($0.split(separator: ",").map(String.init)) }
         for kind in [AircraftKind.trainer, .glider] {
             let c = Project.balanced(kind.defaults)
             let t0 = Date(); _ = PowerOptimizer.best(for: c)
             let t1 = Date(); _ = Analysis(design: DesignBuilder.build(c))
             print(String(format: "   %@: one power search %.0f ms, one build + analysis %.0f ms", kind.title, t1.timeIntervalSince(t0) * 1000, Date().timeIntervalSince(t1) * 1000))
         }
-        for kind in AircraftKind.allCases {
+        var totalBad = 0, sweptWing = 0, sweptStab = 0, total = 0
+        for kind in AircraftKind.allCases where only?.contains(kind.rawValue) ?? true {
             var feasible = 0, perfect = 0, problems: [String: Int] = [:]
             let t0 = Date()
-            for _ in 0..<count {
-                // Exactly what the Randomize button does (any score).
-                let a = Analysis(design: DesignBuilder.build(Project.randomDesign(like: Project.balanced(kind.defaults))))
+            // Exactly what the Randomize button does, starting from every setup of the type in turn.
+            let starts = Project.setupChoices(kind).map { Project.feasibleSetup(kind, $0) }
+            for i in 0..<count {
+                let c = Project.randomDesign(like: starts[i % starts.count])
+                total += 1
+                if c.sweep != kind.defaults.sweep { sweptWing += 1 }
+                if kind.hasTail, c.hStabSweep != 0 { sweptStab += 1 }
+                let a = Analysis(design: DesignBuilder.build(c))
+                if !a.feasible { totalBad += 1 }
                 if a.feasible { feasible += 1 }
                 if a.feasible && a.score == 100 { perfect += 1 }
                 for ch in a.checks where ch.severity >= .warning { problems["\(ch.severity == .error ? "E" : "W") \(ch.title)\(ch.title == "Geometry conflict" ? ": " + String(ch.detail.prefix(70)) : "")", default: 0] += 1 }
             }
             let ms = Date().timeIntervalSince(t0) * 1000 / Double(count)
-            print("\(kind.title): feasible \(feasible)/\(count), score 100 \(perfect)/\(count), \(Int(ms)) ms each – " + problems.sorted { $0.value > $1.value }.prefix(6).map { "\($0.value)× \($0.key)" }.joined(separator: "; "))
+            print("\(kind.title): feasible \(feasible)/\(count), score 100 \(perfect)/\(count), \(Int(ms)) ms each – " + problems.sorted { ($0.key.hasPrefix("E") ? 1 : 0, $0.value) > ($1.key.hasPrefix("E") ? 1 : 0, $1.value) }.prefix(6).map { "\($0.value)× \($0.key)" }.joined(separator: "; "))
         }
+        print("  candidates dropped / searches: " + Project.randomDiag.sorted { $0.value > $1.value }.prefix(8).map { "\($0.value)× \($0.key)" }.joined(separator: "; "))
+        print("randomize: \(total - totalBad)/\(total) feasible, wing sweep changed in \(sweptWing), stab sweep in \(sweptStab)\(totalBad == 0 ? "" : "  ← PROBLEM")")
     }
 
     /// Scan: random variants of every type in every foam (struts on Auto). Lists builds that still fail a
@@ -757,8 +767,28 @@ enum SelfTest {
             inp.switchState(nil)
             for v in [1024.0, 1024, 0, 0, 2047, 1024, 0] { inp.switchState(inp.launchSwitchActive(ax(v))) }
             let axisOK = launches == 2
+            // Reset switch: a momentary button, one reset per press.
+            var resets = 0
+            inp.events = { if $0 == .reset { resets += 1 } }
+            inp.controls.resetSwitch = .init(kind: .button, index: 1, inverted: false)
+            func btn(_ b: Bool) -> JoystickManager.Device { .init(name: "t", axes: [], buttons: [false, b]) }
+            for b in [false, true, true, false, true, false] { inp.resetSwitchState(inp.resetSwitchActive(btn(b))) }
+            let resetOK = resets == 2
             inp.controls = saved
-            print("Launch switch: button \(buttonOK ? "ok" : "PROBLEM"), axis (inverted) \(axisOK ? "ok" : "PROBLEM")")
+            print("Launch switch: button \(buttonOK ? "ok" : "PROBLEM"), axis (inverted) \(axisOK ? "ok" : "PROBLEM"); reset switch \(resetOK ? "ok" : "PROBLEM")")
+        }
+        // Fly flies the design on screen: the simulator shows design A, the editor changes to B, Fly → B in the hand.
+        do {
+            let project = Project()
+            project.config = Project.feasibleSetup(.trainer, AircraftKind.trainer.defaultSetupChoice)
+            let ctl = SimController()
+            ctl.load(project)
+            ctl.event(.launch)
+            var b = Project.feasibleSetup(.glider, AircraftKind.glider.defaultSetupChoice); b.name = "Fly test B"
+            project.config = b
+            NotificationCenter.default.post(name: .flyDesign, object: nil)
+            let ok = ctl.title.hasPrefix("Fly test B") && ctl.sim?.state.phase == .held && ctl.sim?.model.mass == FlightModel(project.design!, project.analysis!).mass
+            print("Fly button: simulator holds \"\(ctl.title)\" in the hand\(ok ? "" : "  ← PROBLEM")")
         }
         // The sound lives only while frames come: a few frames start the engine, then none → it stops by itself.
         do {

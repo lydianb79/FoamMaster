@@ -229,7 +229,7 @@ final class FlightSim {
                 crash(.ground, String(format: "Crashed – %.1f m/s down, %.1f m/s", vdown, speed))
             } else {
                 state.phase = .landed
-                state.message = String(format: "Landed – %.1f s flight · press R", state.time)
+                state.message = String(format: "Landed – %.1f s flight", state.time)
                 state.velocity = .zero; state.omega = .zero
                 // Settle level on the ground, keeping the heading.
                 let fwd = state.orientation.act([0, 0, -1])
