@@ -29,6 +29,19 @@ final class SimRenderer: NSObject, MTKViewDelegate {
     private var tickAccum = 0.0
     var autoZoom = true
     var audio: SimAudio?
+    /// The pilot's eye (self-test overviews can raise it).
+    var eye = SIMD3<Float>(0, 1.7, 0)
+    // Sun shadows: depth maps rendered from the sun – the field (static, drawn once) and the model (every frame).
+    private var shadowPipeline: MTLRenderPipelineState?
+    private var shadowDepthState: MTLDepthStencilState!
+    private var compareSampler: MTLSamplerState!
+    private var worldShadow: MTLTexture?, modelShadow: MTLTexture?
+    private var worldShadowReady = false
+    private var worldShadowVP = matrix_identity_float4x4, modelShadowVP = matrix_identity_float4x4
+    static let worldShadowSize = 4096, modelShadowSize = 1024
+    /// Field covered by the static shadow map (m): the area the model flies over, trees and pits included.
+    static let worldShadowCentre = SIMD3<Float>(0, 0, -60), worldShadowHalf: Float = 320
+    struct ShadowUniforms { var worldVP: simd_float4x4; var modelVP: simd_float4x4; var params: SIMD4<Float> }
 
     init?(view: MTKView) {
         guard let dev = view.device ?? MTLCreateSystemDefaultDevice(), let q = dev.makeCommandQueue() else { return nil }
@@ -44,7 +57,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         do {
             let lib = try dev.makeLibrary(source: shaderSource, options: nil)
             let d = MTLRenderPipelineDescriptor()
-            d.vertexFunction = lib.makeFunction(name: "vmain"); d.fragmentFunction = lib.makeFunction(name: "fmain")
+            d.vertexFunction = lib.makeFunction(name: "vmain"); d.fragmentFunction = lib.makeFunction(name: "fsim")
             d.rasterSampleCount = view.sampleCount
             d.depthAttachmentPixelFormat = view.depthStencilPixelFormat
             let ca = d.colorAttachments[0]!
@@ -53,7 +66,24 @@ final class SimRenderer: NSObject, MTKViewDelegate {
             ca.sourceRGBBlendFactor = .sourceAlpha; ca.destinationRGBBlendFactor = .oneMinusSourceAlpha
             ca.sourceAlphaBlendFactor = .one; ca.destinationAlphaBlendFactor = .oneMinusSourceAlpha
             pipeline = try dev.makeRenderPipelineState(descriptor: d)
+            // Depth only, from the sun.
+            let sd = MTLRenderPipelineDescriptor()
+            sd.vertexFunction = lib.makeFunction(name: "vmain"); sd.fragmentFunction = nil
+            sd.depthAttachmentPixelFormat = .depth32Float
+            shadowPipeline = try dev.makeRenderPipelineState(descriptor: sd)
         } catch { return nil }
+        let sds = MTLDepthStencilDescriptor(); sds.depthCompareFunction = .less; sds.isDepthWriteEnabled = true
+        shadowDepthState = dev.makeDepthStencilState(descriptor: sds)
+        let smp = MTLSamplerDescriptor()
+        smp.minFilter = .linear; smp.magFilter = .linear; smp.compareFunction = .lessEqual
+        smp.sAddressMode = .clampToEdge; smp.tAddressMode = .clampToEdge
+        compareSampler = dev.makeSamplerState(descriptor: smp)
+        func depthMap(_ n: Int) -> MTLTexture? {
+            let t = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float, width: n, height: n, mipmapped: false)
+            t.usage = [.renderTarget, .shaderRead]; t.storageMode = .private
+            return dev.makeTexture(descriptor: t)
+        }
+        worldShadow = depthMap(Self.worldShadowSize); modelShadow = depthMap(Self.modelShadowSize)
         let ds = MTLDepthStencilDescriptor(); ds.depthCompareFunction = .greater; ds.isDepthWriteEnabled = true
         depthState = dev.makeDepthStencilState(descriptor: ds)
         let ls = MTLDepthStencilDescriptor(); ls.depthCompareFunction = .greaterEqual; ls.isDepthWriteEnabled = false
@@ -107,12 +137,70 @@ final class SimRenderer: NSObject, MTKViewDelegate {
             propAngle = propAngle.truncatingRemainder(dividingBy: 2 * .pi * 100)
             worldTime += Float(dt)
         }
-        guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
-              let cmd = queue.makeCommandBuffer(), let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
+        guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable, let cmd = queue.makeCommandBuffer() else { return }
+        if let sim { encodeShadows(cmd, sim: sim) }
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
         let size = view.drawableSize
         if let sim { encode(enc, sim: sim, aspect: Float(size.width / max(size.height, 1))) } else { enc.endEncoding() }
         cmd.present(drawable)
         cmd.commit()
+    }
+
+    /// The model's placement in the world (CG at its position, its attitude, mm → m).
+    private func bodyMatrix(_ st: FlightState) -> simd_float4x4 {
+        let q = simd_quatf(ix: Float(st.orientation.imag.x), iy: Float(st.orientation.imag.y), iz: Float(st.orientation.imag.z), r: Float(st.orientation.real))
+        return translation(SIMD3<Float>(st.position)) * simd_float4x4(q) * simd_float4x4(diagonal: [0.001, 0.001, 0.001, 1]) * translation(-cgMM)
+    }
+
+    /// Orthographic view from the sun onto a box around `centre` (half size `half`): depth 0 near the sun.
+    private static func sunViewProj(centre: SIMD3<Float>, half: Float, depth: Float) -> simd_float4x4 {
+        let sun = simd_normalize(SIMD3<Float>(SimScenery.sunDir))
+        let view = lookAt(eye: centre + sun * depth / 2, center: centre, up: [0, 1, 0])
+        let n: Float = 0, f = depth
+        let proj = simd_float4x4(columns: (SIMD4(1 / half, 0, 0, 0), SIMD4(0, 1 / half, 0, 0), SIMD4(0, 0, -1 / (f - n), 0), SIMD4(0, 0, -n / (f - n), 1)))
+        return proj * view
+    }
+
+    /// Sun shadow maps: the field once (trees, buildings, pits, clouds over it, the terrain), the model every frame.
+    private func encodeShadows(_ cmd: MTLCommandBuffer, sim: FlightSim) {
+        guard let shadowPipeline else { return }
+        func pass(_ tex: MTLTexture?, _ body: (MTLRenderCommandEncoder) -> Void) {
+            guard let tex else { return }
+            let p = MTLRenderPassDescriptor()
+            p.depthAttachment.texture = tex; p.depthAttachment.loadAction = .clear; p.depthAttachment.storeAction = .store; p.depthAttachment.clearDepth = 1
+            guard let e = cmd.makeRenderCommandEncoder(descriptor: p) else { return }
+            e.setRenderPipelineState(shadowPipeline); e.setDepthStencilState(shadowDepthState); e.setCullMode(.none)
+            e.setDepthBias(0, slopeScale: 1.5, clamp: 0.0004)    // (a slope-scaled nudge against acne, at most ≈ 1 m)
+            body(e); e.endEncoding()
+        }
+        if !worldShadowReady, let tri = world.tri {
+            worldShadowVP = Self.sunViewProj(centre: Self.worldShadowCentre, half: Self.worldShadowHalf, depth: 2400)
+            pass(worldShadow) { e in
+                var u = Uniforms(viewProj: worldShadowVP, light: .zero, eye: .zero)
+                var g = groupBuffer(worldGroups) { _, _ in 0 }
+                e.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+                e.setVertexBytes(&g, length: MemoryLayout<SIMD4<Float>>.stride * g.count, index: 2)
+                e.setVertexBuffer(tri, offset: 0, index: 0)
+                e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: world.triCount)
+            }
+            worldShadowReady = true
+        }
+        // The model: a small box around it, sharp.
+        let st = sim.state
+        let half = Float(max(span, 0.3)) * 0.8 + 0.2
+        modelShadowVP = Self.sunViewProj(centre: SIMD3<Float>(st.position), half: half, depth: 100)
+        if let tri = plane.tri {
+            pass(modelShadow) { e in
+                var u = Uniforms(viewProj: modelShadowVP, light: .zero, eye: .zero)
+                u.model = bodyMatrix(st)
+                let s = sim.surfaces, pa = propAngle
+                var g = groupBuffer(groups) { _, gr in Self.groupAngle(gr, s, prop: pa) }
+                e.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+                e.setVertexBytes(&g, length: MemoryLayout<SIMD4<Float>>.stride * g.count, index: 2)
+                e.setVertexBuffer(tri, offset: 0, index: 0)
+                e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: plane.triCount)
+            }
+        }
     }
 
     /// Advance the propeller animation (for snapshots outside the view loop).
@@ -120,7 +208,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
 
     func encode(_ enc: MTLRenderCommandEncoder, sim: FlightSim, aspect: Float) {
         // Line of sight from the pilot's eyes; optional auto zoom keeps a small model visible far out.
-        let eye = SIMD3<Float>(0, 1.7, 0)
+        let eye = self.eye
         let st = sim.state
         let target = SIMD3<Float>(st.position)
         let dist = Double(simd_length(target - eye))
@@ -136,6 +224,11 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         var uni = Uniforms(viewProj: proj * viewM, light: SIMD4(SIMD3<Float>(SimScenery.sunDir), 0), eye: SIMD4(eye, 1))
         enc.setRenderPipelineState(pipeline)
         enc.setCullMode(.none)
+        enc.setFragmentTexture(worldShadow, index: 0); enc.setFragmentTexture(modelShadow, index: 1)
+        enc.setFragmentSamplerState(compareSampler, index: 0)
+        var shadowU = ShadowUniforms(worldVP: worldShadowVP, modelVP: modelShadowVP,
+                                     params: [worldShadowReady ? 1 : 0, 1, 1 / Float(Self.worldShadowSize), 1 / Float(Self.modelShadowSize)])
+        enc.setFragmentBytes(&shadowU, length: MemoryLayout<ShadowUniforms>.stride, index: 3)
         var none = groupBuffer([]) { _, _ in 0 }
         func draw(_ b: (tri: MTLBuffer?, triCount: Int, line: MTLBuffer?, lineCount: Int), lines: Bool = true) {
             enc.setVertexBytes(&uni, length: MemoryLayout<Uniforms>.stride, index: 1)
@@ -166,10 +259,9 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         enc.setVertexBytes(&grp, length: MemoryLayout<SIMD4<Float>>.stride * grp.count, index: 2)
         let q = simd_quatf(ix: Float(st.orientation.imag.x), iy: Float(st.orientation.imag.y), iz: Float(st.orientation.imag.z), r: Float(st.orientation.real))
         let body = simd_float4x4(q) * simd_float4x4(diagonal: [0.001, 0.001, 0.001, 1]) * translation(-cgMM)
-        // Shadow on the grass (flattened, translucent), then the aircraft.
-        uni.model = translation([target.x, Float(SimScenery.surfaceHeight(Double(target.x), Double(target.z))) + 0.03, target.z]) * simd_float4x4(diagonal: [1, 0, 1, 1]) * body
-        uni.tint = [0.05, 0.1, 0.03, 0.35]
-        draw(plane, lines: false)
+        // The aircraft (its shadow comes from the model shadow map; it does not shade itself).
+        shadowU.params.y = 0
+        enc.setFragmentBytes(&shadowU, length: MemoryLayout<ShadowUniforms>.stride, index: 3)
         uni.model = translation(target) * body
         uni.tint = .zero
         draw(plane)
@@ -192,6 +284,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         pass.colorAttachments[0].loadAction = .clear; pass.colorAttachments[0].storeAction = .multisampleResolve
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.74, green: 0.83, blue: 0.93, alpha: 1)
         pass.depthAttachment.texture = depth; pass.depthAttachment.clearDepth = 0
+        encodeShadows(cmd, sim: sim)
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return nil }
         encode(enc, sim: sim, aspect: Float(width) / Float(height))
         cmd.commit(); cmd.waitUntilCompleted()

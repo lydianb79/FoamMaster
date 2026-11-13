@@ -781,6 +781,17 @@ enum SelfTest {
                     s.place([-60, 18, -110])
                     if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_\(kind.rawValue)_site.png")) }
                     if kind == AircraftKind.allCases.first {
+                        // The model 2.5 m up, 6 m out: its sun shadow lies on the grass right below / beside it.
+                        // Overviews from 60 m up (test only): the village, the hamlet, the far forests and fields.
+                        r.autoZoom = false
+                        r.eye = [0, 60, 0]
+                        for (tag, p) in [("village", SIMD3<Double>(700, -40, -1250)), ("hamlet", SIMD3<Double>(-1150, -40, -700)), ("hills", SIMD3<Double>(900, 10, 900))] {
+                            s.place(p)
+                            if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_overview_\(tag).png")) }
+                        }
+                        r.eye = [0, 1.7, 0]
+                        s.place([1.5, 2.5, -6])
+                        if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_view_shadow.png")) }
                         for (tag, p) in [("pond", SIMD3<Double>(-75, 6, -125)), ("farm", SIMD3<Double>(-170, 22, 140)), ("village", SIMD3<Double>(60, 30, -130))] {
                             s.place(p)
                             if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_view_\(tag).png")) }

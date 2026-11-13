@@ -17,7 +17,7 @@ enum SimScenery {
 
     static let horizon = C(0.75, 0.84, 0.93, 1)
     static let zenith = C(0.25, 0.47, 0.85, 1)
-    static let sunDir = simd_normalize(P(0.35, 0.75, 0.3))
+    static let sunDir = simd_normalize(P(0.8, 0.58, 0.05))      // from the right: shadows fall sideways, in view (not hidden behind what casts them)
 
     // MARK: Noise
 
@@ -116,6 +116,7 @@ enum SimScenery {
     static let farm = SIMD2<Double>(-360, 275)
     static let farm2 = SIMD2<Double>(440, -390)
     static let village = SIMD2<Double>(700, -1250)
+    static let hamlet = SIMD2<Double>(-1150, -700)
 
     /// Grass / crop colour at a point.
     static func groundColor(_ x: Double, _ z: Double) -> SIMD3<Double> {
@@ -133,16 +134,29 @@ enum SimScenery {
         if pits < 9 { c = c * 0.8 + SIMD3(0.4, 0.37, 0.22) * 0.2 }
         if r > 320 {
             // Fields: 140 × 120 m plots of wheat, ploughed earth, rapeseed, young crops or pasture.
-            let px = Int(floor((x + 7) / 140)), pz = Int(floor((z - 11) / 120))
+            // Plots of 140 × 120 m, about half of them split in two (along x or z) – fields of different sizes.
+            var px = Int(floor((x + 7) / 140)), pz = Int(floor((z - 11) / 120))
+            let split = hash(px, pz, 23)
+            if split < 0.25 { px = px * 2 + (((x + 7) / 70).rounded(.down).truncatingRemainder(dividingBy: 2) == 0 ? 0 : 1) + 1000 }
+            else if split < 0.5 { pz = pz * 2 + (((z - 11) / 60).rounded(.down).truncatingRemainder(dividingBy: 2) == 0 ? 0 : 1) + 1000 }
             let k = hash(px, pz, 21)
-            var crop: SIMD3<Double>?
-            if k < 0.17 { crop = [0.8, 0.69, 0.36] } else if k < 0.29 { crop = [0.45, 0.33, 0.22] }
-            else if k < 0.36 { crop = [0.88, 0.8, 0.2] } else if k < 0.5 { crop = [0.36, 0.55, 0.22] }
-            if let crop {
-                // Rows: a faint stripe along the plot.
-                let rows = 0.94 + 0.06 * sin((k > 0.4 ? x : z) * 0.9)
+            let crops: [(Double, SIMD3<Double>)] = [
+                (0.13, [0.8, 0.69, 0.36]),     // ripe wheat
+                (0.19, [0.86, 0.8, 0.55]),     // barley, stubble
+                (0.27, [0.45, 0.33, 0.22]),    // ploughed
+                (0.31, [0.33, 0.25, 0.17]),    // dark soil, freshly sown
+                (0.37, [0.88, 0.8, 0.2]),      // rapeseed
+                (0.47, [0.36, 0.55, 0.22]),    // young crops
+                (0.52, [0.22, 0.42, 0.16]),    // maize
+                (0.54, [0.86, 0.72, 0.15]),    // sunflowers
+                (0.555, [0.55, 0.45, 0.72]),   // lavender
+            ]
+            if let crop = crops.first(where: { k < $0.0 })?.1 {
+                // Rows along the plot, and every field a little different.
+                let rows = 0.93 + 0.07 * sin((k > 0.3 ? x : z) * 0.9)
+                let tint = 0.92 + 0.16 * hash(px, pz, 29)
                 let t = min((r - 320) / 80, 1)
-                c = c * (1 - t) + crop * (0.9 + 0.2 * n2) * rows * t
+                c = c * (1 - t) + crop * (0.9 + 0.2 * n2) * rows * tint * t
             }
         }
         return c
@@ -155,7 +169,7 @@ enum SimScenery {
         if pondDistance(x, z) < 1.25 + margin / 25 { return false }
         if trackDistance(x, z) < 6 + margin { return false }
         for c in [farm, farm2] where simd_length(SIMD2(x, z) - c) < 70 + margin { return false }
-        if simd_length(SIMD2(x, z) - village) < 150 { return false }
+        if simd_length(SIMD2(x, z) - village) < 180 || simd_length(SIMD2(x, z) - hamlet) < 120 { return false }
         return true
     }
 
@@ -403,6 +417,7 @@ enum SimScenery {
         strip(&g)
         grassAndFlowers(&g)
         trees(&g)
+        farForests(&g)
         buildings(&g)
         pits(&g)
         ridgesAndMountains(&g)
@@ -443,6 +458,22 @@ enum SimScenery {
         tier(extent: 240, cell: 4, hole: 0)
         tier(extent: 720, cell: 10, hole: 240)
         tier(extent: 3600, cell: 40, hole: 720)
+        // Skirts: a short wall down from the outer edge of each finer ring – where it meets the coarser ring the two
+        // surfaces never quite line up, and the gap would show the sky.
+        for (extent, cell) in [(240.0, 4.0), (720.0, 10.0)] {
+            let n = Int(extent * 2 / cell)
+            for side in 0..<4 { for i in 0..<n {
+                func edge(_ k: Int) -> P {
+                    let t = -extent + Double(k) * cell
+                    let (x, z): (Double, Double) = side == 0 ? (t, -extent) : side == 1 ? (extent, t) : side == 2 ? (t, extent) : (-extent, t)
+                    return P(x, height(x, z), z)
+                }
+                let a = edge(i), b = edge(i + 1), down = P(0, -6, 0)
+                let ca = rgb(groundColor(a.x, a.z) * 0.85), cb = rgb(groundColor(b.x, b.z) * 0.85)
+                g.tri(a, b, b + down, ca, cb, cb, normals: (P(0, 1, 0), P(0, 1, 0), P(0, 1, 0)))
+                g.tri(a, b + down, a + down, ca, cb, ca, normals: (P(0, 1, 0), P(0, 1, 0), P(0, 1, 0)))
+            }}
+        }
     }
 
     /// The pond: water reflecting the sky, a muddy shore, reeds with cattails, lily pads.
@@ -585,7 +616,9 @@ enum SimScenery {
     /// All trees and bushes of the layout, with blob shadows under them.
     static func trees(_ g: inout Geo) {
         let up = (P(0, 1, 0), P(0, 1, 0), P(0, 1, 0))
+        // (soft discs under trees – only where the sun shadow map does not reach, beyond the field)
         func shadow(_ x: Double, _ z: Double, _ r: Double) {
+            guard max(abs(x - 0), abs(z + 60)) > 300 else { return }
             // Offset away from the sun, a soft dark disc just above the ground.
             let cx = x - sunDir.x * r * 0.6, cz = z - sunDir.z * r * 0.6
             let inner = C(0.06, 0.12, 0.04, 0.42), outer = C(0.06, 0.12, 0.04, 0)
@@ -650,6 +683,89 @@ enum SimScenery {
         }
     }
 
+    /// Dense woods on the distant hills, drawn cheaply: each tree a low-poly cone (conifer) or a faceted ball on a
+    /// stub (broadleaf), a few dozen triangles – thousands of them cost less than a hundred near trees.
+    static func farForests(_ g: inout Geo) {
+        for w in 0..<22 {
+            let a = hash(w, 1, 201) * 2 * .pi, r = 800 + hash(w, 2, 201) * 1800
+            let cx = cos(a) * r, cz = sin(a) * r
+            let centre = SIMD2(cx, cz)
+            if simd_length(centre - village) < 400 || simd_length(centre - hamlet) < 300 || simd_length(centre - farm) < 200 || simd_length(centre - farm2) < 200 { continue }
+            let size = 90 + hash(w, 3, 201) * 160
+            let conifer = hash(w, 4, 201)
+            let count = Int(size * size / 260)
+            for t in 0..<count {
+                let ang = hash(t, w, 202) * 2 * .pi, rad = hash(t, w, 203).squareRoot() * size
+                // an irregular edge
+                if rad > size * (0.75 + 0.25 * noise(cos(ang) * 2 + Double(w), sin(ang) * 2, 204)) { continue }
+                let x = cx + cos(ang) * rad * 1.3, z = cz + sin(ang) * rad
+                let y = surfaceHeight(x, z) - 0.5, h = 10 + hash(t, w, 205) * 10
+                let v = Float(hash(t, w, 206))
+                if hash(t, w, 207) < conifer {
+                    g.mesh(cone(P(x, y, z), radius: h * 0.26, height: h, segments: 5), C(0.1 + v * 0.05, 0.25 + v * 0.08, 0.14, 1))
+                } else {
+                    g.mesh(ellipsoid(P(x, y + h * 0.62, z), P(h * 0.32, h * 0.3, h * 0.32), segments: 5, rings: 3), C(0.19 + v * 0.08, 0.36 + v * 0.1, 0.15, 1))
+                    g.mesh(post(P(x, y, z), radius: 0.4, height: h * 0.35, segments: 4), C(0.32, 0.24, 0.17, 1))
+                }
+            }
+        }
+    }
+
+    /// A hamlet: houses round a crossing of two lanes, varied walls, roofs and sizes, chimneys, garden hedges, trees.
+    static func settlement(_ g: inout Geo, at centre: SIMD2<Double>, houses: Int, seed: Int, church: Bool) {
+        let walls: [C] = [C(0.92, 0.9, 0.84, 1), C(0.9, 0.84, 0.7, 1), C(0.86, 0.76, 0.62, 1), C(0.8, 0.82, 0.78, 1), C(0.78, 0.66, 0.52, 1), C(0.94, 0.88, 0.78, 1)]
+        let roofs: [C] = [C(0.66, 0.24, 0.17, 1), C(0.58, 0.2, 0.14, 1), C(0.42, 0.28, 0.2, 1), C(0.34, 0.34, 0.38, 1), C(0.72, 0.36, 0.22, 1)]
+        let lane = hash(seed, 9, 211) * .pi                          // direction of the main lane
+        let dir = SIMD2(cos(lane), sin(lane)), across = SIMD2(-dir.y, dir.x)
+        // the lanes (gravel strips)
+        for (d, len) in [(dir, 150.0), (across, 90.0)] {
+            var t = -len
+            while t < len {
+                let a = centre + d * t, b = centre + d * (t + 6), sideV = SIMD2(-d.y, d.x) * 2.6
+                func p(_ q: SIMD2<Double>) -> P { P(q.x, surfaceHeight(q.x, q.y) + 0.15, q.y) }
+                g.quad(p(a - sideV), p(b - sideV), p(b + sideV), p(a + sideV), C(0.6, 0.56, 0.48, 1))
+                t += 6
+            }
+        }
+        for i in 0..<houses {
+            let onMain = i % 3 != 2
+            let d = onMain ? dir : across, n = SIMD2(-d.y, d.x)
+            let along = (hash(i, seed, 212) - 0.5) * (onMain ? 280 : 160)
+            let side: Double = hash(i, seed, 213) < 0.5 ? 1 : -1
+            let q = centre + d * along + n * side * (12 + hash(i, seed, 214) * 10)
+            if simd_length(q - centre) < 14 { continue }
+            let w = 8 + hash(i, seed, 215) * 7, dd = 7 + hash(i, seed, 216) * 4, h = 5 + hash(i, seed, 217) * 3.5
+            let yaw = atan2(d.x, d.y) + (side > 0 ? 0 : .pi) + (hash(i, seed, 218) - 0.5) * 0.15
+            house(&g, at: q, w: w, d: dd, h: h, roofH: 3 + hash(i, seed, 219) * 2.5, yaw: yaw,
+                  wall: walls[Int(hash(i, seed, 220) * Double(walls.count)) % walls.count], roof: roofs[Int(hash(i, seed, 221) * Double(roofs.count)) % roofs.count])
+            // chimney
+            let y0 = surfaceHeight(q.x, q.y)
+            let off = P(cos(-yaw) * w * 0.25, 0, sin(-yaw) * w * 0.25)
+            g.mesh(block(P(q.x, y0, q.y) + off, 0.8, h + 0.6 + 3.2, 0.8, yaw: yaw), C(0.5, 0.36, 0.3, 1))
+            // garden hedge behind the house, a tree in some gardens
+            let back = q + n * side * (dd / 2 + 6)
+            for k in -3...3 {
+                let hp = back + d * (Double(k) * 2.2)
+                g.mesh(ellipsoid(P(hp.x, surfaceHeight(hp.x, hp.y) + 0.6, hp.y), P(1.3, 0.9, 1.2), segments: 5, rings: 3), C(0.2, 0.36, 0.15, 1))
+            }
+            if hash(i, seed, 222) < 0.5 {
+                let tp = back + n * side * 5 + d * ((hash(i, seed, 223) - 0.5) * 8)
+                let ty = surfaceHeight(tp.x, tp.y), th = 7 + hash(i, seed, 224) * 6
+                g.mesh(post(P(tp.x, ty, tp.y), radius: 0.3, height: th * 0.45, segments: 5), C(0.36, 0.26, 0.18, 1))
+                g.mesh(ellipsoid(P(tp.x, ty + th * 0.68, tp.y), P(th * 0.3, th * 0.27, th * 0.3), segments: 6, rings: 4), C(0.22 + Float(hash(i, seed, 225)) * 0.08, 0.42, 0.17, 1))
+            }
+        }
+        if church {
+            let ch = centre + across * 22 + dir * 10
+            let yaw = atan2(dir.x, dir.y)
+            house(&g, at: ch, w: 12, d: 24, h: 10, roofH: 6, yaw: yaw + .pi / 2, wall: walls[0], roof: C(0.36, 0.36, 0.4, 1))
+            let tower = ch + dir * 16
+            let ty = surfaceHeight(tower.x, tower.y) - 0.5
+            g.mesh(block(P(tower.x, ty, tower.y), 5, 24, 5, yaw: yaw), walls[0])
+            g.mesh(cone(P(tower.x, ty + 24, tower.y), radius: 3.6, height: 14, segments: 8), C(0.3, 0.42, 0.36, 1))
+        }
+    }
+
     /// The farm (house, barn, silo), a second farm, the village with its church.
     static func buildings(_ g: inout Geo) {
         let white = C(0.92, 0.9, 0.84, 1), cream = C(0.9, 0.84, 0.7, 1), red = C(0.66, 0.24, 0.17, 1), brown = C(0.42, 0.28, 0.2, 1)
@@ -667,28 +783,9 @@ enum SimScenery {
         }
         house(&g, at: farm2, w: 11, d: 9, h: 6, roofH: 3.6, yaw: -0.3, wall: cream, roof: brown)
         house(&g, at: farm2 + [18, -16], w: 18, d: 11, h: 6, roofH: 4.5, yaw: -0.3, wall: C(0.6, 0.45, 0.3, 1), roof: C(0.33, 0.33, 0.35, 1))
-        // Village: houses along two streets, a church with a steeple.
-        for i in 0..<22 {
-            let street = i % 2 == 0 ? 1.0 : -1.0
-            let along = Double(i / 2) * 22 - 110
-            let q = village + [along + (hash(i, 1, 151) - 0.5) * 6, street * (14 + hash(i, 2, 151) * 8)]
-            let wall = [white, cream, C(0.86, 0.76, 0.62, 1), C(0.8, 0.82, 0.78, 1)][i % 4]
-            house(&g, at: q, w: 9 + hash(i, 3, 151) * 5, d: 8 + hash(i, 4, 151) * 3, h: 5.5 + hash(i, 5, 151) * 2.5, roofH: 3.5 + hash(i, 6, 151) * 1.5,
-                  yaw: street > 0 ? 0 : .pi, wall: wall, roof: hash(i, 7, 151) < 0.7 ? red : brown)
-        }
-        let church = village + [10, -48]
-        house(&g, at: church, w: 12, d: 24, h: 10, roofH: 6, yaw: .pi / 2, wall: white, roof: C(0.36, 0.36, 0.4, 1))
-        let tower = church + [16, 0]
-        let ty = surfaceHeight(tower.x, tower.y) - 0.5
-        g.mesh(block(P(tower.x, ty, tower.y), 5, 24, 5), white)
-        g.mesh(cone(P(tower.x, ty + 24, tower.y), radius: 3.6, height: 14, segments: 8), C(0.3, 0.42, 0.36, 1))
-        // Village trees.
-        for i in 0..<16 {
-            let q = village + [(hash(i, 1, 161) - 0.5) * 260, (hash(i, 2, 161) - 0.5) * 120]
-            let y = surfaceHeight(q.x, q.y), h = 9 + hash(i, 3, 161) * 6
-            g.mesh(post(P(q.x, y, q.y), radius: 0.35, height: h * 0.45), C(0.36, 0.26, 0.18, 1))
-            g.mesh(ellipsoid(P(q.x, y + h * 0.7, q.y), P(h * 0.3, h * 0.28, h * 0.3), segments: 7, rings: 5), C(0.24, 0.42, 0.17, 1))
-        }
+        // The village (with its church) and a hamlet.
+        settlement(&g, at: village, houses: 40, seed: 1, church: true)
+        settlement(&g, at: hamlet, houses: 14, seed: 2, church: false)
     }
 
     /// The pits behind the flight line: a gazebo, folding chairs, a table, flight boxes, a car, the fence, a windsock.

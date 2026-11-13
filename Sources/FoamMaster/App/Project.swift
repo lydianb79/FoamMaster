@@ -530,6 +530,15 @@ final class Project: ObservableObject {
 
     @Published private(set) var randomizing = false
 
+    /// The type's default design – the build a new model of this type starts with in the gallery (score 100).
+    func resetToDefault() {
+        guard let kind = config?.kind else { return }
+        let c = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+        config = c
+        fileURL = nil              // a new design – Save asks for a file
+        flash("Reset to the default \(kind.title)")
+    }
+
     /// Random variation of the current type (any score), made in the background.
     func randomize() {
         guard let current = config, !randomizing else { return }

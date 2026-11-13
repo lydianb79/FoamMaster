@@ -56,17 +56,19 @@ float vnoise(float2 p) {
     return mix(mix(hash2(i), hash2(i + float2(1, 0)), s.x), mix(hash2(i + float2(0, 1)), hash2(i + float2(1, 1)), s.x), s.y);
 }
 
-fragment float4 fmain(Out in [[stage_in]], constant Uni& u [[buffer(1)]]) {
+// Lit colour of a fragment; `sun` = 1 in sunlight, 0 in full shadow (the sun's direct light and its highlight go,
+// the sky light and ambient stay).
+float4 shade(Out in, constant Uni& u, float sun) {
     if (in.lit < 0.5) { return hazed(in.c, in.w, u); }
     float3 n = normalize(in.n);
     float3 v = normalize(u.eye.xyz - in.w);
     if (dot(n, v) < 0) { n = -n; }
     float3 l = normalize(u.light.xyz);
     float3 l2 = normalize(float3(-0.6, 0.3, -0.5));
-    float diff = max(dot(n, l), 0.0);
+    float diff = max(dot(n, l), 0.0) * sun;
     float fill = max(dot(n, l2), 0.0) * 0.25;
     float3 h = normalize(l + v);
-    float spec = pow(max(dot(n, h), 0.0), 48.0) * 0.35;
+    float spec = pow(max(dot(n, h), 0.0), 48.0) * 0.35 * sun;
     float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.45 * u.sky.w;
     // sky.xyz: sky light from above (outdoors), adds a soft blue fill on up-facing surfaces.
     float skyFill = max(n.y, 0.0) * 0.25;
@@ -82,8 +84,36 @@ fragment float4 fmain(Out in [[stage_in]], constant Uni& u [[buffer(1)]]) {
         base *= 1.0 + k * u.ground.x;
         base.g *= 1.0 + (big - 0.5) * 0.08 * u.ground.x * midF;
     }
-    float3 col = base * (0.32 + 0.62 * diff + fill) + spec + rim * float3(0.35, 0.65, 1.0) + base * u.sky.rgb * skyFill;
+    // In shade the occluder also hides part of the sky: the ambient and sky light drop a little too.
+    float shadeAmb = mix(0.72, 1.0, sun);
+    float3 col = base * (0.32 * shadeAmb + 0.62 * diff + fill) + spec + rim * float3(0.35, 0.65, 1.0) + base * u.sky.rgb * skyFill * shadeAmb;
     return hazed(float4(col, in.c.a), in.w, u);
+}
+
+fragment float4 fmain(Out in [[stage_in]], constant Uni& u [[buffer(1)]]) { return shade(in, u, 1.0); }
+
+// Simulator: sun shadows from two shadow maps rendered from the sun – the field (static) and the model (follows it).
+struct ShadowUni { float4x4 worldVP; float4x4 modelVP; float4 params; };   // params: x world on, y model on, z / w texel size
+float shadowLookup(depth2d<float> map, sampler s, float4x4 vp, float3 w, float texel, float bias) {
+    float4 p = vp * float4(w, 1);
+    float3 q = p.xyz / p.w;
+    float2 uv = float2(q.x * 0.5 + 0.5, 0.5 - q.y * 0.5);
+    if (uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1 || q.z > 1 || q.z < 0) { return 1.0; }
+    float sum = 0;
+    for (int y = -1; y <= 1; y++) { for (int x = -1; x <= 1; x++) {
+        sum += map.sample_compare(s, uv + float2(x, y) * texel, q.z - bias);
+    } }
+    return sum / 9.0;
+}
+fragment float4 fsim(Out in [[stage_in]], constant Uni& u [[buffer(1)]], constant ShadowUni& sh [[buffer(3)]],
+                     depth2d<float> worldMap [[texture(0)]], depth2d<float> modelMap [[texture(1)]], sampler cmp [[sampler(0)]]) {
+    float sun = 1.0;
+    if (in.lit > 0.5) {
+        // (biases in depth units: the field's map is 2400 m deep – 0.0003 ≈ 0.7 m; the model's 100 m – 0.002 = 0.2 m)
+        if (sh.params.x > 0) { sun = min(sun, shadowLookup(worldMap, cmp, sh.worldVP, in.w, sh.params.z, 0.0003)); }
+        if (sh.params.y > 0) { sun = min(sun, shadowLookup(modelMap, cmp, sh.modelVP, in.w, sh.params.w, 0.002)); }
+    }
+    return shade(in, u, sun);
 }
 """
 

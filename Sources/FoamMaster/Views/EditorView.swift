@@ -23,6 +23,7 @@ struct ViewportView: View {
     /// Object under the mouse in the 3D view and where the mouse is.
     @State private var hoverName: String?
     @State private var hoverPoint = CGPoint.zero
+    @State private var confirmReset = false
 
     var scene: SceneData {
         guard let d = project.design else { return SceneData() }
@@ -89,13 +90,21 @@ struct ViewportView: View {
                 SimSession.open(project)
             }
                 .help("Fly this design in the flight simulator (line of sight, keyboard or USB transmitter)")
+            PillButton(title: "Reset", symbol: "arrow.counterclockwise") { confirmReset = true }
+                .help("Back to the default \(project.config?.kind.title ?? "") – the build a new model of this type starts with")
+                .confirmationDialog("Reset to the default \(project.config?.kind.title ?? "design")?", isPresented: $confirmReset) {
+                    Button("Reset", role: .destructive) { withAnimation(.spring) { project.resetToDefault() } }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("All changes to this design are replaced by the type's default build (as in the gallery). Saved files are not touched.")
+                }
             PillButton(title: "Save", symbol: "square.and.arrow.down") { project.saveDesign() }
                 .help("Save this design (⌘S) – Save As: ⇧⌘S, open: ⌘O")
             PillButton(title: project.randomizing ? "Randomizing …" : "Randomize", symbol: project.randomizing ? "hourglass" : "dice.fill", prominent: true) {
                 withAnimation(.spring) { project.randomize() }
             }
             .disabled(project.randomizing)
-            .help("Random variant of this type that passes every check (score 100)")
+            .help("Random design of this type – options and sizes at random, always buildable; the analysis shows its warnings and errors")
         }
         .glass(radius: 18, padding: 10)
     }
