@@ -265,7 +265,7 @@ struct SimulatorView: View {
         case .held:
             let hasTx = ctl.input.joystick.snapshot(preferring: ctl.input.controls.deviceName) != nil
             let sw = !hasTx ? "" : ctl.input.controls.launchSwitch != nil ? " or flip the launch switch"
-                : " (a transmitter switch can launch too: Controls… ▸ Launch & reset)"
+                : " (a transmitter switch can launch too: Controls… ▸ Transmitter)"
             return "In your hand – set the throttle, then press \(keyName(ctl.input.controls.key(.launch)))\(sw) to let it go"
         case .flying: return String(format: "Flying · %.0f s", h.time)
         case .landed:
@@ -327,10 +327,9 @@ struct SimControlsSheet: View {
             TabView {
                 keyboardTab.tabItem { Text("Keyboard") }
                 transmitterTab.tabItem { Text("Transmitter") }
-                launchTab.tabItem { Text("Launch & reset") }
                 ratesTab.tabItem { Text("Rates & expo") }
             }
-            .frame(height: 430)
+            .frame(height: 540)
             HStack {
                 Button("Reset to defaults") { let t = controls.trims; controls = SimControls(); controls.trims = t; apply() }
                 Spacer()
@@ -406,7 +405,10 @@ struct SimControlsSheet: View {
                         }
                     }
                     Divider()
-                    Text("Launch and reset switches: see the Launch & reset tab.").font(.system(size: 11)).foregroundStyle(.secondary)
+                    switchRow(dev, "Launch switch", \.launchSwitch, activeLabel: "LAUNCH",
+                              help: "Press Detect, then flip the switch you want to the launch position – that flip throws the model (like the launch key). Works with a switch the radio sends as a button or as a channel (axis); Invert swaps the positions.")
+                    switchRow(dev, "Reset switch", \.resetSwitch, activeLabel: "RESET",
+                              help: "Press Detect, then flip or press the switch / button you want: the model is back in your hand, any time – in the air or after a landing.")
                     Divider()
                     if calibrating {
                         Text("Move all sticks to every corner and the throttle from low to high. Then centre the sticks, throttle low, and press Finish.")
@@ -418,41 +420,6 @@ struct SimControlsSheet: View {
                 } else {
                     Text("No transmitter found. Connect your radio by USB and choose \u{201C}USB Joystick (HID)\u{201D} on it (EdgeTX / OpenTX: USB mode Joystick). Other USB joysticks and gamepads work too.")
                         .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(8)
-        }
-    }
-
-    /// Launch and reset: the keys, and a switch / button on the transmitter for each (also without a radio connected,
-    /// so it is clear where to set them up).
-    private var launchTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("The model starts in your hand. Launch throws it, reset takes it back in your hand – from the keyboard, or with a switch or button on your transmitter.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Text("Keyboard").font(.system(size: 12, weight: .semibold))
-                ForEach([SimAction.launch, .reset]) { a in
-                    HStack {
-                        Text(a == .launch ? "Launch key" : "Reset key").frame(width: 120, alignment: .leading)
-                        Button(capture == a ? "Press a key…" : keyName(controls.key(a))) { capture = a }.frame(width: 140)
-                    }
-                }
-                Divider()
-                Text("Transmitter").font(.system(size: 12, weight: .semibold))
-                if let dev = device {
-                    Text("Connected: \(dev.name) – \(dev.axes.count) axes, \(dev.buttons.count) buttons").font(.system(size: 11)).foregroundStyle(.secondary)
-                    switchRow(dev, "Launch switch", \.launchSwitch, activeLabel: "LAUNCH",
-                              help: "Press Detect, then flip the switch you want to the launch position – that flip throws the model (like the launch key). Works with a switch the radio sends as a button or as a channel (axis); Invert swaps the positions.")
-                    switchRow(dev, "Reset switch", \.resetSwitch, activeLabel: "RESET",
-                              help: "Press Detect, then flip or press the switch / button you want: the model is back in your hand, any time – in the air or after a landing.")
-                } else {
-                    Text("No transmitter connected. Connect your radio by USB and choose \u{201C}USB Joystick (HID)\u{201D} on it (EdgeTX / OpenTX: USB mode Joystick); the launch and reset switches can then be set here with Detect. In the radio, give the switches a channel (mixer) or a button in the USB joystick setup so they reach the computer.")
-                        .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    if controls.launchSwitch != nil || controls.resetSwitch != nil {
-                        Text("Saved: " + [controls.launchSwitch.map { "launch on \(switchLabel($0))" }, controls.resetSwitch.map { "reset on \(switchLabel($0))" }].compactMap { $0 }.joined(separator: ", "))
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
                 }
             }
             .padding(8)
@@ -487,9 +454,6 @@ struct SimControlsSheet: View {
             }
             Text(help).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
-    }
-    private func switchLabel(_ m: SimControls.SwitchMapping) -> String {
-        (m.kind == .button ? "button \(m.index + 1)" : "axis \(m.index + 1)") + (m.inverted ? " (inverted)" : "")
     }
     private func switchTag(_ m: SimControls.SwitchMapping?) -> String {
         guard let m else { return "none" }
