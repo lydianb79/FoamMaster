@@ -40,6 +40,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         view.sampleCount = 4
         view.clearColor = MTLClearColor(red: 0.74, green: 0.83, blue: 0.93, alpha: 1)
         view.preferredFramesPerSecond = 60
+        view.clearDepth = 0            // reversed-Z: 1 at the near plane, 0 far away
         do {
             let lib = try dev.makeLibrary(source: shaderSource, options: nil)
             let d = MTLRenderPipelineDescriptor()
@@ -53,9 +54,9 @@ final class SimRenderer: NSObject, MTKViewDelegate {
             ca.sourceAlphaBlendFactor = .one; ca.destinationAlphaBlendFactor = .oneMinusSourceAlpha
             pipeline = try dev.makeRenderPipelineState(descriptor: d)
         } catch { return nil }
-        let ds = MTLDepthStencilDescriptor(); ds.depthCompareFunction = .less; ds.isDepthWriteEnabled = true
+        let ds = MTLDepthStencilDescriptor(); ds.depthCompareFunction = .greater; ds.isDepthWriteEnabled = true
         depthState = dev.makeDepthStencilState(descriptor: ds)
-        let ls = MTLDepthStencilDescriptor(); ls.depthCompareFunction = .lessEqual; ls.isDepthWriteEnabled = false
+        let ls = MTLDepthStencilDescriptor(); ls.depthCompareFunction = .greaterEqual; ls.isDepthWriteEnabled = false
         lineDepthState = dev.makeDepthStencilState(descriptor: ls)
         let ks = MTLDepthStencilDescriptor(); ks.depthCompareFunction = .always; ks.isDepthWriteEnabled = false
         skyDepthState = dev.makeDepthStencilState(descriptor: ks)
@@ -127,7 +128,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
             fov = Float(min(max(want, lo), hi))
         }
         let viewM = lookAt(eye: eye, center: target, up: [0, 1, 0])
-        let proj = perspective(fovY: fov, aspect: aspect, near: 0.05, far: 7000)
+        let proj = reversedPerspective(fovY: fov, aspect: aspect, near: 0.05, far: 7000)
         var uni = Uniforms(viewProj: proj * viewM, light: SIMD4(SIMD3<Float>(SimScenery.sunDir), 0), eye: SIMD4(eye, 1))
         enc.setRenderPipelineState(pipeline)
         enc.setCullMode(.none)
@@ -186,7 +187,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         pass.colorAttachments[0].texture = msaa; pass.colorAttachments[0].resolveTexture = resolve
         pass.colorAttachments[0].loadAction = .clear; pass.colorAttachments[0].storeAction = .multisampleResolve
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.74, green: 0.83, blue: 0.93, alpha: 1)
-        pass.depthAttachment.texture = depth; pass.depthAttachment.clearDepth = 1
+        pass.depthAttachment.texture = depth; pass.depthAttachment.clearDepth = 0
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return nil }
         encode(enc, sim: sim, aspect: Float(width) / Float(height))
         cmd.commit(); cmd.waitUntilCompleted()
@@ -214,4 +215,12 @@ func translation(_ t: SIMD3<Float>) -> simd_float4x4 {
     var m = matrix_identity_float4x4
     m.columns.3 = SIMD4(t, 1)
     return m
+}
+
+/// Reversed-Z projection (depth 1 at the near plane, 0 at the far one): with a float depth buffer this keeps
+/// precision out to kilometres, so distant surfaces (mountains, clouds) don't flicker.
+func reversedPerspective(fovY: Float, aspect: Float, near: Float, far: Float) -> simd_float4x4 {
+    let y = 1 / tan(fovY / 2), x = y / aspect
+    let a = near / (far - near), b = far * near / (far - near)
+    return simd_float4x4(columns: (SIMD4(x, 0, 0, 0), SIMD4(0, y, 0, 0), SIMD4(0, 0, a, -1), SIMD4(0, 0, b, 0)))
 }

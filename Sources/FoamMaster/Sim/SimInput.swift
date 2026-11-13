@@ -5,16 +5,18 @@ import Carbon
 
 /// Keyboard actions of the simulator.
 enum SimAction: String, CaseIterable, Codable, Identifiable {
-    case throttleUp, throttleDown, pitchUp, pitchDown, rollLeft, rollRight, yawLeft, yawRight, launch, reset, zoom
+    case throttleUp, throttleDown, pitchUp, pitchDown, rollLeft, rollRight, yawLeft, yawRight, trimUp, trimDown, launch, reset, zoom
     var id: String { rawValue }
     var title: String {
         [.throttleUp: "Throttle up", .throttleDown: "Throttle down", .pitchUp: "Elevator up (pull)", .pitchDown: "Elevator down (push)",
          .rollLeft: "Aileron left", .rollRight: "Aileron right", .yawLeft: "Rudder left", .yawRight: "Rudder right",
+         .trimUp: "Pitch trim nose up", .trimDown: "Pitch trim nose down",
          .launch: "Launch (let go)", .reset: "Reset", .zoom: "Auto zoom on / off"][self]!
     }
     var defaultKey: UInt16 {
         [.throttleUp: UInt16(kVK_ANSI_W), .throttleDown: UInt16(kVK_ANSI_S), .pitchUp: UInt16(kVK_DownArrow), .pitchDown: UInt16(kVK_UpArrow),
          .rollLeft: UInt16(kVK_LeftArrow), .rollRight: UInt16(kVK_RightArrow), .yawLeft: UInt16(kVK_ANSI_A), .yawRight: UInt16(kVK_ANSI_D),
+         .trimUp: UInt16(kVK_ANSI_T), .trimDown: UInt16(kVK_ANSI_G),
          .launch: UInt16(kVK_Space), .reset: UInt16(kVK_ANSI_R), .zoom: UInt16(kVK_ANSI_Z)][self]!
     }
 }
@@ -41,8 +43,18 @@ struct SimControls: Codable, Equatable {
     var rates: [String: Double] = ["roll": 0.8, "pitch": 0.8, "yaw": 1.0]
     var expo: [String: Double] = ["roll": 0.3, "pitch": 0.3, "yaw": 0.2]
     var autoZoom = true
+    /// Pitch trim per design (−0.3…0.3 of the elevator throw, + = nose up). Optional so older settings still load.
+    var trims: [String: Double]?
+    /// A transmitter switch that launches the model when flipped to its active position.
+    struct SwitchMapping: Codable, Equatable {
+        enum Kind: String, Codable { case axis, button }
+        var kind: Kind; var index: Int; var inverted: Bool
+    }
+    var launchSwitch: SwitchMapping?
 
     func key(_ a: SimAction) -> UInt16 { keys[a.rawValue] ?? a.defaultKey }
+    /// Esc leaves the simulator unless one of its actions is bound to Esc.
+    var escExits: Bool { !SimAction.allCases.contains { key($0) == UInt16(kVK_Escape) } }
     static let storageKey = "simControls"
     static func load() -> SimControls {
         guard let d = UserDefaults.standard.data(forKey: storageKey), let c = try? JSONDecoder().decode(SimControls.self, from: d) else { return SimControls() }
@@ -79,12 +91,14 @@ func keyName(_ code: UInt16) -> String {
 /// every analogue axis (X, Y, Z, Rx, Ry, Rz, sliders, dials) as a raw value with its logical range.
 final class JoystickManager {
     struct Axis { var usage: Int; var min: Double; var max: Double; var value: Double }
-    struct Device { var name: String; var axes: [Axis] }
+    struct Device { var name: String; var axes: [Axis]; var buttons: [Bool] = [] }
     private var manager: IOHIDManager?
     private(set) var devices: [IOHIDDevice] = []
     private var elements: [IOHIDDevice: [IOHIDElement]] = [:]
     private let lock = NSLock()
     private var values: [IOHIDDevice: [Double]] = [:]
+    private var buttonElements: [IOHIDDevice: [IOHIDElement]] = [:]
+    private var buttonValues: [IOHIDDevice: [Bool]] = [:]
     var onChange: (() -> Void)?
 
     init() {
@@ -126,22 +140,30 @@ final class JoystickManager {
             return ia == ib ? IOHIDElementGetCookie(a) < IOHIDElementGetCookie(b) : ia < ib
         }
         guard !axes.isEmpty else { return }
+        // Buttons (transmitter switches are often sent as buttons), in usage order.
+        var seen = Set<UInt32>()
+        let buttons = els.filter { IOHIDElementGetUsagePage($0) == UInt32(kHIDPage_Button) && IOHIDElementGetUsage($0) > 0 }
+            .sorted { IOHIDElementGetUsage($0) < IOHIDElementGetUsage($1) }
+            .filter { seen.insert(IOHIDElementGetUsage($0)).inserted }
         lock.lock()
         devices.append(dev); elements[dev] = axes
+        buttonElements[dev] = buttons; buttonValues[dev] = buttons.map { _ in false }
         values[dev] = axes.map { e in Double(IOHIDElementGetLogicalMin(e) + IOHIDElementGetLogicalMax(e)) / 2 }
         lock.unlock()
         DispatchQueue.main.async { self.onChange?() }
     }
     private func removed(_ dev: IOHIDDevice) {
-        lock.lock(); devices.removeAll { $0 == dev }; elements[dev] = nil; values[dev] = nil; lock.unlock()
+        lock.lock(); devices.removeAll { $0 == dev }; elements[dev] = nil; values[dev] = nil; buttonElements[dev] = nil; buttonValues[dev] = nil; lock.unlock()
         DispatchQueue.main.async { self.onChange?() }
     }
     private func input(_ value: IOHIDValue) {
         let e = IOHIDValueGetElement(value)
         let dev = IOHIDElementGetDevice(e)
         lock.lock(); defer { lock.unlock() }
-        guard let els = elements[dev], let i = els.firstIndex(of: e) else { return }
-        values[dev]?[i] = Double(IOHIDValueGetIntegerValue(value))
+        if let els = elements[dev], let i = els.firstIndex(of: e) { values[dev]?[i] = Double(IOHIDValueGetIntegerValue(value)); return }
+        if let bs = buttonElements[dev], let i = bs.firstIndex(where: { IOHIDElementGetUsage($0) == IOHIDElementGetUsage(e) && IOHIDElementGetUsagePage(e) == UInt32(kHIDPage_Button) }) {
+            buttonValues[dev]?[i] = IOHIDValueGetIntegerValue(value) != 0
+        }
     }
 
     static func name(_ dev: IOHIDDevice) -> String {
@@ -153,7 +175,7 @@ final class JoystickManager {
         guard let dev = devices.first(where: { Self.name($0) == name }) ?? devices.first, let els = elements[dev], let vals = values[dev] else { return nil }
         return Device(name: Self.name(dev), axes: zip(els, vals).map { e, v in
             Axis(usage: Int(IOHIDElementGetUsage(e)), min: Double(IOHIDElementGetLogicalMin(e)), max: Double(IOHIDElementGetLogicalMax(e)), value: v)
-        })
+        }, buttons: buttonValues[dev] ?? [])
     }
 }
 
@@ -165,9 +187,52 @@ final class SimInputState {
     /// Keyboard sticks ease towards the held direction and back to centre; the throttle steps while its key is held.
     private(set) var keyStick = StickInput()
     var events: ((SimAction) -> Void)?
+    /// Pitch trim of the loaded design (+ = nose up), added to the elevator from keyboard or transmitter.
+    private(set) var trim = 0.0
+    private var trimKey = ""
+    static let trimStep = 0.01, trimLimit = 0.3
+    private var lastSwitch: Bool?
+
+    /// The trim saved for this design.
+    func useTrim(for design: String) {
+        trimKey = design
+        trim = controls.trims?[design] ?? 0
+    }
+    func adjustTrim(_ delta: Double) { setTrim(trim + delta) }
+    func setTrim(_ v: Double) {
+        trim = (min(max(v, -Self.trimLimit), Self.trimLimit) / Self.trimStep).rounded() * Self.trimStep
+        var t = controls.trims ?? [:]
+        t[trimKey] = trim == 0 ? nil : trim
+        controls.trims = t
+        controls.save()
+    }
+
+    /// Whether the launch switch is in its active position (nil: none set up or not on this transmitter).
+    func launchSwitchActive(_ dev: JoystickManager.Device) -> Bool? {
+        guard let sw = controls.launchSwitch else { return nil }
+        switch sw.kind {
+        case .button:
+            guard sw.index < dev.buttons.count else { return nil }
+            return dev.buttons[sw.index] != sw.inverted
+        case .axis:
+            guard sw.index < dev.axes.count else { return nil }
+            let ax = dev.axes[sw.index]
+            let n = (ax.value - ax.min) / max(ax.max - ax.min, 1)
+            return sw.inverted ? n < 0.25 : n > 0.75
+        }
+    }
+
+    /// Feeds the launch switch position; a flip into the active position launches.
+    func switchState(_ active: Bool?) {
+        if let active, let last = lastSwitch, active, !last { events?(.launch) }
+        lastSwitch = active
+    }
 
     func keyDown(_ code: UInt16, repeat isRepeat: Bool) {
         pressed.insert(code)
+        // Trim steps on every press and while the key is held.
+        if code == controls.key(.trimUp) { adjustTrim(Self.trimStep); return }
+        if code == controls.key(.trimDown) { adjustTrim(-Self.trimStep); return }
         guard !isRepeat else { return }
         for a in [SimAction.launch, .reset, .zoom] where controls.key(a) == code { events?(a) }
     }
@@ -210,8 +275,14 @@ final class SimInputState {
             if let v = transmitter(.pitch, dev), abs(keyStick.pitch) < 0.01 { out.pitch = v }
             if let v = transmitter(.yaw, dev), abs(keyStick.yaw) < 0.01 { out.yaw = v }
             if let v = transmitter(.throttle, dev) { out.throttle = v; keyStick.throttle = v }
+            // Launch switch: flipping it into its active position throws the model (a switch already there when
+            // the simulator starts has to be flipped again).
+            switchState(launchSwitchActive(dev))
+        } else {
+            lastSwitch = nil
         }
         out.roll = controls.shaped(.roll, out.roll); out.pitch = controls.shaped(.pitch, out.pitch); out.yaw = controls.shaped(.yaw, out.yaw)
+        out.pitch = min(max(out.pitch + trim, -1), 1)
         return out
     }
 }

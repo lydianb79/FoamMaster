@@ -751,7 +751,10 @@ enum SimScenery {
                 if let snow = snowAbove, max(p0, p1) > snow {
                     func down(_ t: P, _ b: P, _ h: Double) -> P { t + (b - t) * (min(max((h - snow) / max(h + 12, 1), 0), 0.6) * 0.6) }
                     let c = C(0.95, 0.96, 0.99, 1)
-                    let d0 = down(t0, b0, p0), d1 = down(t1, b1, p1)
+                    // Lifted off the slope (towards the pilot and up), so it never shares the slope's plane.
+                    func lift(_ q: P) -> P { let k = r * 0.004; return q - simd_normalize(P(q.x, 0, q.z)) * k + P(0, k * 0.5, 0) }
+                    let d0 = lift(down(t0, b0, p0)), d1 = lift(down(t1, b1, p1))
+                    let t0 = lift(t0), t1 = lift(t1)
                     g.tri(d0, t0, d1, scale(c, 0.9), c, scale(c, 0.9))
                     g.tri(d1, t0, t1, scale(c, 0.9), c, c)
                 }
@@ -784,16 +787,18 @@ enum SimScenery {
                 let central = 1 - min(abs(ox) / (size * 0.9), 1)
                 let r = size * (0.35 + hash(k, 40 + p, 91) * 0.3) * (0.6 + 0.4 * central)
                 let c = P(x + ox, base + r * 0.25 + central * size * 0.2, z + oz)
-                let m = ellipsoid(c, P(r, r * 0.62, r * 0.85), segments: 10, rings: 6).transformed { q in P(q.x, max(q.y, base), q.z) }
+                // Flat base, a little different for every puff (coplanar bases of overlapping puffs flicker).
+                let pBase = base + Double(p) * 0.9
+                let m = ellipsoid(c, P(r, r * 0.62, r * 0.85), segments: 10, rings: 6).transformed { q in P(q.x, max(q.y, pBase), q.z) }
                 for t in m.triangles {
                     func col(_ q: P) -> C {
                         let rad = simd_normalize(q - c)
                         let sun = Float(max(simd_dot(rad, sunDir), 0)), up = Float(rad.y)
-                        let flatBase = q.y < base + 0.5
+                        let flatBase = q.y < pBase + 0.5
                         var k = 0.8 + 0.13 * up + 0.12 * sun
                         if flatBase { k = 0.74 }
                         let blue: Float = flatBase ? 0.04 : 0
-                        return C(min(k, 1), min(k + blue * 0.3, 1), min(k + blue, 1), 0.96)
+                        return C(min(k, 1), min(k + blue * 0.3, 1), min(k + blue, 1), 1)
                     }
                     g.tri(t.0, t.1, t.2, col(t.0), col(t.1), col(t.2), normals: (P(0, 1, 0), P(0, 1, 0), P(0, 1, 0)))
                 }

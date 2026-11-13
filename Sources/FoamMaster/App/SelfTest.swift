@@ -703,6 +703,13 @@ enum SelfTest {
                             s.place(p)
                             if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_view_\(tag).png")) }
                         }
+                        // Zoomed in (6°) on the snow-capped peaks and the clouds: z-fighting would show as speckles.
+                        r.autoZoom = true
+                        for (tag, p) in [("peaks", SIMD3<Double>(-330, 42, -440)), ("clouds", SIMD3<Double>(-300, 80, -400))] {
+                            s.place(p)
+                            if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_zoom_\(tag).png")) }
+                        }
+                        r.autoZoom = false
                     }
                 }
             }
@@ -718,6 +725,40 @@ enum SelfTest {
                 for _ in 0..<70 { s.step(1.0 / 60) }
                 print("Tree crash: \(s.state.message), after \(String(format: "%.2f", s.state.crashAge)) s\(ok ? "" : "  ← PROBLEM"); pond centre is water: \(SimScenery.isWater(SimScenery.pondCenter.x, SimScenery.pondCenter.y))")
             }
+        }
+        // Pitch trim: nose-up trim pitches the hands-off model up compared with none (and down for nose-down).
+        do {
+            let kind = AircraftKind.allCases[0]
+            let c = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+            let d = DesignBuilder.build(c), a = Analysis(design: d)
+            func pitchAfter(_ trim: Double) -> Double {
+                let s = FlightSim(model: FlightModel(d, a))
+                s.input = StickInput(throttle: 0.6); s.step(0.4); s.launch()
+                s.input = StickInput(pitch: trim, throttle: 0.6)
+                for _ in 0..<60 { s.step(1.0 / 60) }
+                return asin(s.state.orientation.act([0, 0, -1]).y) * 180 / .pi
+            }
+            let n = pitchAfter(0), up = pitchAfter(0.1), down = pitchAfter(-0.1)
+            print(String(format: "Pitch trim after 1 s: neutral %.0f°, +10 %% %.0f°, −10 %% %.0f°%@", n, up, down, up > n && down < n ? "" : "  ← PROBLEM"))
+        }
+        // Launch switch: one launch per flip into the active position, none for a switch already there.
+        do {
+            let inp = SimInputState()
+            var launches = 0
+            inp.events = { if $0 == .launch { launches += 1 } }
+            let saved = inp.controls
+            inp.controls.launchSwitch = .init(kind: .button, index: 0, inverted: false)
+            let up = JoystickManager.Device(name: "t", axes: [], buttons: [true]), down = JoystickManager.Device(name: "t", axes: [], buttons: [false])
+            for dev in [up, up, down, down, up, up, down, up] { inp.switchState(inp.launchSwitchActive(dev)) }
+            let buttonOK = launches == 2
+            launches = 0
+            inp.controls.launchSwitch = .init(kind: .axis, index: 0, inverted: true)
+            func ax(_ v: Double) -> JoystickManager.Device { .init(name: "t", axes: [.init(usage: 0, min: 0, max: 2047, value: v)], buttons: []) }
+            inp.switchState(nil)
+            for v in [1024.0, 1024, 0, 0, 2047, 1024, 0] { inp.switchState(inp.launchSwitchActive(ax(v))) }
+            let axisOK = launches == 2
+            inp.controls = saved
+            print("Launch switch: button \(buttonOK ? "ok" : "PROBLEM"), axis (inverted) \(axisOK ? "ok" : "PROBLEM")")
         }
         // The sound lives only while frames come: a few frames start the engine, then none → it stops by itself.
         do {
