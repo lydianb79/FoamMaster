@@ -18,7 +18,12 @@ final class SimAudio {
         var pan: Float = 0              // −1 left … +1 right of where the pilot looks
         var viewAzimuth: Float = 0      // radians, where the pilot looks (for world-fixed birds)
         var volume: Float = 0.8
+        /// When the render loop last wrote these (CACurrentMediaTime). Older than a few frames → silence: the
+        /// sound never outlives the picture (a closed, hidden or stalled window).
+        var beat: Double = 0
     }
+    /// Seconds without a frame after which the sound fades out, and the engine stops.
+    static let fadeAfter = 0.25, stopAfter = 0.6
     enum Event { case launch, land, crash(propStrike: Bool), splash }
 
     private let engine = AVAudioEngine()
@@ -28,6 +33,10 @@ final class SimAudio {
     private var lastPhase: FlightState.Phase = .held
     private var lastDistance: Float = 2
     private var lastThrottle: Float = 0
+    private var lastBeat: Double = 0
+    private var watchdog: Timer?
+    /// Self-test: the engine runs, but at zero volume.
+    var silent = false
 
     static var volume: Float {
         get { UserDefaults.standard.object(forKey: "simVolume") as? Float ?? 0.8 }
@@ -45,8 +54,15 @@ final class SimAudio {
         guard let fmt = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2) else { return }
         let synth = Synth(rate: Float(rate))
         let lock = lock
+        // Start from silence: nothing of an earlier session (a running motor) carries over.
+        let now = CACurrentMediaTime()
+        lock.withLock { s in var p = Params(); p.volume = 0; p.beat = now; s = (p, []) }
+        lastBeat = now
+        lastPhase = .held
         let node = AVAudioSourceNode(format: fmt) { _, _, frames, abl -> OSStatus in
-            let (p, ev) = lock.withLock { s -> (Params, [Event]) in let e = s.1; s.1.removeAll(); return (s.0, e) }
+            let (p0, ev) = lock.withLock { s -> (Params, [Event]) in let e = s.1; s.1.removeAll(); return (s.0, e) }
+            var p = p0
+            if CACurrentMediaTime() - p.beat > SimAudio.fadeAfter { p.volume = 0; p.motorOn = false; p.throttle = 0; p.airspeed = 0 }
             for e in ev { synth.trigger(e) }
             let buffers = UnsafeMutableAudioBufferListPointer(abl)
             guard buffers.count >= 2, let l = buffers[0].mData?.assumingMemoryBound(to: Float.self),
@@ -57,14 +73,22 @@ final class SimAudio {
         source = node
         engine.attach(node)
         engine.connect(node, to: engine.mainMixerNode, format: fmt)
-        do { try engine.start(); running = true } catch { running = false }
+        do { try engine.start(); running = true } catch { running = false; return }
+        // Stop the engine once frames stop coming (checked on the main run loop, also while a menu tracks).
+        let t = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+            guard let self, self.running, CACurrentMediaTime() - self.lastBeat > SimAudio.stopAfter else { return }
+            self.stop()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        watchdog = t
     }
 
-    deinit { if running { engine.stop() } }
+    deinit { watchdog?.invalidate(); if running { engine.stop() } }
 
     var isRunning: Bool { running }
 
     func stop() {
+        watchdog?.invalidate(); watchdog = nil
         guard running else { return }
         engine.stop()
         if let source { engine.detach(source) }
@@ -73,8 +97,13 @@ final class SimAudio {
     }
 
     /// Called every frame from the render loop with the sim state and the pilot's eye.
+    /// Starts the engine on the first frame (and again after it was stopped), so sound runs exactly while the
+    /// simulator is drawing a model.
     func update(sim: FlightSim, eye: SIMD3<Double>, dt: Double) {
+        if !running { start() }
         guard running else { return }
+        let beat = CACurrentMediaTime()
+        lastBeat = beat
         let st = sim.state
         let rel = st.position - eye
         let dist = Float(max(simd_length(rel), 0.3))
@@ -88,7 +117,8 @@ final class SimAudio {
         p.airspeed = Float(sim.airspeed)
         p.pan = 0            // the pilot follows the model with the head: it stays in front
         p.viewAzimuth = az
-        p.volume = Self.muted ? 0 : Self.volume
+        p.volume = Self.muted || silent ? 0 : Self.volume
+        p.beat = beat
         var events: [Event] = []
         if st.phase != lastPhase {
             switch st.phase {

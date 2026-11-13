@@ -87,6 +87,9 @@ final class SimRenderer: NSObject, MTKViewDelegate {
         let dt = min(now - lastTime, 0.05)
         lastTime = now
         guard let sim, let input else { return }
+        // Only while the simulator is on screen: a closed, hidden or minimised window (or one in a full-screen
+        // space you switched away from) neither flies on nor makes a sound – the sound fades out by itself.
+        guard let w = view.window, w.isVisible, w.occlusionState.contains(.visible) else { return }
         let stick = input.update(dt)
         sim.input = stick
         sim.step(dt)

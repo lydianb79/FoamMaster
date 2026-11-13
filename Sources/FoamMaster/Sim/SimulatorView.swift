@@ -34,8 +34,7 @@ final class SimController: ObservableObject {
         renderer = r
         r.input = input
         r.autoZoom = autoZoom
-        r.audio = audio
-        audio.start()
+        r.audio = audio            // starts with the first frame that draws a model, stops when frames stop
         r.onTick = { [weak self] sim, stick in
             Task { @MainActor in
                 self?.hud = HUD(phase: sim.state.phase, speed: sim.airspeed, height: sim.height, throttle: stick.throttle, stick: stick,
@@ -60,11 +59,10 @@ final class SimController: ObservableObject {
         renderer?.sim = nil
         input.releaseAll()
     }
-    /// Shown again: the current design in the hand, sound on.
+    /// Shown again: the current design in the hand (the sound starts with its first frame).
     func windowReopened(_ project: Project) {
         guard renderer != nil else { return }
         load(project)
-        audio.start()
     }
     func setVolume(_ v: Double) { volume = v; SimAudio.volume = Float(v); if v > 0, muted { setMuted(false) } }
     func setMuted(_ m: Bool) { muted = m; SimAudio.muted = m }
@@ -87,11 +85,10 @@ final class SimMTKView: MTKView {
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); window?.makeFirstResponder(self) }
 }
 
-/// Invisible view in the simulator window: puts the window in full screen and reports it closing
-/// (sound and rendering stop there).
+/// Invisible view in the simulator window: puts the window in full screen, reports it closing (rendering and
+/// sound stop there) and reopening (SwiftUI reuses the window of a single `Window` scene).
 final class SimWindowHook: NSView {
     var onClose: (() -> Void)?
-    /// The window is shown again after a close (SwiftUI reuses the window of a single `Window` scene).
     var onReopen: (() -> Void)?
     private var closed = false
     private var observers: [NSObjectProtocol] = []
@@ -111,20 +108,37 @@ final class SimWindowHook: NSView {
             self?.closed = true
             self?.onClose?()
         })
-        observers.append(nc.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: w, queue: .main) { [weak self] _ in
-            guard let self, self.closed, let w = self.window, w.isVisible else { return }
-            self.closed = false
-            self.enteredFullScreen = w.styleMask.contains(.fullScreen)
-            self.onReopen?()
-            for delay in [0.0, 0.4, 1.2] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.goFullScreen() } }
+        observers.append(nc.addObserver(forName: NSWindow.willEnterFullScreenNotification, object: w, queue: .main) { [weak self] _ in
+            self?.enteredFullScreen = true
         })
-        observers.append(nc.addObserver(forName: NSWindow.willEnterFullScreenNotification, object: w, queue: .main) { [weak self] _ in self?.enteredFullScreen = true })
-        observers.append(nc.addObserver(forName: NSWindow.didBecomeKeyNotification, object: w, queue: .main) { [weak self] _ in self?.goFullScreen() })
+        observers.append(nc.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: w, queue: .main) { [weak self] _ in
+            // A window closing out of full screen is still visible during its animation: only a window that is
+            // still up half a second later counts as reopened.
+            guard let self, self.closed, self.isUp else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self, self.closed, self.isUp else { return }
+                self.reopened()
+            }
+        })
+        observers.append(nc.addObserver(forName: NSWindow.didBecomeKeyNotification, object: w, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            if self.closed, self.isUp { self.reopened() } else { self.goFullScreen() }
+        })
         // Asked for now and again a little later: macOS ignores it while the window is still being set up.
+        askFullScreen()
+    }
+    private var isUp: Bool { guard let w = window else { return false }; return w.isVisible && w.occlusionState.contains(.visible) }
+    private func reopened() {
+        closed = false
+        enteredFullScreen = window?.styleMask.contains(.fullScreen) ?? false
+        onReopen?()
+        askFullScreen()
+    }
+    private func askFullScreen() {
         for delay in [0.0, 0.4, 1.2] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.goFullScreen() } }
     }
     private func goFullScreen() {
-        guard let w = window, !enteredFullScreen, w.isVisible else { return }
+        guard let w = window, !closed, !enteredFullScreen, w.isVisible else { return }
         if w.styleMask.contains(.fullScreen) { enteredFullScreen = true; return }
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
@@ -186,7 +200,6 @@ struct SimulatorView: View {
         .background(Color.black)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $ctl.showControls) { SimControlsSheet(input: ctl.input) { ctl.showControls = false } }
-        .onAppear { if ctl.renderer != nil { ctl.audio.start() } }
         .onDisappear { ctl.audio.stop() }
         .onChange(of: project.revision) { _, _ in
             // A changed design is picked up whenever the plane is not in the air.

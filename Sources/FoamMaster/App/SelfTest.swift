@@ -719,6 +719,20 @@ enum SelfTest {
                 print("Tree crash: \(s.state.message), after \(String(format: "%.2f", s.state.crashAge)) s\(ok ? "" : "  ← PROBLEM"); pond centre is water: \(SimScenery.isWater(SimScenery.pondCenter.x, SimScenery.pondCenter.y))")
             }
         }
+        // The sound lives only while frames come: a few frames start the engine, then none → it stops by itself.
+        do {
+            let c = Project.feasibleSetup(AircraftKind.allCases[0], AircraftKind.allCases[0].defaultSetupChoice)
+            let d = DesignBuilder.build(c), a = Analysis(design: d)
+            let s = FlightSim(model: FlightModel(d, a))
+            let audio = SimAudio()
+            audio.silent = true
+            for _ in 0..<10 { audio.update(sim: s, eye: [0, 1.7, 0], dt: 1.0 / 60); RunLoop.main.run(until: Date().addingTimeInterval(1.0 / 60)) }
+            let started = audio.isRunning
+            RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+            let ok = started && !audio.isRunning
+            print("Sound without frames: started \(started), stopped by itself \(!audio.isRunning)\(ok ? "" : "  ← PROBLEM")")
+            audio.stop()
+        }
         let snd = SimAudio.renderTest(to: dir?.appendingPathComponent("sim_audio.wav"))
         print(String(format: "Sound: peak %.2f, rms %.3f%@", snd.peak, snd.rms, snd.peak.isFinite && snd.peak < 1 && snd.rms > 0.01 ? "" : "  ← PROBLEM"))
     }
