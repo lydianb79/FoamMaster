@@ -142,23 +142,23 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
             c.wingspan = 540; c.rootChord = 230; c.tipChord = 85; c.sweep = 175; c.dihedral = 0
             c.controlChordPct = 0.24
             c.fuselageLength = 560; c.fuselageHeight = 140; c.noseLength = 190; c.tailArm = 330
-            c.hStabSpan = 250; c.hStabChord = 92; c.vStabHeight = 95; c.vStabChord = 105
+            c.hStabSpan = 250; c.hStabChord = 92; c.vStabHeight = 95; c.vStabChord = 105; c.hStabSweep = 41
             c.material = .depron6; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
         case .trainer:
             c.wingspan = 600; c.rootChord = 130; c.tipChord = 105; c.sweep = 12; c.dihedral = 0
             c.fuselageLength = 480; c.fuselageHeight = 84; c.noseLength = 95; c.tailArm = 270
-            c.hStabSpan = 200; c.hStabChord = 70; c.vStabHeight = 80; c.vStabChord = 75
+            c.hStabSpan = 200; c.hStabChord = 70; c.vStabHeight = 80; c.vStabChord = 75; c.hStabSweep = 7
             c.material = .depron6; c.motor = .m1104; c.battery = .s2_300; c.servo = .g25
         case .aerobat:
             c.wingspan = 560; c.rootChord = 190; c.tipChord = 150; c.sweep = 20; c.dihedral = 0
             c.controlChordPct = 0.32
             c.fuselageLength = 560; c.fuselageHeight = 135; c.noseLength = 110; c.tailArm = 290
-            c.hStabSpan = 250; c.hStabChord = 110; c.vStabHeight = 100; c.vStabChord = 105
+            c.hStabSpan = 250; c.hStabChord = 110; c.vStabHeight = 100; c.vStabChord = 105; c.hStabSweep = 11
             c.material = .depron6; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
         case .glider:
             c.wingspan = 600; c.rootChord = 95; c.tipChord = 60; c.sweep = 15; c.dihedral = 0
             c.fuselageLength = 470; c.fuselageHeight = 92; c.noseLength = 62; c.tailArm = 265
-            c.hStabSpan = 150; c.hStabChord = 50; c.vStabHeight = 65; c.vStabChord = 55
+            c.hStabSpan = 150; c.hStabChord = 50; c.vStabHeight = 65; c.vStabChord = 55; c.hStabSweep = 5
             c.material = .depron5; c.motor = .m1103; c.battery = .s1_300; c.servo = .g17
         case .nutBall:
             // Width × length of the disc; elevator depth as fraction of the length; motor 45 mm ahead of the disc.
@@ -200,6 +200,9 @@ struct AircraftConfig: Codable, Equatable {
     var wingTipRounding: Double = 0
     var finTopRounding: Double = 0
     var stabTipRounding: Double = 0
+    /// Leading-edge sweep of the horizontal stabiliser (mm the tip's leading edge sits behind the root's) on planes
+    /// with a tail; the elevator hinge stays straight.
+    var hStabSweep: Double = 0
     /// Extra width of the horizontal fuselage plate (cross) over the default – only wider is allowed.
     var plateWidthExtra: Double = 0
     static let maxPlateWidthExtra = 40.0
@@ -294,6 +297,7 @@ struct AircraftConfig: Codable, Equatable {
         case \AircraftConfig.tailArm: return 140...380
         case \AircraftConfig.hStabSpan: return 90...320
         case \AircraftConfig.hStabChord: return 35...140
+        case \AircraftConfig.hStabSweep: return 0...100
         case \AircraftConfig.vStabHeight: return 40...160
         case \AircraftConfig.vStabChord: return 35...150
         case \AircraftConfig.batteryPosition: return -200...200
@@ -318,6 +322,8 @@ struct AircraftConfig: Codable, Equatable {
         } else if !kind.isTailless {
                         r(\.fuselageHeight, spread: 0.15); r(\.noseLength, spread: 0.15); r(\.tailArm, spread: 0.15)
             r(\.hStabSpan, spread: 0.15); r(\.hStabChord, spread: 0.15)
+            // Stab sweep: up to half the chord on the Sport Jet, a quarter on the others (straight on the twin boom about a third of the time).
+            c.hStabSweep = (Double.random(in: 0...(c.hStabChord * (kind.isJet ? 0.5 : 0.25))) * (kind.isJet ? 1 : (Bool.random() ? 1 : 0))).rounded()
             r(\.vStabHeight, spread: 0.15); r(\.vStabChord, spread: 0.15)
         } else {
             r(\.wingletHeight, spread: 0.3); r(\.centreFinHeight, spread: 0.3); r(\.noseLength, spread: 0.3)

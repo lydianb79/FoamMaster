@@ -32,6 +32,8 @@ final class Project: ObservableObject {
     // Viewer options
     @Published var showCG = true
     @Published var autoRotate = false
+    /// Motor running in the 3D view (spinning propellers).
+    @Published var motorOn = false
     @Published var deflection: Double = 0   // control surface preview, -1…1
 
     @Published var statusMessage: String?

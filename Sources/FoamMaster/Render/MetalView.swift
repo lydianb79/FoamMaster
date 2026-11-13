@@ -65,6 +65,7 @@ struct MetalView: NSViewRepresentable {
     var sceneID: Int
     var resetKey: String
     var autoRotate: Bool = false
+    var motorOn: Bool = false
     var onHover: ((String?, CGPoint) -> Void)? = nil
 
     final class Coordinator {
@@ -89,6 +90,7 @@ struct MetalView: NSViewRepresentable {
         let c = context.coordinator
         v.onHover = onHover
         c.renderer?.autoRotate = autoRotate
+        c.renderer?.motorOn = motorOn
         if c.lastID != sceneID {
             let reset = c.lastReset != resetKey
             c.renderer?.setScene(scene, resetCamera: reset)

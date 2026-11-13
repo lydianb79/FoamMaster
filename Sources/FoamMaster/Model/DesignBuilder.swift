@@ -68,18 +68,20 @@ extension AircraftConfig {
     /// Next to the spar groove, 2 mm clear of it – also its arm pocket (on the aft side of the opening).
     var centralElevatorServoU: Double {
         let pocketAft = servo.size.l / 2 - 5 + ServoClass.armSwingAlong(sheet: material.thickness)
-        return centralSparU - centralSparHalf - 2 - max(centralWebServoHalfOpening, pocketAft)
+        return centralSparU - centralSparHalf - 2 - max(centralWebServoHalfOpening + servo.earLength, pocketAft)
     }
     var centralAileronServoU: Double {
-        centralElevatorServoU - centralWebServoHalfOpening - 8 - 0.2 - servo.size.l / 2
+        // 8 mm between the openings – at least both ears plus 1 mm, so the ears never meet.
+        centralElevatorServoU - centralWebServoHalfOpening - max(8, 2 * servo.earLength + 1) - 0.2 - servo.size.l / 2
     }
     /// Depth of the battery's top edge below the plate centre on the cross-fuselage types: it hangs just below the
     /// elevator / rudder servos centred on the plate, so it can sit beside them (1 mm under the plate otherwise).
     var batteryTop: Double { max(material.thickness / 2 + 1, servo.size.w / 2 + 0.8) }
     /// Front edge of the foremost servo (the aileron servo's cutout in the plate).
+    /// (Its ears hang below the plate within the servo's width – beside the battery, not in front of it.)
     var centralServosFrontU: Double { centralAileronServoU - servo.size.l / 2 - 0.2 }
     /// First station behind the spar for the rudder servo (the builder moves it aft if its plate opening needs it).
-    var centralRudderServoU: Double { centralSparU + centralSparHalf + 2 + centralWebServoHalfOpening }
+    var centralRudderServoU: Double { centralSparU + centralSparHalf + 2 + centralWebServoHalfOpening + servo.earLength }
     var hasCentralAileronServo: Bool { hasAilerons && aileronServos == 1 && kind.allowsSingleAileronServo }
 
     /// Nose face (+ section) `d` mm aft of the nose: plate half width and web height above / below the plate.
@@ -170,6 +172,23 @@ enum DesignBuilder {
     /// Elevator up-throw the rudder must clear: its lower edge rises behind the hinge by tan(35°) per mm.
     /// Foam left above / below the jet's prop window.
     static let jetFrameRim = 8.0
+
+    /// World boxes of a servo's two mounting ears (see ServoClass.earLength): sideways-shaft servos (in a wing or
+    /// through the webs) have the length along z, the width along y and the shaft along ±x; the standing aileron
+    /// servo (shaft down) the width along x.
+    static func servoEarBoxes(_ ctrl: ControlSurface, _ c: AircraftConfig) -> [(lo: SIMD3<Double>, hi: SIMD3<Double>)] {
+        let s = c.servo, sz = s.size, p = ctrl.servoPosition
+        let e = s.earLength, T = ServoClass.earThickness
+        let zs: [(Double, Double)] = [(p.z + sz.l / 2, p.z + sz.l / 2 + e), (p.z - sz.l / 2 - e, p.z - sz.l / 2)]
+        if ctrl.isDoubleArm {
+            let y = p.y - s.earOffset
+            return zs.map { ([p.x - sz.w / 2, y - T / 2, $0.0], [p.x + sz.w / 2, y + T / 2, $0.1]) }
+        }
+        let side: Double = ctrl.armPosition == .zero ? 1 : (ctrl.armPosition.x >= p.x ? 1 : -1)
+        let x = p.x + side * s.earOffset
+        return zs.map { ([x - T / 2, p.y - sz.w / 2, $0.0], [x + T / 2, p.y + sz.w / 2, $0.1]) }
+    }
+
 
     static func build(_ input: AircraftConfig) -> Design {
         // (the jet's fuselage is kept taller than its prop window)
@@ -325,7 +344,7 @@ enum DesignBuilder {
             if c.tailWinglets && c.wingletHeight > 5 { r = min(r, max(0, c.tipChord * 0.25 - 6)) }
             return min(r, c.tipChord * 0.45)
         }
-        var finTopRadius: Double { c.kind.hasTail ? max(0, c.finTopRounding) : 0 }
+        var finTopRadius: Double { c.kind.hasTail || c.kind.isNutBall ? max(0, c.finTopRounding) : 0 }
         var stabTipRadius: Double { c.kind.hasTail && !c.kind.isTwinBoom ? max(0, c.stabTipRounding) : 0 }
         /// Rounds the given corners of several polygons that share them.
         func rounded(_ polys: [[Vec2]], corners: [Vec2], radius r: Double) -> [[Vec2]] {
@@ -370,8 +389,63 @@ enum DesignBuilder {
             else if c.kind.isNutBall { buildNutBall() }
             else { buildConventional() }
             if c.hasSparJoiner { addSparJoinerPocket() }
+            addServoEars()
             addElectronics()
             addComponentZones()
+        }
+
+        /// Notches for the servo ears in every foam part they pass through (the ear footprint on that part's plan,
+        /// trimmed to the part), and a geometry issue where an ear would cut into a spar groove, another cutout or a
+        /// strut anchor.
+        mutating func addServoEars() {
+            var seen = Set<String>()
+            for ctrl in controls where seen.insert(ctrl.servoID).inserted {
+                for box in DesignBuilder.servoEarBoxes(ctrl, c) {
+                    for pi in parts.indices {
+                        let part = parts[pi]
+                        for inst in part.instances {
+                            let n = inst.normal
+                            // Box corners in the part's plan coordinates (axes are axis-aligned).
+                            let corners = (0..<8).map { k -> SIMD3<Double> in
+                                let q = SIMD3<Double>(k & 1 == 0 ? box.lo.x : box.hi.x, k & 2 == 0 ? box.lo.y : box.hi.y, k & 4 == 0 ? box.lo.z : box.hi.z) - inst.origin
+                                return [simd_dot(q, inst.u), simd_dot(q, inst.v), simd_dot(q, n)]
+                            }
+                            let zlo = corners.map(\.z).min()!, zhi = corners.map(\.z).max()!
+                            guard zhi > -part.thickness / 2 + 0.05, zlo < part.thickness / 2 - 0.05 else { continue }
+                            let rect = Poly.rect(minU: corners.map(\.x).min()!, maxU: corners.map(\.x).max()!,
+                                                 minV: corners.map(\.y).min()!, maxV: corners.map(\.y).max()!)
+                            let cut = Poly.clip(part.outline, to: rect)
+                            guard cut.count >= 3, Poly.area(cut) > 0.3 else { continue }
+                            // Collisions: spar groove, other cutouts (not this servo's own), strut anchors.
+                            for f in part.features {
+                                if case let .rod(a, b, dia) = f, Self.bandOverlaps(Poly.inset(cut, by: 0.3), a, b, halfWidth: dia / 2 + 0.3) {
+                                    issues.append("The \(ctrl.servoID.lowercased()) servo's mounting ear cuts into the spar groove – use a smaller servo or move the servo.")
+                                }
+                                if case let .strutAnchor(cc, dd, size, label) = f {
+                                    let w = Vec2(-dd.y, dd.x), hx = dd * size.x / 2, hy = w * size.y / 2
+                                    if Poly.overlaps(cut, [cc - hx - hy, cc + hx - hy, cc + hx + hy, cc - hx + hy]) {
+                                        issues.append("The \(ctrl.servoID.lowercased()) servo's mounting ear is under strut anchor \(label).")
+                                    }
+                                }
+                            }
+                            // (shrunk a little: the ear starts right at the end of its own servo's cutout)
+                            let core = Poly.inset(cut, by: 0.3)
+                            for h in part.holes where h.note != "servo ear" && core.count >= 3 && Poly.overlaps(h.polygon, core) {
+                                let what = h.kind == .hornSlot ? "a horn slot" : (h.kind == .servo ? "the \(h.note.lowercased()) cutout" : "a slot")
+                                issues.append("The \(ctrl.servoID.lowercased()) servo's mounting ear cuts into \(what) – move the servo or pick a smaller one.")
+                            }
+                            if !parts[pi].holes.contains(where: { $0.note == "servo ear" && Poly.overlaps($0.polygon, cut) }) {
+                                parts[pi].holes.append(Hole(kind: .servo, polygon: cut, note: "servo ear"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        /// Does polygon `p` reach into the band of half width `hw` around the segment a–b?
+        static func bandOverlaps(_ p: [Vec2], _ a: Vec2, _ b: Vec2, halfWidth hw: Double) -> Bool {
+            let d = simd_normalize(b - a), n = Vec2(-d.y, d.x)
+            return Poly.overlaps(p, [a - n * hw, b - n * hw, b + n * hw, a + n * hw])
         }
 
         /// Dashed placement zones on the plans for the ESC and receiver (taped to a foam face): the footprint of the
@@ -639,7 +713,7 @@ enum DesignBuilder {
 
         /// Clear gap between the spar groove and the front edge of a servo next to it (mm) – measured from the servo
         /// FRAME's outer edge (the visible / glued edge), i.e. cutout edge + frame flange.
-        static let servoSparGap = 5.0
+        static let servoSparGap = 3.0
         /// Wing servos (ailerons, elevons, Twin Boom elevator) sit as far forward as possible – front edge about
         /// `servoSparGap` behind the spar groove (30 % chord line, also used as reference without a spar) – which
         /// moves the CG forward and lets the battery sit further aft. Never further aft than 8 mm ahead of the hinge.
@@ -652,13 +726,14 @@ enum DesignBuilder {
             return max(spar(v - h), spar(v + h))
         }
         mutating func wingServoU(hingeU: Double, sparU: Double) -> Double {
-            let l = c.servo.size.l
+            // Half length including the mounting ears (they cross the foam at both ends of the cutout).
+            let l = c.servo.size.l + 2 * c.servo.earLength
             let sparHalf = c.sparEnabled ? c.sparSpec.widthMM / 2 : 1.5
             // cutout = servo + 0.4 mm (glued in flush, no frame)
             let forward = sparU + sparHalf + Self.servoSparGap + 0.2 + l / 2
             let mostAft = hingeU - 8 - l / 2
             // No room between the spar groove and 8 mm ahead of the hinge: the cutout would reach the groove.
-            if c.sparEnabled && mostAft < sparU + sparHalf + 0.5 + 0.2 + l / 2,
+            if c.sparEnabled && mostAft < sparU + sparHalf + 1.0 + 0.2 + l / 2,
                !issues.contains(where: { $0.hasPrefix("The wing servos do not fit") }) {
                 issues.append("The wing servos do not fit between the spar and the hinge – they would cut into the spar groove. Use a smaller servo, a larger chord or smaller control surfaces.")
             }
@@ -912,9 +987,10 @@ enum DesignBuilder {
             let wb = c.plateTailWidth
             let sh = c.hStabSpan / 2
             let ef = 0.4
-            let stab = TaperedPanel(rootLE: ta, rootChord: hsc, tipChord: hsc * 0.8, sweep: hsc * 0.1, semiSpan: sh)
+            let stab = TaperedPanel(rootLE: ta, rootChord: hsc, tipChord: hsc * 0.8, sweep: c.hStabSweep, semiSpan: sh)
             // One-piece elevator on a straight hinge across the whole stabiliser (it runs under the rudder).
             let uH = stab.te(0) - ef * stab.chord(0)
+            if stab.le(sh) > uH - 8 { issues.append("Stabiliser sweep too large – the tip's leading edge reaches the elevator hinge. Reduce the stab sweep or increase the stab chord.") }
             func hS(_ v: Double) -> Double { uH }
             let w = wing
 
@@ -1004,8 +1080,13 @@ enum DesignBuilder {
             }
             let upNotchPts = profile(upNotches.filter { $0.2 > 0 }, sign: 1)
             let ailNotch = Array(profile(loNotches.filter { $0.2 > 0 }, sign: -1).reversed())
-            let allNotches = upNotches + loNotches
-            let clearOfAileronServo = { (u: Double) in allNotches.allSatisfy { u + 6 < $0.0 - 2 || u - 6 > $0.1 + 2 } }
+            // Tabs keep clear of every servo station (also where thick foam needs no notch) and of the servos'
+            // mounting ears, which reach `earLength` beyond each end.
+            let earL = c.servo.earLength
+            let servoSpans = (upNotches + loNotches).map { ($0.0, $0.1) }
+                + webServos.map { ($0 - svC.l / 2 - 0.2, $0 + svC.l / 2 + 0.2) }
+                + (central ? [(ailServoU - svC.l / 2 - 0.2, ailServoU + svC.l / 2 + 0.2)] : [])
+            let clearOfAileronServo = { (u: Double) in servoSpans.allSatisfy { u + 6 < $0.0 - 2 - earL || u - 6 > $0.1 + 2 + earL } }
             let hBoom = c.boomTopHeight
             let finTop = hBoom + c.vStabHeight
             let finLE = uH - 1.25 * vsc
@@ -1048,7 +1129,7 @@ enum DesignBuilder {
 
             // Servos: in the upper half above the plate – or, with one aileron servo, all three centred on the plate.
             let sv = c.servo.size
-            let s1 = Vec2(c.rootChord * 0.06 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
+            let s1 = Vec2(c.rootChord * 0.06 + sv.l / 2 + c.servo.earLength, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 2 * c.servo.earLength + 5, s1.y)
             var upperHoles: [Hole] = []
             if central {
                 // Aileron servo standing in the plate: flush L × W cutout (its arm is below the plate).
@@ -1190,8 +1271,10 @@ enum DesignBuilder {
             let sh = c.hStabSpan / 2
             // Swept leading edge, straight trailing edge: the one-piece elevator gets a straight hinge across the
             // whole tail and runs under the rudder.
-            let stab = TaperedPanel(rootLE: ta, rootChord: hsc, tipChord: hsc * 0.55, sweep: hsc * 0.45, semiSpan: sh)
+            // (tip chord = root chord − sweep: the trailing edge stays straight)
+            let stab = TaperedPanel(rootLE: ta, rootChord: hsc, tipChord: max(hsc - c.hStabSweep, hsc * 0.3), sweep: c.hStabSweep, semiSpan: sh)
             let uH = stab.te(0) - 0.4 * hsc
+            if stab.le(sh) > uH - 8 { issues.append("Stabiliser sweep too large – the tip's leading edge reaches the elevator hinge. Reduce the stab sweep or increase the stab chord.") }
             let rudderChord = max(0.4 * vsc, 18.0)
             let uR = uH + rudderChord
             if stab.le(wb / 2) < w.te(hw) + 15 { issues.append("Tail arm is too short – the stabiliser would reach the wing.") }
@@ -1264,11 +1347,12 @@ enum DesignBuilder {
                 var u = nextU
                 if u - open < te0 + 3 && u + open > te0 - 3 { u = te0 + 3 + open }
                 servoUs.append(u)
-                nextU = u + sv.l + 5
+                nextU = u + sv.l + 2 * c.servo.earLength + 5
             }
             let uEJ = servoUs[0], uRJ = servoUs.count > 1 ? servoUs[1] : uEJ
             if (servoUs.last ?? 0) + sv.l / 2 + 6 > finLE { issues.append("No room for the elevator and rudder servos between the prop window and the fin – lengthen the tail arm.") }
-            let clearOfServos = { (u: Double) in servoUs.allSatisfy { abs(u - $0) > sv.l / 2 + 7 } }
+            let earReach = sv.l / 2 + c.servo.earLength + 7
+            let clearOfServos = { (u: Double) in servoUs.allSatisfy { abs(u - $0) > earReach } }
             let clearOfWindow = { (u: Double) in u + 8 < wF || u - 8 > wR }
             let upTabs = [uN + 0.6 * c.noseLength, c.rootChord * 0.15, (te0 + ta) / 2, ta + hsc * 0.2].map(clearOfJoiner).filter { clearOfWindow($0) && $0 + 8 < uH && clearOfServos($0) }
             let loTabs = [uN + 0.7 * c.noseLength, c.rootChord * 0.3, (te0 + uL) / 2].map(clearOfJoiner).filter { clearOfWindow($0) && $0 + 8 < uL && clearOfServos($0) }
@@ -1403,7 +1487,7 @@ enum DesignBuilder {
             let noseHoles = centreSlots(topTabs.filter { $0 < 0 } + botTabs.filter { $0 < 0 })
 
             let sv = c.servo.size
-            let s1 = Vec2(c.rootChord * 0.08 + sv.l / 2, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 5, s1.y)
+            let s1 = Vec2(c.rootChord * 0.08 + sv.l / 2 + c.servo.earLength, 3 + sv.w / 2), s2 = Vec2(s1.x + sv.l + 2 * c.servo.earLength + 5, s1.y)
             var podHoles: [Hole] = []          // elevator servo sits in the wing (see above)
             if c.hasRudder { podHoles.append(servoCut("Rudders", center: s2, size: webServoCut, in: podTop)) }
             if fh / 2 - t / 2 < 8 { issues.append("Pod height is too small.") }
@@ -1427,9 +1511,14 @@ enum DesignBuilder {
             // Rectangular stabiliser with a one-piece elevator across the full span between the fins
             // (end slots give it clearance at both ends).
             let uHs = ta + hsc * 0.6, ue = ta + hsc, eb = sh - 14, g = TaperedPanel.endGap
-            let soOutline = Poly.ccw([Vec2(ta, -sh), Vec2(ta, sh), Vec2(ue, sh), Vec2(ue, eb), Vec2(uHs, eb), Vec2(uHs, eb - g), Vec2(ue, eb - g),
+            // Swept leading edge (stab sweep), straight trailing edge and hinge.
+            let sw = c.hStabSweep
+            let leS = { (v: Double) in ta + sw * abs(v) / max(sh, 1) }
+            let le3 = [Vec2(ta + sw, -sh), Vec2(ta, 0), Vec2(ta + sw, sh)]
+            let soOutline = Poly.ccw(le3 + [Vec2(ue, sh), Vec2(ue, eb), Vec2(uHs, eb), Vec2(uHs, eb - g), Vec2(ue, eb - g),
                                       Vec2(ue, -(eb - g)), Vec2(uHs, -(eb - g)), Vec2(uHs, -eb), Vec2(ue, -eb), Vec2(ue, -sh)])
-            let soMain = Poly.ccw([Vec2(ta, -sh), Vec2(ta, sh), Vec2(ue, sh), Vec2(ue, eb), Vec2(uHs, eb), Vec2(uHs, -eb), Vec2(ue, -eb), Vec2(ue, -sh)])
+            let soMain = Poly.ccw(le3 + [Vec2(ue, sh), Vec2(ue, eb), Vec2(uHs, eb), Vec2(uHs, -eb), Vec2(ue, -eb), Vec2(ue, -sh)])
+            if leS(eb) > uHs - 8 { issues.append("Stabiliser sweep too large – the leading edge reaches the elevator hinge. Reduce the stab sweep or increase the stab chord.") }
             let soElevator = Poly.ccw([Vec2(uHs, -(eb - g)), Vec2(uHs, eb - g), Vec2(ue, eb - g), Vec2(ue, -(eb - g))])
             var stabHoles: [Hole] = []
             // Twin fins are end plates glued to the SIDE of the stabiliser tips (tip tabs into fin slots).
@@ -1447,8 +1536,13 @@ enum DesignBuilder {
             let finU0 = ta + hsc - c.vStabChord
             var stabOutline = soOutline
             var stabRegions = [Region(polygon: soMain, isControl: false), Region(polygon: soElevator, isControl: true)]
+            // With a swept stabiliser the tip is shorter: the fin may overhang ahead of it, only tabs that land on the
+            // tip edge are used (and only their slots cut in the fin).
+            let usableTabs = fin.tabs.filter { finU0 + $0 - 5 > ta + sw + 1 && finU0 + $0 + 5 < ue - 1 }
+            fin.slots = fin.slots.enumerated().filter { usableTabs.contains(fin.tabs[$0.offset]) }.map(\.element)
+            if usableTabs.isEmpty { issues.append("The swept stabiliser tip is too short to carry the fins – reduce the stab sweep or increase the stab chord.") }
             for v in [-sh, sh] {
-                for tu in fin.tabs {
+                for tu in usableTabs {
                     stabOutline = Poly.insertTab(stabOutline, at: Vec2(finU0 + tu, v), width: 10, height: t)
                     stabRegions[0].polygon = Poly.insertTab(stabRegions[0].polygon, at: Vec2(finU0 + tu, v), width: 10, height: t)
                 }
@@ -1457,7 +1551,7 @@ enum DesignBuilder {
             stabHoles.append(hornSlot(at: eHorn))
             let stabY = boomY + 2 + t / 2
             parts.append(Part(name: "Stabiliser", role: .stabilizer, outline: stabOutline, holes: stabHoles,
-                              features: [Feature.hinge(Vec2(uHs, -(eb - g)), Vec2(uHs, eb - g))] + [-xb, xb].map { .spar(Vec2(ta, $0), Vec2(ta + hsc * 0.55, $0), rod.widthMM) },
+                              features: [Feature.hinge(Vec2(uHs, -(eb - g)), Vec2(uHs, eb - g))] + [-xb, xb].map { .spar(Vec2(leS($0), $0), Vec2(ta + hsc * 0.55, $0), rod.widthMM) },
                               regions: stabRegions, instances: [.horizontal(at: [0, stabY, 0])], material: c.material))
             if finU0 < ta { issues.append("Fin chord is longer than the stabiliser chord.") }
 
@@ -1534,14 +1628,25 @@ enum DesignBuilder {
             // Elevator and rudder servos just ahead of the CG, centred on the disc as on the cross-fuselage types: half in
             // the spine, half in the keel, through flush openings in the disc.
             let sv = c.servo.size
-            let uEN = L * 0.12 + sv.l / 2, uRN = uEN + sv.l + 5
+            let uEN = L * 0.12 + sv.l / 2 + c.servo.earLength
+            var uRN = uEN + sv.l + 2 * c.servo.earLength + 5
+            // Both ahead of the spar where they fit (ears included), otherwise the rudder servo goes behind it.
+            let sparU = L * 0.3, sparH = c.sparEnabled ? c.sparSpec.widthMM / 2 : 1.5
+            if c.sparEnabled && uRN + sv.l / 2 + c.servo.earLength + 2 > sparU - sparH {
+                uRN = max(uRN, sparU + sparH + 2 + sv.l / 2 + c.servo.earLength)
+            }
             let servoUs = [uEN, uRN]
             let upNotch = centredServoNotches(servoUs, sign: 1)
-            let upper: [Vec2] = [Vec2(uN, 0)] + upNotch + [Vec2(uH, 0)] + cutEdge + [Vec2(uR, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs),
+            var upper: [Vec2] = [Vec2(uN, 0)] + upNotch + [Vec2(uH, 0)] + cutEdge + [Vec2(uR, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs),
                                  Vec2(uN + 15, hs), Vec2(uN, noseFront)]
             var upperMain: [Vec2] = [Vec2(uN, 0)] + upNotch + [Vec2(uH, 0), Vec2(uH, finTop), Vec2(uH - 0.25 * vsc, finTop), Vec2(finLE, hs), Vec2(uN + 15, hs), Vec2(uN, noseFront)]
-            let clearOfServos = { (u: Double) in servoUs.allSatisfy { abs(u - $0) > sv.l / 2 + 7 } }
-            let rudder = cutEdge + [Vec2(uR, finTop), Vec2(uH, finTop)]
+            let earReach = sv.l / 2 + c.servo.earLength + 7
+            let clearOfServos = { (u: Double) in servoUs.allSatisfy { abs(u - $0) > earReach } }
+            var rudder = cutEdge + [Vec2(uR, finTop), Vec2(uH, finTop)]
+            if finTopRadius > 0 {        // rounded rudder / fin top corners (as on the tailed planes)
+                let r = rounded([upper, upperMain, rudder], corners: [Vec2(uR, finTop), Vec2(uH - 0.25 * vsc, finTop)], radius: finTopRadius)
+                upper = r[0]; upperMain = r[1]; rudder = r[2]
+            }
             let upTabs = [L * 0.06, L * 0.4, finLE + vsc * 0.35].filter { $0 + 6 < uH && $0 - 6 > uN && clearOfServos($0) }
             var upperOut = upper
             for tu in upTabs {

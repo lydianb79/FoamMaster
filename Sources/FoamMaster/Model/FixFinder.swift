@@ -33,6 +33,7 @@ enum FixFinder {
         Param(label: "Tail arm", unit: "mm", key: \.tailArm, applies: { $0.kind.hasTail }),
         Param(label: "Stab span", unit: "mm", key: \.hStabSpan, applies: { $0.kind.hasTail }),
         Param(label: "Stab chord", unit: "mm", key: \.hStabChord, applies: { $0.kind.hasTail }),
+        Param(label: "Stab sweep", unit: "mm", key: \.hStabSweep, applies: { $0.kind.hasTail }),
         Param(label: "Fin height", unit: "mm", key: \.vStabHeight, applies: { !$0.kind.isTailless }),
         Param(label: "Fin chord", unit: "mm", key: \.vStabChord, applies: { !$0.kind.isTailless }),
     ]

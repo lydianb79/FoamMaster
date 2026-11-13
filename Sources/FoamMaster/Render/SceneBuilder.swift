@@ -14,13 +14,18 @@ struct SceneData {
     var radius: Float = 300
     /// Name of what is being added – every triangle remembers it so the 3D view can say what is under the mouse.
     var label = ""
+    /// Rotors (propellers) that can spin in the 3D view: triangles added while `spinGroup` ≥ 0 belong to rotor
+    /// `spinGroup` (0 or 1) and are turned in the vertex shader about its axis.
+    struct Rotor { var center: SIMD3<Float>; var axis: SIMD3<Float>; var sense: Float }
+    var rotors: [Rotor] = []
+    var spinGroup = -1
     var triLabels: [Int32] = []
     var labelNames: [String] = []
     private var labelLookup: [String: Int32] = [:]
 
     mutating func addTriangle(_ a: SIMD3<Double>, _ b: SIMD3<Double>, _ c: SIMD3<Double>, color: SIMD4<Float>) {
         let n = simd_normalize(simd_cross(b - a, c - a))
-        let nf = SIMD4<Float>(Float(n.x), Float(n.y), Float(n.z), 1)
+        let nf = SIMD4<Float>(Float(n.x), Float(n.y), Float(n.z), spinGroup >= 0 ? Float(2 + min(spinGroup, 1)) : 1)
         for p in [a, b, c] {
             triangles.append(GPUVertex(position: SIMD4<Float>(Float(p.x), Float(p.y), Float(p.z), 1), normal: nf, color: color))
         }
@@ -160,6 +165,8 @@ enum SceneBuilder {
                     let q = p + [0, down * 1.2, 0]
                     scene.label = "Battery – \(c.battery.name), \(Int(c.battery.mass)) g"
                     scene.addMesh(.box(min: q - [s.w, s.h, s.l] / 2, max: q + [s.w, s.h, s.l] / 2), color: Palette.battery)
+                    scene.addMesh(.box(min: q - [s.w / 2 + 0.15, s.h / 2 + 0.15, s.l * 0.2], max: q + [s.w / 2 + 0.15, s.h / 2 + 0.15, s.l * 0.2]), color: SIMD4(0.85, 0.82, 0.95, 1))
+                    scene.addMesh(.box(min: q + [-2, -1.5, -s.l / 2 - 5], max: q + [2, 1.5, -s.l / 2 - 1.5]), color: SIMD4(0.95, 0.95, 0.92, 1))
                 } else {
                     // On the side of the web – the right side, or the left where a pushrod runs on the right.
                     let side: Double = p.x >= 0 ? 1 : -1
@@ -169,6 +176,9 @@ enum SceneBuilder {
                     let q = p + [side * 1.2, 0, 0]
                     scene.label = "Battery – \(c.battery.name), \(Int(c.battery.mass)) g"
                     scene.addMesh(.box(min: q - [s.h, s.w, s.l] / 2, max: q + [s.h, s.w, s.l] / 2), color: Palette.battery)
+                    // Printed label wrap around the middle and the lead with its connector at the front.
+                    scene.addMesh(.box(min: q - [s.h / 2 + 0.15, s.w / 2 + 0.15, s.l * 0.2], max: q + [s.h / 2 + 0.15, s.w / 2 + 0.15, s.l * 0.2]), color: SIMD4(0.85, 0.82, 0.95, 1))
+                    scene.addMesh(.box(min: q + [-2, -1.5, -s.l / 2 - 5], max: q + [2, 1.5, -s.l / 2 - 1.5]), color: SIMD4(0.95, 0.95, 0.92, 1))
                 }
             case "Power" where item.name.contains("brushless"):
                 let right = item.position.x > 0.1
@@ -177,32 +187,74 @@ enum SceneBuilder {
                 let fw = c.firewallZ, L = c.motorLength
                 // Stator base on the firewall, rotating bell, shaft to the prop hub.
                 scene.label = "Motor – \(c.motor.name), \(c.motor.pattern.label) mount pattern"
-                scene.addMesh(cylinder(center: [p.x, 0, fw + out * L * 0.15], radius: r * 0.82, length: L * 0.3), color: SIMD4(0.25, 0.25, 0.28, 1))
-                scene.addMesh(cylinder(center: [p.x, 0, fw + out * L * 0.62], radius: r, length: L * 0.64), color: Palette.motor)
+                // Stator base with its mount flange and screws (fixed) …
+                scene.addMesh(cylinder(center: [p.x, 0, fw + out * L * 0.15], radius: r * 0.82, length: L * 0.3), color: SIMD4(0.22, 0.22, 0.25, 1))
+                scene.addMesh(cylinder(center: [p.x, 0, fw + out * L * 0.03], radius: r * 0.95, length: L * 0.06), color: SIMD4(0.32, 0.32, 0.36, 1))
+                for k in 0..<4 {
+                    let a = Double(k) * .pi / 2 + .pi / 4
+                    scene.addMesh(cylinder(center: [p.x + cos(a) * r * 0.62, sin(a) * r * 0.62, fw + out * L * 0.065], radius: 0.9, length: 0.5, segments: 10), color: SIMD4(0.78, 0.78, 0.82, 1))
+                }
+                // … and the rotating part: bell with cooling vents and an end cap, shaft and prop collet – it spins
+                // with the propeller when the motor runs.
+                let pr = c.propRadius
+                let z = c.propPlaneZ
+                let mirroredProp = c.isPusher != right
+                let rotor = scene.rotors.count
+                scene.rotors.append(SceneData.Rotor(center: SIMD3<Float>(Float(p.x), 0, Float(z)), axis: [0, 0, 1], sense: mirroredProp ? -1 : 1))
+                scene.spinGroup = rotor
+                scene.label = "Motor bell – \(c.motor.name)"
+                let bellZ = fw + out * L * 0.62
+                scene.addMesh(cylinder(center: [p.x, 0, bellZ], radius: r, length: L * 0.64), color: Palette.motor)
+                scene.addMesh(cylinder(center: [p.x, 0, fw + out * L * 0.93], radius: r * 0.92, length: L * 0.06), color: SIMD4(0.45, 0.1, 0.13, 1))
+                for k in 0..<6 {
+                    let a = Double(k) / 6 * 2 * .pi
+                    let vent = Mesh3D.box(min: [r - 0.25, -0.9, -L * 0.12], max: [r + 0.15, 0.9, L * 0.12])
+                        .rotated(a, axis: [0, 0, 1]).translated([p.x, 0, fw + out * L * 0.42])
+                    scene.addMesh(vent, color: SIMD4(0.12, 0.12, 0.14, 1))
+                }
                 let shaftStart = fw + out * L * 0.94, shaftEnd = c.propPlaneZ
                 scene.addMesh(cylinder(center: [p.x, 0, (shaftStart + shaftEnd) / 2], radius: 1.2, length: abs(shaftEnd - shaftStart) + 1),
                               color: SIMD4(0.75, 0.75, 0.78, 1))
-                let pr = c.propRadius
-                let z = c.propPlaneZ
+                scene.addMesh(cylinder(center: [p.x, 0, shaftStart + out * 1.2], radius: 2.2, length: 2.4, segments: 12), color: SIMD4(0.72, 0.72, 0.76, 1))
+                scene.spinGroup = -1
                 for k in 0..<48 {
                     let a0 = Double(k) / 48 * 2 * .pi, a1 = Double(k + 1) / 48 * 2 * .pi
                     scene.addLine([p.x + cos(a0) * pr, sin(a0) * pr, z], [p.x + cos(a1) * pr, sin(a1) * pr, z], color: SIMD4(1, 1, 1, 0.25))
                 }
                 // Counter-rotating pair: the right-hand prop is the mirror image of the left one.
                 scene.label = "Propeller – \(c.propRecommendation)"
-                scene.addMesh(propeller(radius: pr, blades: c.kind.propBlades, z: z, hub: r * 0.45, outward: out, mirrored: c.isPusher != right)
+                // Same rotor as the bell (spins with Motor on): the blades turn so the leading edge advances – a
+                // mirrored prop the other way.
+                scene.spinGroup = rotor
+                scene.addMesh(propeller(radius: pr, blades: c.kind.propBlades, z: z, hub: r * 0.45, outward: out, mirrored: mirroredProp)
                                 .translated([p.x, 0, 0]), color: Palette.prop)
+                scene.spinGroup = -1
             case "Power" where item.name.hasPrefix("ESC"):
                 let e: SIMD3<Double> = c.motor.escMass > 4 ? [24, 13, 5] : [18, 10, 4]
                 scene.label = "\(item.name) – \(c.motor.escMass > 4 ? 12 : 6) A brushless ESC, \(c.battery.cells)S"
                 // Flat under a wing, or flat against the fuselage side.
                 let size: SIMD3<Double> = (c.isDual || c.kind.isTailless) ? [e.y, e.z, e.x] : [e.z, e.y, e.x]
+                // Heat-shrunk board with darker shrink ends (the length runs fore–aft).
                 scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.esc)
-                scene.addLine(p, [c.motorXs.min(by: { abs($0 - p.x) < abs($1 - p.x) }) ?? 0, 0, c.motorZ], color: SIMD4(0.9, 0.3, 0.3, 0.8))
+                for sgn in [-1.0, 1.0] {
+                    let zc = p.z + sgn * (size.z / 2 - 0.7)
+                    scene.addMesh(.box(min: [p.x - size.x / 2 - 0.15, p.y - size.y / 2 - 0.15, zc - 0.7], max: [p.x + size.x / 2 + 0.15, p.y + size.y / 2 + 0.15, zc + 0.7]),
+                                  color: SIMD4(0.1, 0.45, 0.2, 1))
+                }
             case "Radio" where item.name.hasPrefix("Receiver"):
                 let size: SIMD3<Double> = c.kind.isTailless ? [10, 3, 14] : [3, 10, 14]
                 scene.label = "Receiver – micro, \(d.channels)+ channels (servos + throttle)"
                 scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.receiver)
+                // Black pin header at the front end, two antenna wires from the back.
+                scene.addMesh(.box(min: [p.x - size.x / 2 - 0.2, p.y - size.y / 2 - 0.2, p.z - size.z / 2 - 0.3], max: [p.x + size.x / 2 + 0.2, p.y + size.y / 2 + 0.2, p.z - size.z / 2 + 3.5]),
+                              color: SIMD4(0.08, 0.08, 0.09, 1))
+                scene.label = "Receiver antennas"
+                let back: SIMD3<Double> = [p.x, p.y, p.z + size.z / 2]
+                let up: SIMD3<Double> = c.kind.isTailless ? [0, 1, 0] : [0, 1, 0]
+                for (k, d0) in [SIMD3<Double>(0.55, 0, 0.84), SIMD3<Double>(-0.55, 0, 0.84)].enumerated() {
+                    let tip = back + simd_normalize(d0 + up * (k == 0 ? 0.6 : 0.2)) * 30
+                    scene.addMesh(rodMesh(back, tip, radius: 0.3), color: SIMD4(0.9, 0.9, 0.92, 1))
+                }
             case "Printed" where item.name.hasPrefix("Motor mount"):
                 // The real clamp mount: plate on the firewall, jaws over the structure (aft for tractors, forward for pushers).
                 let mesh = PrintedParts.motorMount(for: c)
@@ -241,10 +293,53 @@ enum SceneBuilder {
                     let size: SIMD3<Double> = standing ? [s.w, s.h, s.l] : [s.h, s.w, s.l]
                     scene.label = "\(item.name) – \(c.servo.name)"
                     scene.addMesh(.box(min: p - size / 2, max: p + size / 2), color: Palette.servo)
-                    // Servos are glued straight into their flush cutouts – no frames.
+                    // Servos are glued straight into their flush cutouts – no frames. Like a real micro servo: two
+                    // mounting ears at the ends (they sit in notches where they cross the foam) and the round gear
+                    // boss on the shaft face under the arm.
+                    if let ctrl = d.controls.first(where: { simd_distance($0.servoPosition, p) < 0.5 }) {
+                        scene.label = "\(item.name) – mounting ears"
+                        for box in DesignBuilder.servoEarBoxes(ctrl, c) { scene.addMesh(.box(min: box.lo, max: box.hi), color: Palette.servo) }
+                        let shaft = ctrl.shaft(c.servo)
+                        let r = s.w * 0.36, boss = 1.2
+                        let axis: SIMD3<Double> = ctrl.isDoubleArm ? [0, -1, 0] : [ctrl.armPosition.x >= p.x ? 1 : -1, 0, 0]
+                        let ex: SIMD3<Double> = ctrl.isDoubleArm ? [1, 0, 0] : [0, 1, 0], ey = simd_cross(axis, ex)
+                        scene.label = "\(item.name) – output shaft"
+                        scene.addMesh(SceneBuilder.placed(SceneBuilder.cylinderMesh(radius: r, from: 0, to: boss, segments: 18), origin: shaft, ex, ey, axis), color: Palette.servo)
+                    }
                 }
             }
         }
+        // Wiring: three motor wires from each ESC to its motor, red / black battery leads to the ESC, the ESC lead
+        // and every servo lead to the receiver (thin, so they stay in the background). Leads longer than 120 mm are
+        // left out – on the real model they run along the structure, not straight through the air.
+        func wire(_ a: SIMD3<Double>, _ b: SIMD3<Double>, _ r: Double, _ col: SIMD4<Float>) {
+            if simd_distance(a, b) <= 120 { scene.addMesh(rodMesh(a, b, radius: r), color: col) }
+        }
+        let escs = d.components.filter { $0.name.hasPrefix("ESC") }
+        let rx = d.components.first { $0.name.hasPrefix("Receiver") }?.position
+        let bat = d.components.first { $0.category == "Battery" }?.position
+        scene.label = "Wiring"
+        for esc in escs {
+            let e = esc.position
+            let mx = c.motorXs.min(by: { abs($0 - e.x) < abs($1 - e.x) }) ?? 0
+            let motorBase = SIMD3<Double>(mx, 0, c.firewallZ + (c.isPusher ? 1 : -1) * c.motorLength * 0.1)
+            for (k, col) in [SIMD4<Float>(0.1, 0.1, 0.12, 1), SIMD4<Float>(0.15, 0.35, 0.85, 1), SIMD4<Float>(0.9, 0.75, 0.15, 1)].enumerated() {
+                let o = SIMD3<Double>(0, Double(k - 1) * 0.9, 0)
+                wire(e + o, motorBase + o, 0.3, col)
+            }
+            if let b = bat {
+                wire(e + [0, 0.5, 0], b + [0, 0.5, 0], 0.35, SIMD4(0.85, 0.15, 0.12, 1))
+                wire(e - [0, 0.5, 0], b - [0, 0.5, 0], 0.35, SIMD4(0.1, 0.1, 0.12, 1))
+            }
+            if let r = rx { wire(e, r, 0.25, SIMD4(0.95, 0.55, 0.15, 1)) }
+        }
+        if let r = rx {
+            var seen = Set<String>()
+            for ctrl in d.controls where seen.insert(ctrl.servoID).inserted {
+                wire(ctrl.servoPosition, r, 0.22, SIMD4(0.55, 0.35, 0.2, 1))
+            }
+        }
+
         // Carbon struts with their printed anchors (same mesh as the STL).
         for st in d.struts {
             scene.label = "Carbon strut \(st.label) – \(st.rod.name), \(Int(st.length.rounded())) mm"

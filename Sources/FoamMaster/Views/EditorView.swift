@@ -36,6 +36,7 @@ struct ViewportView: View {
                           sceneID: project.revision &* 31 &+ Int(project.deflection * 100) &+ (project.showCG ? 1 : 0),
                           resetKey: project.config?.kind.rawValue ?? "",
                           autoRotate: project.autoRotate,
+                          motorOn: project.motorOn,
                           onHover: { name, point in
                               if hoverName != name { hoverName = name }
                               hoverPoint = point
@@ -99,6 +100,8 @@ struct ViewportView: View {
             HStack(spacing: 10) {
                 Toggle(isOn: $project.showCG) { Label("CG", systemImage: "scope") }
                 Toggle(isOn: $project.autoRotate) { Label("Turntable", systemImage: "rotate.3d") }
+                Toggle(isOn: $project.motorOn) { Label("Motor", systemImage: "fanblades.fill") }
+                    .help("Run the motor: the propeller\(project.config?.isDual == true ? "s spin (counter-rotating)" : " spins") in the 3D view")
                 Divider().frame(height: 18)
                 Image(systemName: "slider.horizontal.below.rectangle").foregroundStyle(.secondary)
                 Text("Surfaces").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)

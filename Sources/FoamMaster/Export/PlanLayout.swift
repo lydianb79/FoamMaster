@@ -211,7 +211,7 @@ enum PlanDrawer {
             }
             ctx.fillPath()
             ctx.addPath(p); ctx.setStrokeColor(inkC.cgColor); ctx.setLineWidth(0.25); ctx.strokePath()
-            if h.kind == .servo {
+            if h.kind == .servo && h.note != "servo ear" {
                 let c = map(Poly.centroid(h.polygon))
                 text("SERVO", at: c - Vec2(0, 1.4), size: 2.4, color: inkC, weight: .bold, centered: true)
             }
@@ -402,7 +402,9 @@ enum PlanDrawer {
         // joiner pocket, motor mount) and printed strut anchors / saddles: servo cutouts get their size, and every one
         // its distance across and along to whatever is nearest – a part edge or the next mark (chain dimensions
         // through its centre).
-        var marks: [(poly: [Vec2], color: NSColor)] = part.holes.map { ($0.polygon.map(map), $0.kind == .hornSlot ? hornColor : color) }
+        // (servo-ear notches belong to their servo cutout: no own label or dimensions)
+        let hasEars = part.holes.contains { $0.note == "servo ear" }
+        var marks: [(poly: [Vec2], color: NSColor)] = part.holes.filter { $0.note != "servo ear" }.map { ($0.polygon.map(map), $0.kind == .hornSlot ? hornColor : color) }
         for f in part.features {
             switch f {
             case let .zone(poly, _): marks.append((poly.map(map), color))
@@ -413,11 +415,17 @@ enum PlanDrawer {
             default: break
             }
         }
-        for h in part.holes where h.kind == .servo {
-            // Size of the servo opening (the arm pocket is the step on one side).
+        for h in part.holes where h.kind == .servo && h.note != "servo ear" {
+            // Size of the servo opening (the arm pocket is the step on one side) and, where the servo's mounting ears
+            // cross this part, the ear notch at each end.
             let bb = Poly.bounds(h.polygon.map(map)), c = (bb.min + bb.max) / 2
             let pocket = Poly.cleaned(h.polygon).count > 4
             text("\(mm(bb.max.x - bb.min.x)) × \(mm(bb.max.y - bb.min.y))\(pocket ? " with arm pocket" : "")", at: Vec2(c.x, c.y + 1.3), size: 1.6, color: color, weight: .medium, centered: true)
+            let ears = part.holes.filter { $0.note == "servo ear" }.map { Poly.bounds($0.polygon.map(map)) }
+                .filter { e in e.min.x <= bb.max.x + 0.5 && e.max.x >= bb.min.x - 0.5 && e.min.y <= bb.max.y + 0.5 && e.max.y >= bb.min.y - 0.5 }
+            if hasEars, let e = ears.first {
+                text("ear notches \(mm(e.max.x - e.min.x)) × \(mm(e.max.y - e.min.y))", at: Vec2(c.x, c.y + 3.5), size: 1.4, color: color, centered: true)
+            }
         }
         for (mi, m) in marks.enumerated() {
             let bb = Poly.bounds(m.poly), c = (bb.min + bb.max) / 2

@@ -21,6 +21,16 @@ struct FoamMasterApp: App {
             MainActor.assumeIsolated { SelfTest.plans(dir) }
             exit(0)
         }
+        if let i = args.firstIndex(of: "--gfx") {
+            let dir = URL(fileURLWithPath: i + 1 < args.count ? args[i + 1] : "gfx")
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            MainActor.assumeIsolated { SelfTest.gfx(dir) }
+            exit(0)
+        }
+        if args.contains("--earcheck") {
+            MainActor.assumeIsolated { SelfTest.earCheck() }
+            exit(0)
+        }
         if args.contains("--batterycheck") {
             MainActor.assumeIsolated { SelfTest.batteryCheck() }
             exit(0)

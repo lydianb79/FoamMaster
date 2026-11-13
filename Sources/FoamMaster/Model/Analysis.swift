@@ -112,7 +112,8 @@ struct Analysis {
         } else {
             targetSM = 0.12; smRange = 0.05...0.2
             let sh = c.hStabSpan * c.hStabChord * 0.9
-            let lh = (c.tailArm + 0.25 * c.hStabChord) - xacW
+            // (a swept stabiliser's aerodynamic centre sits about 40 % of the sweep further aft)
+            let lh = (c.tailArm + 0.4 * c.hStabSweep + 0.25 * c.hStabChord) - xacW
             tailVolumeH = sh * lh / (wingArea * mac)
             let sv = c.vStabHeight * c.vStabChord * 1.1 * (c.kind.isTwinBoom ? 2 : 1)
             tailVolumeV = sv * (c.tailArm + c.hStabChord - 0.8 * c.vStabChord - xacW) / (wingArea * c.wingspan)

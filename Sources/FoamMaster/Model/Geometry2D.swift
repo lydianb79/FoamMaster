@@ -116,6 +116,34 @@ enum Poly {
         inner.allSatisfy { contains(outer, $0) } && !polygonsCross(outer, inner)
     }
 
+    /// Part of polygon `p` inside the convex polygon `window` (Sutherland–Hodgman).
+    static func clip(_ p: [Vec2], to window: [Vec2]) -> [Vec2] {
+        var out = p
+        let w = ccw(window)
+        for i in w.indices {
+            let a = w[i], b = w[(i + 1) % w.count]
+            func inside(_ q: Vec2) -> Bool { (b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x) >= -1e-9 }
+            func cross(_ p0: Vec2, _ p1: Vec2) -> Vec2 {
+                let d = p1 - p0, e = b - a
+                let den = d.x * e.y - d.y * e.x
+                guard abs(den) > 1e-12 else { return p1 }
+                let t = ((a.x - p0.x) * e.y - (a.y - p0.y) * e.x) / den
+                return p0 + d * t
+            }
+            let input = out
+            out = []
+            guard !input.isEmpty else { break }
+            for j in input.indices {
+                let cur = input[j], prev = input[(j + input.count - 1) % input.count]
+                if inside(cur) {
+                    if !inside(prev) { out.append(cross(prev, cur)) }
+                    out.append(cur)
+                } else if inside(prev) { out.append(cross(prev, cur)) }
+            }
+        }
+        return out
+    }
+
     static func overlaps(_ a: [Vec2], _ b: [Vec2]) -> Bool {
         polygonsCross(a, b) || a.contains { contains(b, $0) } || b.contains { contains(a, $0) }
     }

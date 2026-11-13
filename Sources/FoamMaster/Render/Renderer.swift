@@ -8,16 +8,29 @@ private let shaderSource = """
 using namespace metal;
 
 struct Vtx { float4 pos; float4 nrm; float4 col; };
-struct Uni { float4x4 viewProj; float4 light; float4 eye; };
+struct Uni { float4x4 viewProj; float4 light; float4 eye; float4 rotC[2]; float4 rotA[2]; };
 struct Out { float4 pos [[position]]; float3 n; float3 w; float4 c; float lit; };
+
+// Rodrigues rotation of p about the unit axis k by angle a.
+float3 rot(float3 p, float3 k, float a) { return p * cos(a) + cross(k, p) * sin(a) + k * dot(k, p) * (1 - cos(a)); }
 
 vertex Out vmain(const device Vtx* v [[buffer(0)]], constant Uni& u [[buffer(1)]], uint id [[vertex_id]]) {
     Out o;
-    o.pos = u.viewProj * v[id].pos;
-    o.n = v[id].nrm.xyz;
-    o.w = v[id].pos.xyz;
+    float3 p = v[id].pos.xyz, n = v[id].nrm.xyz;
+    float lit = v[id].nrm.w;
+    // nrm.w = 2 / 3: vertex of rotor 0 / 1 (propeller) – turned about its motor axis by the spin angle.
+    if (lit > 1.5) {
+        int k = lit > 2.5 ? 1 : 0;
+        float3 c = u.rotC[k].xyz, ax = normalize(u.rotA[k].xyz);
+        p = c + rot(p - c, ax, u.rotA[k].w);
+        n = rot(n, ax, u.rotA[k].w);
+        lit = 1;
+    }
+    o.pos = u.viewProj * float4(p, 1);
+    o.n = n;
+    o.w = p;
     o.c = v[id].col;
-    o.lit = v[id].nrm.w;
+    o.lit = lit;
     return o;
 }
 
@@ -60,6 +73,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     var target = SIMD3<Float>.zero
     var radius: Float = 300
     var autoRotate = false
+    /// Motor running: the propellers spin (a visible ~5 turns per second – the real speed would only strobe).
+    var motorOn = false
+    private var spin: Float = 0
+    private var rotors: [SceneData.Rotor] = []
     private var lastTime = CACurrentMediaTime()
 
     init?(view: MTKView) {
@@ -113,6 +130,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         lineBuffer = lineCount > 0 ? device.makeBuffer(bytes: s.lines, length: MemoryLayout<GPUVertex>.stride * lineCount) : nil
         pickVerts = s.triangles.map { SIMD3($0.position.x, $0.position.y, $0.position.z) }
         pickLabels = s.triLabels
+        rotors = s.rotors
         labelNames = s.labelNames
         if resetCamera {
             target = s.center
@@ -153,6 +171,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     func draw(in view: MTKView) {
         let now = CACurrentMediaTime()
         if autoRotate { yaw += Float(now - lastTime) * 0.35 }
+        if motorOn { spin = (spin + Float(now - lastTime) * 2 * .pi * 5).truncatingRemainder(dividingBy: 2 * .pi * 1000) }
         lastTime = now
 
         guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
@@ -234,6 +253,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     private func encode(_ enc: MTLRenderCommandEncoder, aspect: Float) {
         let (viewProj, eye) = camera(aspect: aspect)
         var uni = Uniforms(viewProj: viewProj, light: SIMD4(0.4, 0.9, 0.6, 0), eye: SIMD4(eye, 1))
+        // Spinning propellers: each rotor turns at its own sense (counter-rotating pairs mirror each other).
+        if rotors.count > 0 { uni.rotC0 = SIMD4(rotors[0].center, 1); uni.rotA0 = SIMD4(rotors[0].axis, spin * rotors[0].sense) }
+        if rotors.count > 1 { uni.rotC1 = SIMD4(rotors[1].center, 1); uni.rotA1 = SIMD4(rotors[1].axis, spin * rotors[1].sense) }
 
         enc.setRenderPipelineState(pipeline)
         enc.setCullMode(.none)
@@ -257,6 +279,9 @@ struct Uniforms {
     var viewProj: simd_float4x4
     var light: SIMD4<Float>
     var eye: SIMD4<Float>
+    /// Rotors (propellers): centre and axis, the spin angle in the axis' w.
+    var rotC0: SIMD4<Float> = .zero, rotC1: SIMD4<Float> = .zero
+    var rotA0: SIMD4<Float> = [0, 0, 1, 0], rotA1: SIMD4<Float> = [0, 0, 1, 0]
 }
 
 func perspective(fovY: Float, aspect: Float, near: Float, far: Float) -> simd_float4x4 {

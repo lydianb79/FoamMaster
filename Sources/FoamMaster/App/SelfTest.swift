@@ -577,6 +577,51 @@ enum SelfTest {
         }
     }
 
+    /// Servo mounting ears on every type: setups and random balanced variants – ear notches cut, ear collisions.
+    @MainActor static func earCheck() {
+        for kind in AircraftKind.allCases {
+            var builds = 0, notches = 0, problems: [String: Int] = [:]
+            let cs = Project.setupChoices(kind).map { Project.feasibleSetup(kind, $0) }
+                + (0..<40).map { _ -> AircraftConfig in var c = AircraftConfig.random(kind: kind); c.aileronServos = Bool.random() ? 1 : 2; return Project.balanced(c) }
+            for c in cs {
+                let d = DesignBuilder.build(c)
+                builds += 1
+                notches += d.parts.reduce(0) { $0 + $1.holes.filter { $0.note == "servo ear" }.count * $1.instances.count }
+                for i in d.geometryIssues where i.contains("mounting ear") { problems[String(i.prefix(90)), default: 0] += 1 }
+            }
+            print("\(kind.title): \(builds) builds, \(notches) ear notches, ear collisions \(problems.values.reduce(0, +))" + problems.map { " · \($0.value)× \($0.key)" }.joined())
+        }
+    }
+
+    /// Close-ups of the power system and electronics (motor, prop, ESC, battery, receiver, wiring) and of the tail.
+    @MainActor static func gfx(_ dir: URL) {
+        let view = MTKView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), device: MTLCreateSystemDefaultDevice())
+        guard let r = Renderer(view: view) else { return }
+        var cases: [(String, AircraftConfig)] = AircraftKind.allCases.map { ($0.rawValue, Project.feasibleSetup($0, $0.defaultSetupChoice)) }
+        var dual = Project.feasibleSetup(.trainer, AircraftKind.trainer.defaultSetupChoice); dual.motorLayout = .dualTractor
+        cases.append(("trainer_dual", dual))
+        var swT = Project.feasibleSetup(.trainer, AircraftKind.trainer.defaultSetupChoice); swT.hStabSweep = 35
+        var swB = Project.feasibleSetup(.twinBoom, AircraftKind.twinBoom.defaultSetupChoice); swB.hStabSweep = 25
+        var swJ = Project.feasibleSetup(.jet, AircraftKind.jet.defaultSetupChoice); swJ.hStabSweep = 15
+        var nbR = Project.feasibleSetup(.nutBall, AircraftKind.nutBall.defaultSetupChoice); nbR.finTopRounding = 25
+        cases += [("trainer_swept", swT), ("twinBoom_swept", swB), ("jet_lesssweep", swJ), ("nutBall_rounded", nbR)]
+        for (n, c) in cases.suffix(4) {
+            let d = DesignBuilder.build(c), a = Analysis(design: d)
+            print("\(n): score \(a.score), Vh \(String(format: "%.2f", a.tailVolumeH)) " + a.checks.filter { $0.severity >= .warning }.map(\.title).joined(separator: "; ") + " " + d.geometryIssues.joined(separator: "; "))
+        }
+        for (name, c) in cases {
+            let d = DesignBuilder.build(c), a = Analysis(design: d)
+            let scene = SceneBuilder.aircraft(d, a, deflection: 0, showCG: false)
+            let motor = SIMD3<Float>(Float(c.motorXs[0]), 0, Float(c.motorZ))
+            for (tag, target, yaw, pitch, zoom) in [("nose", motor, Float(0.9), Float(0.35), Float(0.32)),
+                                                    ("tail", SIMD3<Float>(0, 10, Float(c.tailArm + c.hStabChord * 0.5)), Float(2.4), Float(0.6), Float(0.45))] {
+                r.setScene(scene, resetCamera: true)
+                r.target = target; r.yaw = yaw; r.pitch = pitch; r.zoom = zoom
+                if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("\(name)_\(tag).png")) }
+            }
+        }
+    }
+
     /// Crash fuzz: every type × setup option, every slider of the fix finder swept from its minimum to its maximum
     /// (11 stations, alone and on random airframes), plus random airframes with sliders at their range ends – each
     /// built, analysed and drawn. A crash here is a trap; the count says how much was covered.

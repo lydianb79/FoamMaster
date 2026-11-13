@@ -89,6 +89,8 @@ struct ParameterContent: View {
                             ParamSlider(label: "Spine + keel height", unit: "mm", value: bind(\.fuselageHeight), range: range(\.fuselageHeight, c), step: 1)
                             ParamSlider(label: "Fin height", unit: "mm", value: bind(\.vStabHeight), range: range(\.vStabHeight, c), step: 1)
                             ParamSlider(label: "Fin chord", unit: "mm", value: bind(\.vStabChord), range: range(\.vStabChord, c), step: 1)
+                            ParamSlider(label: "Rudder / fin top rounding", unit: "mm", value: bind(\.finTopRounding),
+                                        range: 0...max(5, (c.vStabChord * 0.5).rounded()), step: 1)
                         }
                         .glass()
                     } else if !c.kind.isTailless {
@@ -105,6 +107,7 @@ struct ParameterContent: View {
                             ParamSlider(label: "Tail arm", unit: "mm", value: bind(\.tailArm), range: range(\.tailArm, c), step: 1)
                             ParamSlider(label: c.kind.isTwinBoom ? "Stab span (boom spacing)" : "Stab span", unit: "mm", value: bind(\.hStabSpan), range: range(\.hStabSpan, c), step: 1)
                             ParamSlider(label: "Stab chord", unit: "mm", value: bind(\.hStabChord), range: range(\.hStabChord, c), step: 1)
+                            ParamSlider(label: "Stab sweep", unit: "mm", value: bind(\.hStabSweep), range: range(\.hStabSweep, c), step: 1)
                             ParamSlider(label: "Fin height", unit: "mm", value: bind(\.vStabHeight), range: range(\.vStabHeight, c), step: 1)
                             ParamSlider(label: "Fin chord", unit: "mm", value: bind(\.vStabChord), range: range(\.vStabChord, c), step: 1)
                             ParamSlider(label: c.hasRudder ? "Rudder / fin top rounding" : "Fin top rounding", unit: "mm", value: bind(\.finTopRounding),

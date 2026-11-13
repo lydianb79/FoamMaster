@@ -129,6 +129,12 @@ enum ServoClass: String, CaseIterable, Identifiable, Codable {
     /// Body size without flanges: length, width, height (mm).
     var size: (l: Double, w: Double, h: Double) { [.g17: (16, 7, 15), .g25: (18, 8, 17), .g37: (20, 8.5, 18), .g5: (22, 9, 20)][self]! }
     var torque: Double { [.g17: 0.12, .g25: 0.25, .g37: 0.4, .g5: 0.6][self]! } // kg·cm
+    /// Mounting ears (flanges) like on every real micro servo: one at each end of the length, as wide as the body,
+    /// sticking out `earLength`, `earThickness` thick, their mid-plane `earOffset` from the body centre towards the
+    /// output shaft (a quarter of the height below the shaft face).
+    var earLength: Double { (size.l * 0.2 * 2).rounded() / 2 }
+    static let earThickness = 1.5
+    var earOffset: Double { size.h * 0.25 }
     /// Servo arm (horn) as fitted: shaft → pushrod hole, the arm 2 mm off the case on the spline, 1.6 mm thick,
     /// 4 mm wide; the pushrod's Z-bend goes through the hole from the arm's OUTER side. Typical micro-servo arms.
     var armLength: Double { [.g17: 11.0, .g25: 12, .g37: 13, .g5: 14][self]! }
