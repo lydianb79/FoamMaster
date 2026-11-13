@@ -32,6 +32,15 @@ struct FlightModel {
     var stallSpeed: Double      // m/s (from the analysis)
     /// Lowest point of the airframe below the CG (m) – touches the ground first.
     var groundClearance: Double
+    /// Wing strips (right half; the left half mirrors it): span station y (m), area (m²), aileron / elevon on it.
+    var stripY: [Double] = [], stripS: [Double] = [], stripAileron: [Bool] = []
+    /// Aileron: change of strip lift coefficient per radian of aileron (calibrated to the roll power Clda).
+    var aileronDCL: Double = 0
+    /// Share of the elevator / rudder inside the prop's slipstream, total disc area (m²).
+    var washElevator: Double = 0, washRudder: Double = 0, discArea: Double = 0.01
+    /// Motor torque (N·m per N of thrust; + rolls left as seen from behind) and the prop's angular momentum per
+    /// throttle (kg·m²/s along +z body; tractor props spin clockwise from behind → H points forward, −z).
+    var torquePerThrust: Double = 0, propH: Double = 0
 
     init(_ d: Design, _ a: Analysis) {
         let c = d.config
@@ -63,10 +72,14 @@ struct FlightModel {
             Cmde = CLa * tauE * c.controlChordPct * 0.5     // elevons: lever about half the MAC behind the CG
             Cmq = -0.25 * CLa - 0.4
         }
-        // Trimmed (as the builder trims the elevator) for level flight at about 1.4 × stall speed.
+        // Trimmed – as the builder sets the elevator – for level flight at about 1.4 × stall speed with the CG where it
+        // should be (the recommended CG). With the CG elsewhere the model is out of trim, as the real one would be:
+        // nose-heavy (more static margin) it trims to less lift – faster, nose down, needs up-trim; tail-heavy it
+        // trims to more lift – slower, nose up, stalls; behind the neutral point it is unstable.
         let vTrim = max(a.stallSpeed / 3.6 * 1.4, 3)
         let clTrim = 2 * mass * 9.81 / (1.225 * vTrim * vTrim * S)
-        Cm0 = -Cma * clTrim / CLa
+        let smDesign = min(max((a.neutralPoint - a.recommendedCG) / max(a.mac, 1), 0.02), 0.4)
+        Cm0 = smDesign * clTrim
         // Roll: ailerons / elevons on the outer wing, damping of the wing, dihedral effect (flat foam: little).
         let sa = min(max(c.controlChordPct, 0.1), 0.45)
         Clda = hasAilerons ? 0.5 * CLa * tauE * sa * 0.65 * (c.kind.isTailless ? 1.2 : 1) : 0
@@ -92,6 +105,44 @@ struct FlightModel {
         let Ipitch = mass * L * L / 18 + mass * cbar * cbar / 12
         inertia = [Ipitch, Iroll + Ipitch, Iroll]
         groundClearance = max(c.fuselageHeight * 0.5, 15) / 1000
+
+        // Wing strips: 4 per half, chord tapering root → tip (an ellipse on the NutBall's disc), areas adding up to
+        // half the wing area. Ailerons on the outer half (tailed types), elevons on the outer three quarters.
+        let n = 4, semi = b / 2
+        var ys: [Double] = [], ws: [Double] = []
+        for k in 0..<n {
+            let f = (Double(k) + 0.5) / Double(n)
+            let chord = c.kind.isNutBall ? (1 - f * f).squareRoot() : 1 + (c.tipChord / max(c.rootChord, 1) - 1) * f
+            ys.append(f * semi); ws.append(max(chord, 0.05))
+        }
+        let wsum = ws.reduce(0, +)
+        stripY = ys
+        stripS = ws.map { $0 / wsum * S / 2 }
+        stripAileron = (0..<n).map { k in hasAilerons && (c.kind.isTailless ? k >= 1 : k >= n / 2) }
+        // Same roll power as Clda at small angles: Σ y·S·ΔCL over both halves = S·b·Clda per radian.
+        let armArea = zip(stripY, zip(stripS, stripAileron)).reduce(0.0) { $0 + ($1.1.1 ? $1.0 * $1.1.0 : 0) }
+        aileronDCL = armArea > 0 ? S * b * Clda / (2 * armArea) : 0
+
+        // Prop wash over the tail: a tractor (or the twin boom's / jet's prop ahead of the tail) blows over the part
+        // of the elevator and rudder inside its disc; outboard dual tractors only touch the elevator's ends; the
+        // tailless pushers blow over nothing.
+        let D = c.propInches * 0.0254
+        discArea = Double(c.motorCount) * .pi * D * D / 4
+        let blowsTail = !(c.kind.isTailless)
+        if blowsTail {
+            let elevSpan = c.kind.isNutBall ? 0.6 * c.wingspan / 1000 : c.hStabSpan / 1000
+            // (the slipstream's core contracts to about 0.7 D)
+            washElevator = min(1, 0.7 * D / max(elevSpan, 0.05)) * (c.isDual ? 0.3 : 1)
+            washRudder = c.isDual ? 0 : min(1, 0.35 * D / max(c.vStabHeight / 1000, 0.02))
+        }
+        // Motor torque Q ≈ 0.06 · T · D; counter-rotating dual props cancel. Pusher props turn the other way.
+        let sense: Double = c.isDual ? 0 : (c.kind.isPusher ? -1 : 1)
+        torquePerThrust = 0.06 * D * sense
+        // Gyroscopic: H = I·Ω per prop at full throttle (I = m R² / 3, Ω from the pitch speed and the pitch).
+        let propMass = c.propInches * 0.35 / 1000 * (c.customProp ? Double(c.propBladeCount) / Double(c.kind.propBlades) : 1)
+        let pitchM = max(c.propModel.pitch, 1) * 0.0254
+        let omegaMax = 2 * .pi * pitchSpeed / pitchM
+        propH = propMass * (D / 2) * (D / 2) / 3 * omegaMax * sense
     }
 
     /// Lift coefficient with a soft stall: linear up to the stall angle, then down to a flat plate (sin 2α).
@@ -136,6 +187,8 @@ final class FlightSim {
     func reset() { state = FlightState(); surfaces = StickInput() }
     /// Place the model (self-test views).
     func place(_ p: SIMD3<Double>) { state.position = p }
+    /// Set the whole state (self-test flight cases: hover, spin entry).
+    func setState(_ s: FlightState) { state = s }
 
     /// Hand launch: a firm throw along the nose, a little above stall speed.
     func launch() {
@@ -177,41 +230,77 @@ final class FlightSim {
         var dr = m.hasRudder ? surfaces.yaw + (m.hasAilerons ? 0 : surfaces.roll) : 0
         da = max(min(da, 1), -1); dr = max(min(dr, 1), -1)
         let de = surfaces.pitch
-        if V > 0.3 {
-            let alpha = atan2(-vb.y, -vb.z)
-            let beta = asin(max(min(vb.x / V, 1), -1))
-            let qbar = 0.5 * Self.rho * V * V
-            let CL = m.CL(alpha)
-            let CD = m.CD0 + m.k * CL * CL + 1.1 * pow(sin(alpha), 2) * (abs(alpha) > m.alphaStall ? 1 : 0.3)
-            let vhat = vb / V
-            let liftDir = simd_normalize(simd_cross([1, 0, 0], vhat))
-            let qS = qbar * m.S
-            let lift: SIMD3<Double> = liftDir * (qS * CL)
-            let drag: SIMD3<Double> = vhat * (qS * CD)
-            let side = SIMD3<Double>(qS * m.CYb * beta, 0, 0)
-            force += lift - drag + side
-            // Body rates as roll p (right wing down), pitch q (nose up), yaw r (nose right).
-            let p = -state.omega.z, qq = state.omega.x, r = -state.omega.y
-            let ph = p * m.b / (2 * V), qh = qq * m.cbar / (2 * V), rh = r * m.b / (2 * V)
-            let stallFade = abs(alpha) > m.alphaStall ? 0.5 : 1.0
-            let Cm = m.Cm0 + m.Cma * alpha + m.Cmde * de * m.maxThrow * stallFade + m.Cmq * qh
-            let Cl = m.Clb * beta + m.Clda * da * m.maxThrow * stallFade + m.Clp * ph + m.Clr * rh
-            let Cn = m.Cnb * beta + m.Cndr * dr * m.maxThrow + m.Cnr * rh + m.Cnda * da * m.maxThrow
-            let tq = SIMD3<Double>(qS * m.cbar * Cm, -qS * m.b * Cn, -qS * m.b * Cl)
-            torque += tq
-        }
         // Thrust along the nose, falling off with airspeed.
         let u = max(-vb.z, 0)
         // (thrust grows about with rpm², rpm about with throttle → throttle^1.6)
         let thrust = m.staticThrust * pow(max(surfaces.throttle, 0), 1.6) * max(0, 1 - u / m.pitchSpeed)
         force += SIMD3(0, 0, -thrust)
+        // Slipstream at the tail (momentum theory, half way between the disc and the fully developed wake):
+        // v² = u² + T / (ρ A).
+        let qWash = 0.5 * Self.rho * (u * u + thrust / (Self.rho * m.discArea))
+        // Motor torque: the airframe rolls against the prop (left behind a clockwise tractor prop). Side thrust built
+        // into the mount cancels it at cruise power (about a third of full thrust): what is left is the change –
+        // strongest at full power and low speed (hover, prop hang).
+        torque.z += m.torquePerThrust * (thrust - 0.35 * m.staticThrust)
+
+        let p = -state.omega.z, qq = state.omega.x, r = -state.omega.y
+        let qbar = 0.5 * Self.rho * V * V
+        var stallFade = 1.0
+        if V > 0.3 {
+            let alpha = atan2(-vb.y, -vb.z)
+            let beta = asin(max(min(vb.x / V, 1), -1))
+            stallFade = abs(alpha) > m.alphaStall ? 0.5 : 1.0
+            // Wing in strips, each in its own airflow (body velocity + rotation × station): its own angle of attack,
+            // lift and drag, its own stall. Roll damping, aileron power (with reversal near the stall), tip stall,
+            // wing drop and spins follow from these.
+            // Induced drag: each strip's lift tilted back by the wing's downwash, which follows the whole wing's lift
+            // (cd = k · cl_strip · CL_wing) – adverse aileron yaw in the right measure.
+            let CLwing = m.CL(alpha)
+            for side in [1.0, -1.0] {
+                for k in 0..<m.stripY.count {
+                    let rpos = SIMD3<Double>(side * m.stripY[k], 0, 0)
+                    let vs = vb + simd_cross(state.omega, rpos)
+                    let Vs = simd_length(vs)
+                    guard Vs > 0.3 else { continue }
+                    var a = atan2(-vs.y, -vs.z)
+                    // Aileron: like a change of the strip's incidence (right aileron up for roll right).
+                    if m.stripAileron[k] { a += -side * m.aileronDCL * da * m.maxThrow / m.CLa }
+                    let cl = m.CL(a)
+                    let cd = m.CD0 + m.k * cl * CLwing + 1.1 * pow(sin(a), 2) * (abs(a) > m.alphaStall ? 1 : 0.3)
+                    let vh = vs / Vs
+                    let liftDir = simd_normalize(simd_cross([1, 0, 0], vh))
+                    let qs = 0.5 * Self.rho * Vs * Vs * m.stripS[k]
+                    let f = liftDir * (qs * cl) - vh * (qs * cd)
+                    force += f
+                    torque += simd_cross(rpos, f)
+                }
+            }
+            let qS = qbar * m.S
+            force += SIMD3<Double>(qS * m.CYb * beta, 0, 0)
+            let qh = qq * m.cbar / (2 * V), rh = r * m.b / (2 * V)
+            // Pitch: stability, trim and damping (the elevator below, with the wash). Roll: only the dihedral effect
+            // is left here – the rest comes from the strips. Yaw: weathercock and damping.
+            let Cm = m.Cm0 + m.Cma * alpha + m.Cmq * qh
+            let Cl = m.Clb * beta
+            let Cn = m.Cnb * beta + m.Cnr * rh          // (adverse aileron yaw comes from the strips' drag)
+            torque += SIMD3<Double>(qS * m.cbar * Cm, -qS * m.b * Cn, -qS * m.b * Cl)
+        }
+        // Elevator and rudder: the part in the prop's slipstream keeps working at any airspeed (hover, prop hang),
+        // the rest sees the free stream (and loses grip in a stall).
+        let qElev = qbar * (1 - m.washElevator) * stallFade + qWash * m.washElevator
+        let qRud = qbar * (1 - m.washRudder) + qWash * m.washRudder
+        torque.x += qElev * m.S * m.cbar * m.Cmde * de * m.maxThrow
+        torque.y += -qRud * m.S * m.b * m.Cndr * dr * m.maxThrow
         // Integrate (body forces → world).
         let accel = q.act(force) / m.mass + SIMD3(0, -Self.g, 0)
         state.velocity += accel * h
         state.position += state.velocity * h
         let I = m.inertia
         let w = state.omega
-        let Iw = I * w
+        // Rigid body plus the spinning prop's angular momentum (gyroscopic precession).
+        let rpmShare = pow(max(surfaces.throttle, 0), 0.8)
+        let Hprop = SIMD3<Double>(0, 0, -m.propH * rpmShare)
+        let Iw = I * w + Hprop
         let wdot = (torque - simd_cross(w, Iw)) / I
         state.omega += wdot * h
         let wl = simd_length(state.omega)

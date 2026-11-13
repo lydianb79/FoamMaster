@@ -721,17 +721,23 @@ enum SelfTest {
             let base = StickInput(throttle: 0.6)
             let hands = run(6, base)
             let e0 = euler(hands.state.orientation)
-            var line = String(format: "%@: m %.0f g, stall %.1f m/s · hands-off 6 s: %@ alt %.1f m, speed %.1f m/s, pitch %.0f°, roll %.0f°",
-                              kind.title, fm.mass * 1000, fm.stallSpeed, "\(hands.state.phase)", hands.state.position.y, hands.airspeed, e0.pitch, e0.roll)
+            let smDesign = (a.neutralPoint - a.recommendedCG) / max(a.mac, 1)
+            var line = String(format: "%@: m %.0f g, stall %.1f m/s, static margin %.0f %% (recommended %.0f %%) · hands-off 6 s: %@ alt %.1f m, speed %.1f m/s, pitch %.0f°, roll %.0f°",
+                              kind.title, fm.mass * 1000, fm.stallSpeed, a.staticMargin * 100, smDesign * 100, "\(hands.state.phase)", hands.state.position.y, hands.airspeed, e0.pitch, e0.roll)
             // Controls from 2 s of level flight.
             let warm = { run(2, base) }
-            let rr = run(0.8, StickInput(roll: 0.6, throttle: 0.6), from: warm())
+            let rr = run(0.3, StickInput(roll: 0.6, throttle: 0.6), from: warm())   // (a 3D plane rolls ~250°/s: past 90° in 0.8 s)
             let pb = run(0.6, StickInput(pitch: 0.6, throttle: 0.6), from: warm())
             let yr = run(1.0, StickInput(yaw: 0.8, throttle: 0.6), from: warm())
-            let w = warm()
-            let er = euler(rr.state.orientation), ep = euler(pb.state.orientation), ey = euler(yr.state.orientation), ew = euler(w.state.orientation)
-            line += String(format: " · roll right → bank %+.0f° · pull → pitch %+.0f° · yaw right → heading %+.0f°, bank %+.0f°",
-                           er.roll - ew.roll, ep.pitch - ew.pitch, ey.heading - ew.heading, ey.roll - ew.roll)
+            // Each against the same time flown hands-off from the same start (a flat wing drifts a little by itself).
+            let w08 = euler(run(0.3, base, from: warm()).state.orientation), w06 = euler(run(0.6, base, from: warm()).state.orientation)
+            let w10 = euler(run(1.0, base, from: warm()).state.orientation)
+            let er = euler(rr.state.orientation), ep = euler(pb.state.orientation), ey = euler(yr.state.orientation)
+            func wrap(_ a: Double) -> Double { var x = a; while x > 180 { x -= 360 }; while x < -180 { x += 360 }; return x }
+            let dRoll = wrap(er.roll - w08.roll), dPitch = wrap(ep.pitch - w06.pitch), dHead = wrap(ey.heading - w10.heading), dBank = wrap(ey.roll - w10.roll)
+            line += String(format: " · roll right 0.3 s → bank %+.0f° · pull → pitch %+.0f° · yaw right → heading %+.0f°, bank %+.0f°", dRoll, dPitch, dHead, dBank)
+            // Right stick, right response (heading for yaw right is negative = to the right in this frame, as before).
+            if dRoll <= 0 || dPitch <= 0 { line += "  ← PROBLEM" }
             print(line)
             // Frames as the pilot sees them: in the hand, 1.5 s after the launch with a bank to the right.
             if let dir {
@@ -817,6 +823,77 @@ enum SelfTest {
             let resetOK = resets == 2
             inp.controls = saved
             print("Launch switch: button \(buttonOK ? "ok" : "PROBLEM"), axis (inverted) \(axisOK ? "ok" : "PROBLEM"); reset switch \(resetOK ? "ok" : "PROBLEM")")
+        }
+        // Physics: CG, strips (spin), prop wash, motor torque.
+        do {
+            func model(_ kind: AircraftKind, battery shift: Double = 0) -> FlightModel {
+                var c = Project.feasibleSetup(kind, kind.defaultSetupChoice)
+                c.batteryPosition += shift
+                let d = DesignBuilder.build(c)
+                return FlightModel(d, Analysis(design: d))
+            }
+            /// Settled angle of attack (°) of a power-off glide with the wings held level.
+            func glide(_ fm: FlightModel, trim: Double = 0, seconds: Double = 14) -> Double {
+                let s = FlightSim(model: fm)
+                s.input = StickInput(); s.step(0.3); s.launch()
+                var st = s.state; st.position.y = 200; s.setState(st)         // high enough for a long, settled glide
+                var t = 0.0, v = 0.0, n = 0.0
+                while t < seconds {
+                    // The pilot only keeps the wings level (a flat wing would slowly spiral in by itself).
+                    let bank = -asin(max(min(s.state.orientation.act([1, 0, 0]).y, 1), -1))
+                    let rollRate = -s.state.omega.z
+                    s.input = StickInput(roll: max(min(-2 * bank - 0.3 * rollRate, 1), -1), pitch: trim)
+                    s.step(1.0 / 60); t += 1.0 / 60
+                    if t > seconds - 6 {
+                        let vb = s.state.orientation.inverse.act(s.state.velocity)
+                        v += atan2(-vb.y, -vb.z) * 180 / .pi; n += 1
+                    }
+                }
+                return v / max(n, 1)
+            }
+            // CG: battery 15 mm forward (nose-heavy) / aft (tail-heavy), power off.
+            let mid = glide(model(.trainer)), nose = glide(model(.trainer, battery: -15)), tail = glide(model(.trainer, battery: 15))
+            let noseTrimmed = glide(model(.trainer, battery: -15), trim: 0.04)
+            // Nose-heavy trims to a smaller angle of attack (faster), tail-heavy to a bigger one (slower, towards the
+            // stall); up-trim brings the nose-heavy one back.
+            let cgOK = nose < mid && tail > mid && noseTrimmed > nose
+            print(String(format: "CG (Park Trainer, power-off glide, settled angle of attack): as designed %.1f°, battery 15 mm forward %.1f° (with 4 %% up-trim %.1f°), 15 mm aft %.1f°%@", mid, nose, noseTrimmed, tail, cgOK ? "" : "  ← PROBLEM"))
+            // Spin: slow, full up, full rudder and roll – a stalled inner wing keeps it turning.
+            do {
+                let fm = model(.trainer)
+                let s = FlightSim(model: fm)
+                s.input = StickInput(throttle: 0.3); s.step(0.3); s.launch()
+                var st = s.state; st.position = [0, 60, -40]; st.velocity = [0, 0, -fm.stallSpeed * 1.05]; s.setState(st)
+                s.input = StickInput(roll: 1, pitch: 1, yaw: 1, throttle: 0)
+                var maxYaw = 0.0
+                for k in 0..<240 { s.step(1.0 / 60); if k > 120 { maxYaw = max(maxYaw, abs(s.state.omega.y)) } }
+                let spun = maxYaw > 1.5
+                print(String(format: "Spin (Park Trainer, full up + rudder + aileron at the stall): yaw rate %.1f rad/s after 2–4 s%@", maxYaw, spun ? "" : "  ← PROBLEM"))
+            }
+            // Prop wash: hanging on the prop (nose up, no airspeed, hover throttle) – the elevator still works on a
+            // tractor; a tailless pusher has nothing in its slipstream. Motor torque rolls the tractor left.
+            func hover(_ kind: AircraftKind, pitch: Double) -> (pitchRate: Double, roll: Double) {
+                let fm = model(kind)
+                let s = FlightSim(model: fm)
+                s.step(0.1); s.launch()
+                var st = s.state
+                st.position = [0, 30, -20]; st.velocity = .zero; st.omega = .zero
+                st.orientation = simd_quatd(angle: .pi / 2, axis: [1, 0, 0])      // nose straight up
+                s.setState(st)
+                let hoverThrottle = min(pow(fm.mass * 9.81 / max(fm.staticThrust, 0.01), 1 / 1.6), 1)
+                s.input = StickInput(pitch: pitch, throttle: hoverThrottle)
+                s.step(0.15); s.input = StickInput(pitch: pitch, throttle: hoverThrottle)
+                for _ in 0..<12 { s.step(1.0 / 60) }
+                return (s.state.omega.x, -s.state.omega.z)
+            }
+            // (the elevator's own effect: with input minus without – a tailless model hanging nose-up falls back and
+            // gets some airflow of its own)
+            let h3dNone = hover(.aerobat, pitch: 0), h3d = hover(.aerobat, pitch: 0.5)
+            let wingNone = hover(.flyingWing, pitch: 0), wing = hover(.flyingWing, pitch: 0.5)
+            let e3d = h3d.pitchRate - h3dNone.pitchRate, eWing = wing.pitchRate - wingNone.pitchRate
+            let washOK = e3d > 1 && abs(eWing) < e3d * 0.25 && h3dNone.roll < -0.05
+            print(String(format: "Prop wash (hanging on the prop, no airspeed): elevator → pitch rate 3D Plane %.1f rad/s, Flying Wing (pusher, nothing in the wash) %.2f rad/s; motor torque rolls the 3D Plane %.2f rad/s (− = left)%@",
+                         e3d, eWing, h3dNone.roll, washOK ? "" : "  ← PROBLEM"))
         }
         // Sessions: fly design A (launched, in the air), exit; change the design to B; Fly → a new session with B in
         // the hand, and the first one shut down (no flight, no sound). Fly again while a session is open → replaced.
