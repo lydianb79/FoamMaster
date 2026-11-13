@@ -194,6 +194,8 @@ enum DesignBuilder {
         // (the jet's fuselage is kept taller than its prop window)
         var c = input
         c.fuselageHeight = max(c.fuselageHeight, c.minFuselageHeight)
+        // (stab sweep within its limits: straight hinge, one-piece elevator)
+        if c.kind.hasTail { c.hStabSweep = min(max(c.hStabSweep, c.stabSweepLimits.lowerBound), c.stabSweepLimits.upperBound) }
         var b = Builder(c: c)
         b.run()
         addPushrodSlots(&b.parts, controls: b.controls)
@@ -998,7 +1000,8 @@ enum DesignBuilder {
             let wb = c.plateTailWidth
             let sh = c.hStabSpan / 2
             let ef = 0.4
-            let stab = TaperedPanel(rootLE: ta, rootChord: hsc, tipChord: hsc * 0.8, sweep: c.hStabSweep, semiSpan: sh)
+            // Swept forward the tip chord grows by the sweep: the trailing edge stays put and the elevator one piece.
+            let stab = TaperedPanel(rootLE: ta, rootChord: hsc, tipChord: hsc * 0.8 + max(0, -c.hStabSweep), sweep: c.hStabSweep, semiSpan: sh)
             // One-piece elevator on a straight hinge across the whole stabiliser (it runs under the rudder).
             let uH = stab.te(0) - ef * stab.chord(0)
             if stab.le(sh) > uH - 8 { issues.append("Stabiliser sweep too large – the tip's leading edge reaches the elevator hinge. Reduce the stab sweep or increase the stab chord.") }

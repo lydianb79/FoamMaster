@@ -905,48 +905,39 @@ struct StrutPlanner {
             z += 2
         }
         guard let z0 = zs.first, let z1 = zs.last, z1 - z0 > 40 else { return [] }
-        let gap = 11.0                                     // between neighbouring rod ends
-        // Bays about as long as the lower half is deep (diagonals near 45°), at least two over the trussed length.
+        // Nodes along the boom, alternately on the plate (even) and at the bottom edge (odd); every rod runs from one
+        // node to the next, so neighbouring rods share their end – a continuous chain of V and inverted V, one glue
+        // point per node. Bays about as long as the lower half is deep (diagonals near 45°), at least two.
         let depth0 = -(webEdge(z: z0, top: false) ?? -40) - t / 2
-        let nBays = max(2, Int(((z1 - z0) + gap) / (min(max(depth0, 18), 40) + gap)))
-        let bayLen = max(15, ((z1 - z0) - gap * Double(nBays - 1)) / Double(nBays))
-        var out: [Strut] = []
-        var s = z0, i = 0
-        while true {
-            guard let hwA = plateHalfWidth(z: s), let edgeA = webEdge(z: s, top: false) else { break }
-            _ = edgeA
-            let e = s + bayLen
-            guard e <= z1 + 0.5 else { break }
-            // Even bays run plate → bottom edge going aft, odd bays bottom edge → plate: the zigzag.
-            let zPlate = i % 2 == 0 ? s : e, zKeel = i % 2 == 0 ? e : s
-            var pair: [Strut] = []
-            for dia in [1.0, 1.5] {
-                pair = []
-                // Ends as near the plate edge and the bottom edge as the anchor pads allow (wider box = stiffer).
-                // Plate ends from the edge inwards: the first mirrored pair that fits and clears everything (inboard of
-                // the elevator pushrod under the plate if need be – a narrower but still closed box).
-                guard let hwP = plateHalfWidth(z: zPlate) else { break }
-                let xas = Array(stride(from: hwP - 4.5, through: tw / 2 + 4.5, by: -1.5))
-                search: for xa in xas {
-                    for inset in [7.0, 9, 12] {
-                        pair = []
-                        for side in [1.0, -1.0] {
-                            guard let edge = webEdge(z: zKeel, top: false), let a = plateUnderSite(x: side * xa, z: zPlate),
-                                  let b = webSite(z: zKeel, y: edge + inset, side: side),
-                                  let st = trussRod("Torsion truss \(i + 1)", a, b, dia: dia) else { break }
-                            pair.append(st)
-                        }
-                        if pair.count == 2 && pair.allSatisfy({ isClear($0, others: existing + out, pushrodGap: 2) }) { break search }
+        let nBays = max(2, Int((z1 - z0) / min(max(depth0, 18), 40)))
+        let bayLen = (z1 - z0) / Double(nBays)
+        let nodesZ = (0...nBays).map { z0 + Double($0) * bayLen }
+        // Plate nodes the same inset from the local plate edge everywhere (the plate tapers), bottom-edge nodes the
+        // same height above the edge: the candidate that fits the most rods wins (nearest the edges on a tie – a wider
+        // box is stiffer; inboard of the elevator pushrod under the plate if need be).
+        var best: [Strut] = []
+        for off in stride(from: 4.5, through: 16.5, by: 1.5) {
+            for inset in [7.0, 9, 12] {
+                var rods: [Strut] = []
+                for k in 0..<nBays {
+                    let zA = nodesZ[k], zB = nodesZ[k + 1]
+                    let zPlate = k % 2 == 0 ? zA : zB, zKeel = k % 2 == 0 ? zB : zA
+                    guard let hw = plateHalfWidth(z: zPlate), let edge = webEdge(z: zKeel, top: false) else { continue }
+                    let xa = max(tw / 2 + 4.5, hw - off)
+                    guard xa < hw - 1.5 else { continue }
+                    var pair: [Strut] = []
+                    for side in [1.0, -1.0] {
+                        guard let a = plateUnderSite(x: side * xa, z: zPlate), let b = webSite(z: zKeel, y: edge + inset, side: side),
+                              let st = trussRod("Torsion truss \(k + 1)", a, b, dia: 1.0) else { break }
+                        pair.append(st)
                     }
+                    if pair.count == 2 && pair.allSatisfy({ isClear($0, others: existing + rods, pushrodGap: 2) }) { rods += pair }
                 }
-                if pair.count == 2 && pair.allSatisfy({ isClear($0, others: existing + out, pushrodGap: 2) }) { break }
-                pair = []
+                if rods.count > best.count { best = rods }
+                if best.count == 2 * nBays { return best }
             }
-            _ = hwA
-            out += pair
-            s = e + gap; i += 1
         }
-        return out
+        return best
     }
 
     func tailStruts(tally: ((String) -> Void)? = nil) -> [Strut] {

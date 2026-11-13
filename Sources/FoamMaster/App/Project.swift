@@ -10,6 +10,12 @@ final class Project: ObservableObject {
         didSet {
             // Keep the fuselage taller than the prop window (jet) – e.g. after a motor change.
             if let c = config, c.fuselageHeight < c.minFuselageHeight { config?.fuselageHeight = c.minFuselageHeight }
+            // Stab sweep stays where the elevator keeps a straight hinge and one piece (limits follow the stab chord).
+            if let c = config, c.kind.hasTail {
+                let l = c.stabSweepLimits
+                let v = min(max(c.hStabSweep, l.lowerBound), l.upperBound)
+                if v != c.hStabSweep { config?.hStabSweep = v }
+            }
             // A change that narrows the battery's room (e.g. one aileron servo centred on the plate) moves the battery
             // to the nearest position where it still fits.
             if let c = config {

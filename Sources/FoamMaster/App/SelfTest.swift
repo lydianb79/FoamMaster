@@ -600,11 +600,11 @@ enum SelfTest {
         var cases: [(String, AircraftConfig)] = AircraftKind.allCases.map { ($0.rawValue, Project.feasibleSetup($0, $0.defaultSetupChoice)) }
         var dual = Project.feasibleSetup(.trainer, AircraftKind.trainer.defaultSetupChoice); dual.motorLayout = .dualTractor
         cases.append(("trainer_dual", dual))
-        var swT = Project.feasibleSetup(.trainer, AircraftKind.trainer.defaultSetupChoice); swT.hStabSweep = 35
-        var swB = Project.feasibleSetup(.twinBoom, AircraftKind.twinBoom.defaultSetupChoice); swB.hStabSweep = 25
-        var swJ = Project.feasibleSetup(.jet, AircraftKind.jet.defaultSetupChoice); swJ.hStabSweep = 15
-        var nbR = Project.feasibleSetup(.nutBall, AircraftKind.nutBall.defaultSetupChoice); nbR.finTopRounding = 25
-        cases += [("trainer_swept", swT), ("twinBoom_swept", swB), ("jet_lesssweep", swJ), ("nutBall_rounded", nbR)]
+        var swT = Project.feasibleSetup(.trainer, AircraftKind.trainer.defaultSetupChoice); swT.hStabSweep = 99     // clamped to the back limit
+        var swB = Project.feasibleSetup(.twinBoom, AircraftKind.twinBoom.defaultSetupChoice); swB.hStabSweep = -30
+        var swJ = Project.feasibleSetup(.jet, AircraftKind.jet.defaultSetupChoice); swJ.hStabSweep = -40
+        var nbR = Project.feasibleSetup(.trainer, AircraftKind.trainer.defaultSetupChoice); nbR.hStabSweep = -35
+        cases += [("trainer_swept", swT), ("twinBoom_swept", swB), ("jet_lesssweep", swJ), ("trainer_forward", nbR)]
         for (n, c) in cases.suffix(4) {
             let d = DesignBuilder.build(c), a = Analysis(design: d)
             print("\(n): score \(a.score), Vh \(String(format: "%.2f", a.tailVolumeH)) " + a.checks.filter { $0.severity >= .warning }.map(\.title).joined(separator: "; ") + " " + d.geometryIssues.joined(separator: "; "))

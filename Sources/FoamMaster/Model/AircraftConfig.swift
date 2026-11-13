@@ -200,9 +200,17 @@ struct AircraftConfig: Codable, Equatable {
     var wingTipRounding: Double = 0
     var finTopRounding: Double = 0
     var stabTipRounding: Double = 0
-    /// Leading-edge sweep of the horizontal stabiliser (mm the tip's leading edge sits behind the root's) on planes
-    /// with a tail; the elevator hinge stays straight.
+    /// Leading-edge sweep of the horizontal stabiliser (mm the tip's leading edge sits behind the root's; negative =
+    /// swept forward) on planes with a tail; the elevator hinge stays straight and the elevator one piece.
     var hStabSweep: Double = 0
+    /// Allowed stab sweep for the current stab chord: back until the tip's leading edge is 8 mm ahead of the elevator
+    /// hinge (60 % chord), forward up to half the chord (the trailing edge stays put, so the elevator never shrinks).
+    var stabSweepLimits: ClosedRange<Double> {
+        let back = 0.6 * hStabChord - 8
+        // Twin boom: the hinge stops 14 mm short of the tips – the binding station is there.
+        let k = kind.isTwinBoom ? hStabSpan / 2 / max(hStabSpan / 2 - 14, 1) : 1
+        return (-0.5 * hStabChord).rounded(.up)...max(0, (back * k).rounded(.down))
+    }
     /// Extra width of the horizontal fuselage plate (cross) over the default – only wider is allowed.
     var plateWidthExtra: Double = 0
     static let maxPlateWidthExtra = 40.0
@@ -302,7 +310,7 @@ struct AircraftConfig: Codable, Equatable {
         case \AircraftConfig.tailArm: return 140...380
         case \AircraftConfig.hStabSpan: return 90...320
         case \AircraftConfig.hStabChord: return 35...140
-        case \AircraftConfig.hStabSweep: return 0...100
+        case \AircraftConfig.hStabSweep: return -70...80
         case \AircraftConfig.vStabHeight: return 40...160
         case \AircraftConfig.vStabChord: return 35...150
         case \AircraftConfig.batteryPosition: return -200...200
@@ -328,7 +336,10 @@ struct AircraftConfig: Codable, Equatable {
                         r(\.fuselageHeight, spread: 0.15); r(\.noseLength, spread: 0.15); r(\.tailArm, spread: 0.15)
             r(\.hStabSpan, spread: 0.15); r(\.hStabChord, spread: 0.15)
             // Stab sweep: up to half the chord on the Sport Jet, a quarter on the others (straight on the twin boom about a third of the time).
-            c.hStabSweep = (Double.random(in: 0...(c.hStabChord * (kind.isJet ? 0.5 : 0.25))) * (kind.isJet ? 1 : (Bool.random() ? 1 : 0))).rounded()
+            // Stab sweep within its limits: back up to the limit on the Sport Jet, mostly mild on the others, sometimes forward.
+            let sl = c.stabSweepLimits
+            c.hStabSweep = (kind.isJet ? Double.random(in: max(0, sl.lowerBound)...sl.upperBound)
+                                       : (Bool.random() ? 0 : Double.random(in: max(sl.lowerBound, -c.hStabChord * 0.25)...min(sl.upperBound, c.hStabChord * 0.25)))).rounded()
             r(\.vStabHeight, spread: 0.15); r(\.vStabChord, spread: 0.15)
         } else {
             r(\.wingletHeight, spread: 0.3); r(\.centreFinHeight, spread: 0.3); r(\.noseLength, spread: 0.3)
