@@ -100,7 +100,7 @@ final class SimController: ObservableObject {
         sim = s
         loadedRevision = project.revision
         title = "\(d.config.name) · \(d.config.kind.title)"
-        // The model flies trimmed for its recommended CG: say how far the real one is off, and which way to trim.
+        // No built-in trim: say how far the CG is off the recommended one (the pilot trims with T / G).
         cgOffset = a.cg.z - a.recommendedCG
         input.useTrim(for: "\(d.config.kind.rawValue)/\(d.config.name)")
         input.rudderOnly = d.config.kind.isNutBall
@@ -314,8 +314,8 @@ struct SimulatorView: View {
             let sw = !hasTx ? "" : ctl.input.controls.launchSwitch != nil ? " or flip the launch switch"
                 : " (a transmitter switch can launch too: Controls… ▸ Transmitter)"
             let off = ctl.cgOffset, c = ctl.input.controls
-            let cg = abs(off) < 2 ? "" : String(format: " · CG %.0f mm %@ the target – expect to trim nose %@ (%@)", abs(off), off > 0 ? "behind" : "ahead of",
-                                                off > 0 ? "down" : "up", keyName(c.key(off > 0 ? .trimDown : .trimUp)))
+            let cg = (abs(off) < 2 ? "" : String(format: " · CG %.0f mm %@ the target", abs(off), off > 0 ? "behind" : "ahead of"))
+                + " · no built-in trim: trim nose up (\(keyName(c.key(.trimUp)))) until it flies level"
             return "In your hand – set the throttle, then press \(keyName(ctl.input.controls.key(.launch)))\(sw) to let it go\(cg)"
         case .flying: return String(format: "Flying · %.0f s", h.time)
         case .landed:

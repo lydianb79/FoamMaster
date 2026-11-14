@@ -43,7 +43,7 @@ struct SimControls: Codable, Equatable {
     var rates: [String: Double] = ["roll": 0.8, "pitch": 0.8, "yaw": 1.0]
     var expo: [String: Double] = ["roll": 0.3, "pitch": 0.3, "yaw": 0.2]
     var autoZoom = true
-    /// Pitch trim per design (−0.3…0.3 of the elevator throw, + = nose up). Optional so older settings still load.
+    /// Pitch trim per design (−0.6…0.6 of the elevator throw, + = nose up). Optional so older settings still load.
     var trims: [String: Double]?
     /// A transmitter switch that launches the model when flipped to its active position.
     struct SwitchMapping: Codable, Equatable {
@@ -201,7 +201,7 @@ final class SimInputState {
     /// Pitch trim of the loaded design (+ = nose up), added to the elevator from keyboard or transmitter.
     private(set) var trim = 0.0
     private var trimKey = ""
-    static let trimStep = 0.01, trimLimit = 0.3
+    static let trimStep = 0.01, trimLimit = 0.6
     private var lastSwitch: Bool?
     private var lastReset: Bool?
 

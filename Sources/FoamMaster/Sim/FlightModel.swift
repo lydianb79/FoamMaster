@@ -74,14 +74,10 @@ struct FlightModel {
             Cmde = CLa * tauE * c.controlChordPct * 0.5     // elevons: lever about half the MAC behind the CG
             Cmq = -0.25 * CLa - 0.4
         }
-        // Trimmed – as the builder sets the elevator – for level flight at about 1.4 × stall speed with the CG where it
-        // should be (the recommended CG). With the CG elsewhere the model is out of trim, as the real one would be:
-        // nose-heavy (more static margin) it trims to less lift – faster, nose down, needs up-trim; tail-heavy it
-        // trims to more lift – slower, nose up, stalls; behind the neutral point it is unstable.
-        let vTrim = max(a.stallSpeed / 3.6 * 1.4, 3)
-        let clTrim = 2 * mass * 9.81 / (1.225 * vTrim * vTrim * S)
-        let smDesign = min(max((a.neutralPoint - a.recommendedCG) / max(a.mac, 1), 0.02), 0.4)
-        Cm0 = smDesign * clTrim
+        // No built-in trim: the model flies as designed – flat wing and flat stabiliser in one plane, no incidence
+        // difference, so no pitching moment of its own (Cm0 = 0). With the CG ahead of the neutral point it trims to
+        // almost no lift and dives until the pilot trims nose up (T / G in the simulator); the CG is the design's own.
+        Cm0 = 0
         // Roll: ailerons / elevons on the outer wing, damping of the wing, dihedral effect (flat foam: little).
         let sa = min(max(c.controlChordPct, 0.1), 0.45)
         Clda = hasAilerons ? 0.5 * CLa * tauE * sa * 0.65 * (c.kind.isTailless ? 1.2 : 1) : 0

@@ -727,11 +727,21 @@ enum SelfTest {
         print("prop test: \(problems == 0 ? "ok" : "\(problems) problems")")
     }
 
+    /// The simulator has no built-in trim: the tests trim like a pilot would – the elevator set for level flight at
+    /// about 1.4 × stall speed (as a pitching moment), for the CG of `reference` (default: the model's own).
+    static func pilotTrimmed(_ fm: FlightModel, for reference: FlightModel? = nil) -> FlightModel {
+        let r = reference ?? fm
+        let v = max(r.stallSpeed * 1.4, 3), clTrim = 2 * r.mass * 9.81 / (1.225 * v * v * r.S)
+        var m = fm
+        m.Cm0 = -r.Cma * clTrim / r.CLa
+        return m
+    }
+
     @MainActor static func simTest(_ dir: URL? = nil) {
         for kind in AircraftKind.allCases {
             let c = Project.feasibleSetup(kind, kind.defaultSetupChoice)
             let d = DesignBuilder.build(c), a = Analysis(design: d)
-            let fm = FlightModel(d, a)
+            let fm = pilotTrimmed(FlightModel(d, a))
             func euler(_ q: simd_quatd) -> (pitch: Double, roll: Double, heading: Double) {
                 let f = q.act([0, 0, -1]), r = q.act([1, 0, 0])
                 return (asin(f.y) * 180 / .pi, -asin(r.y) * 180 / .pi, atan2(-f.x, -f.z) * 180 / .pi)
@@ -912,9 +922,11 @@ enum SelfTest {
             func model(_ kind: AircraftKind, battery shift: Double = 0, servos: Int? = nil) -> FlightModel {
                 let choice = servos.flatMap { n in Project.setupChoices(kind).first { $0.servos == n } } ?? kind.defaultSetupChoice
                 var c = Project.feasibleSetup(kind, choice)
+                let d0 = DesignBuilder.build(c)
                 c.batteryPosition += shift
                 let d = DesignBuilder.build(c)
-                return FlightModel(d, Analysis(design: d))
+                // (trimmed by the pilot for the battery where the design has it – moved, the model is out of trim)
+                return pilotTrimmed(FlightModel(d, Analysis(design: d)), for: FlightModel(d0, Analysis(design: d0)))
             }
             /// Settled angle of attack (°) of a power-off glide with the wings held level.
             func glide(_ fm: FlightModel, trim: Double = 0, seconds: Double = 14) -> Double {
