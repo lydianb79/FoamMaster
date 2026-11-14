@@ -131,7 +131,7 @@ struct FlightModel {
             return overlap(y0, y0 + dy, ail.lowerBound, ail.upperBound) / dy
         }
         let washR = 0.45 * c.propInches * 0.0254
-        let propXs: [Double] = c.kind.isPusher ? [] : (c.isDual ? [c.dualMotorX / 1000] : [0])
+        let propXs: [Double] = c.isPusher ? [] : (c.isDual ? [c.dualMotorX / 1000] : [0])
         stripWash = (0..<n).map { k in
             let y0 = Double(k) * dy
             return min(1, propXs.reduce(0) { $0 + overlap(y0, y0 + dy, $1 - washR, $1 + washR) } / dy)

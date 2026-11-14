@@ -980,7 +980,19 @@ enum SelfTest {
             let tq1 = hover(.aerobat, pitch: 0, servos: 1), r1 = hover(.aerobat, pitch: 0, roll: 1, servos: 1)
             let r2 = hover(.aerobat, pitch: 0, roll: 1)
             let rollOK = r1.roll > 0.1 && r2.roll > 0.1
-            let washOK = e3d > 1 && abs(eWing) < e3d * 0.25 && h3dNone.roll < -0.05 && rollOK
+            // Wing in the slipstream by the actual motor layout: none behind a pusher, some behind tractors – also on the
+            // tailless types and the twin boom when they fly dual tractors.
+            var layoutBad: [String] = []
+            for kind in AircraftKind.allCases {
+                for layout in [MotorLayout.single, .dualTractor] where layout == .single || kind.allowsDualMotors {
+                    var c = kind.defaults; c.motorLayout = layout
+                    let d = DesignBuilder.build(Project.balanced(c))
+                    let washed = FlightModel(d, Analysis(design: d)).stripWash.reduce(0, +)
+                    if c.isPusher ? washed > 0 : washed < 0.3 { layoutBad.append("\(kind.title) \(layout) \(String(format: "%.2f", washed))") }
+                }
+            }
+            print("Wing in the slipstream by motor layout (pushers none, tractors some): \(layoutBad.isEmpty ? "ok" : layoutBad.joined(separator: ", ") + "  ← PROBLEM")")
+            let washOK = e3d > 1 && abs(eWing) < e3d * 0.25 && h3dNone.roll < -0.05 && rollOK && layoutBad.isEmpty
             print(String(format: "Hover roll (3D Plane, full right aileron, no airspeed): 2 servos %+.2f rad/s (torque alone %+.2f), 1 central servo %+.2f (torque alone %+.2f)%@",
                          r2.roll, h3dNone.roll, r1.roll, tq1.roll, rollOK ? "" : "  ← PROBLEM"))
             print(String(format: "Prop wash (hanging on the prop, no airspeed): elevator → pitch rate 3D Plane %.1f rad/s, Flying Wing (pusher, nothing in the wash) %.2f rad/s; motor torque rolls the 3D Plane %.2f rad/s (− = left)%@",
