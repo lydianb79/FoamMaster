@@ -827,14 +827,23 @@ enum SelfTest {
                         // Overviews from 60 m up (test only): the village, the hamlet, the far forests and fields.
                         r.autoZoom = false
                         r.eye = [0, 60, 0]
-                        for (tag, p) in [("village", SIMD3<Double>(700, -40, -1250)), ("hamlet", SIMD3<Double>(-1150, -40, -700)), ("hills", SIMD3<Double>(900, 10, 900))] {
+                        for (tag, p) in [("village", SIMD3<Double>(700, -40, -1250)), ("hamlet", SIMD3<Double>(-1150, -40, -700)), ("hills", SIMD3<Double>(900, 10, 900)),
+                                         ("airfield", SIMD3<Double>(450, 2, -40))] {
                             s.place(p)
                             if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_overview_\(tag).png")) }
                         }
+                        // The airfield close up: from above the runway's south end, looking at the apron and hangars.
+                        r.eye = [400, 18, 120]
+                        s.place([505, 3, -20])
+                        if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_airfield_close.png")) }
+                        r.eye = [430, 6, 300]
+                        s.place([430, 4, 230])
+                        if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_airfield_runway.png")) }
                         r.eye = [0, 1.7, 0]
                         s.place([1.5, 2.5, -6])
                         if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_view_shadow.png")) }
-                        for (tag, p) in [("pond", SIMD3<Double>(-75, 6, -125)), ("farm", SIMD3<Double>(-170, 22, 140)), ("village", SIMD3<Double>(60, 30, -130))] {
+                        for (tag, p) in [("pond", SIMD3<Double>(-75, 6, -125)), ("farm", SIMD3<Double>(-170, 22, 140)), ("village", SIMD3<Double>(60, 30, -130)),
+                                         ("airfield", SIMD3<Double>(90, 12, -10))] {
                             s.place(p)
                             if let img = r.snapshot(width: 1000, height: 640) { savePNG(img, dir.appendingPathComponent("sim_view_\(tag).png")) }
                         }

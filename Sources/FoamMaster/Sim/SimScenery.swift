@@ -7,7 +7,9 @@ import simd
 /// meadow and patchwork crops; the shader adds fine grass texture (`Uniforms.ground`). Near the pilot: grass tufts
 /// and flowers, the striped mown strip, the pits (gazebo, chairs, car, table, flight boxes), a fence and a windsock.
 /// Around: a pond with reeds, a gravel track with poplars to a farm, hedges between the fields, woods, single
-/// trees with blob shadows, a second farm and a village with a church, ridges and two mountain ranges in the haze,
+/// trees with blob shadows, a second farm and a village with a church, an airfield to the right (asphalt runway with
+/// markings, taxiway, apron with parked light aircraft, hangars, clubhouse with a tower, windsock), ridges and two
+/// mountain ranges in the haze,
 /// flat-bottomed clouds, circling birds (moving groups) and a sky dome with the sun.
 ///
 /// The same layout also gives the solid obstacles (trees, bushes, buildings, poles) the flight model collides with.
@@ -48,7 +50,20 @@ enum SimScenery {
         let r = (x * x + z * z).squareRoot()
         let ramp = min(max((r - 220) / 500, 0), 1)
         let hills = (fbm(x / 380, z / 380, 3) - 0.35) * 75
-        return max(hills, -4) * ramp * ramp
+        // Level at the airfield, blending into the hills over 150 m.
+        let flat = min(airfieldDistance(x, z) / 150, 1)
+        return max(hills, -4) * ramp * ramp * flat * flat * (3 - 2 * flat)
+    }
+
+    // Airfield to the right of the pilot: runway 18/36 along z (−z is north), apron, hangars and clubhouse east of it.
+    static let runwayX = 430.0, runwayHalfWidth = 10.0, runwayZ = -250.0...250.0
+    /// The level ground of the airfield (whole 10 m terrain cells).
+    static let airfieldX = 380.0...580.0, airfieldZ = -290.0...290.0
+    /// Distance outside the airfield's level ground (0 on it).
+    static func airfieldDistance(_ x: Double, _ z: Double) -> Double {
+        let dx = max(airfieldX.lowerBound - x, x - airfieldX.upperBound, 0)
+        let dz = max(airfieldZ.lowerBound - z, z - airfieldZ.upperBound, 0)
+        return (dx * dx + dz * dz).squareRoot()
     }
 
     /// Terrain cell size: 4 m around the field, 10 m to 720 m, 40 m beyond.
@@ -132,7 +147,13 @@ enum SimScenery {
         // Worn grass around the pits.
         let pits = ((x + 7) * (x + 7) + (z - 5) * (z - 5)).squareRoot()
         if pits < 9 { c = c * 0.8 + SIMD3(0.4, 0.37, 0.22) * 0.2 }
-        if r > 320 {
+        let field = airfieldDistance(x, z)
+        if field < 25 {
+            // Mown airfield grass, mown in wide stripes along the runway.
+            let stripe = Int(floor((x - runwayX) / 12)) % 2 == 0 ? 1.04 : 0.96
+            c = c * 0.75 + SIMD3(0.36, 0.55, 0.24) * 0.25 * stripe
+        }
+        if r > 320 && field > 15 {
             // Fields: 140 × 120 m plots of wheat, ploughed earth, rapeseed, young crops or pasture.
             // Plots of 140 × 120 m, about half of them split in two (along x or z) – fields of different sizes.
             var px = Int(floor((x + 7) / 140)), pz = Int(floor((z - 11) / 120))
@@ -170,6 +191,7 @@ enum SimScenery {
         if trackDistance(x, z) < 6 + margin { return false }
         for c in [farm, farm2] where simd_length(SIMD2(x, z) - c) < 70 + margin { return false }
         if simd_length(SIMD2(x, z) - village) < 180 || simd_length(SIMD2(x, z) - hamlet) < 120 { return false }
+        if airfieldDistance(x, z) < 40 + margin { return false }
         return true
     }
 
@@ -279,6 +301,11 @@ enum SimScenery {
         L.obstacles.append(Obstacle(x: farm.x, z: farm.y, r: 32, top: surfaceHeight(farm.x, farm.y) + 13, name: "the farm"))
         L.obstacles.append(Obstacle(x: farm2.x, z: farm2.y, r: 26, top: surfaceHeight(farm2.x, farm2.y) + 11, name: "the farm"))
         L.obstacles.append(Obstacle(x: 12, z: -8, r: 0.35, top: 4.3, name: "the windsock"))
+        for h in hangars { L.obstacles.append(Obstacle(x: h.x, z: h.y, r: 16, top: 11, name: "a hangar")) }
+        L.obstacles.append(Obstacle(x: clubhouse.x, z: clubhouse.y, r: 8, top: 8, name: "the clubhouse"))
+        L.obstacles.append(Obstacle(x: tower.x, z: tower.y, r: 3, top: 11.5, name: "the tower"))
+        L.obstacles.append(Obstacle(x: airfieldSock.x, z: airfieldSock.y, r: 0.6, top: 7, name: "the windsock"))
+        for pl in parkedPlanes { L.obstacles.append(Obstacle(x: pl.x, z: pl.y, r: 5, top: 2.6, name: "a parked plane")) }
         L.obstacles.append(Obstacle(x: -9, z: 6, r: 2.2, top: 2.6, name: "the gazebo"))
         L.obstacles.append(Obstacle(x: -17, z: 10, r: 2.3, top: 1.5, name: "the car"))
         return L
@@ -419,6 +446,7 @@ enum SimScenery {
         trees(&g)
         farForests(&g)
         buildings(&g)
+        airfield(&g)
         pits(&g)
         ridgesAndMountains(&g)
         clouds(&g)
@@ -739,6 +767,7 @@ enum SimScenery {
                 // an irregular edge
                 if rad > size * (0.75 + 0.25 * noise(cos(ang) * 2 + Double(w), sin(ang) * 2, 204)) { continue }
                 let x = cx + cos(ang) * rad * 1.3, z = cz + sin(ang) * rad
+                if airfieldDistance(x, z) < 60 { continue }
                 let y = surfaceHeight(x, z) - 0.5, h = 10 + hash(t, w, 205) * 10
                 let v = Float(hash(t, w, 206))
                 if hash(t, w, 207) < conifer {
@@ -826,6 +855,140 @@ enum SimScenery {
         // The village (with its church) and a hamlet.
         settlement(&g, at: village, houses: 40, seed: 1, church: true)
         settlement(&g, at: hamlet, houses: 14, seed: 2, church: false)
+    }
+
+    static let hangars: [SIMD2<Double>] = [[545, -40], [545, -2]]
+    static let clubhouse = SIMD2<Double>(520, 50), tower = SIMD2<Double>(532, 62)
+    static let airfieldSock = SIMD2<Double>(408, -205)
+    /// Parked light aircraft on the apron: position, heading (yaw) and colour.
+    static let parkedPlanes: [SIMD3<Double>] = [[490, -46, 0], [491, -30, 1], [489, -14, 2]]
+
+    /// The airfield: asphalt runway 18/36 (500 × 20 m) with threshold bars, numbers, centre line, edge lines and
+    /// aiming points, edge lights; a taxiway to the apron with parked light aircraft; two arched hangars, the
+    /// clubhouse with a small tower and a flagpole, a windsock. The ground there is level (`height`), trees keep clear.
+    static func airfield(_ g: inout Geo) {
+        let asphalt = C(0.3, 0.31, 0.32, 1), white = C(0.93, 0.93, 0.9, 1), yellow = C(0.92, 0.75, 0.15, 1)
+        let up = (P(0, 1, 0), P(0, 1, 0), P(0, 1, 0))
+        /// Flat rectangle x0…x1, z0…z1 at height y (the level ground is at 0).
+        func rect(_ x0: Double, _ x1: Double, _ z0: Double, _ z1: Double, _ y: Double, _ c: C) {
+            g.tri(P(x0, y, z0), P(x1, y, z1), P(x1, y, z0), c, c, c, normals: up)
+            g.tri(P(x0, y, z0), P(x0, y, z1), P(x1, y, z1), c, c, c, normals: up)
+        }
+        let rx = runwayX, hw = runwayHalfWidth, z0 = runwayZ.lowerBound, z1 = runwayZ.upperBound
+        // Runway: asphalt in 25 m sections, each a slightly different shade (patched surface).
+        var z = z0
+        while z < z1 {
+            rect(rx - hw, rx + hw, z, min(z + 25, z1), 0.06, scale(asphalt, Float(0.94 + 0.12 * hash(Int(z), 1, 301))))
+            z += 25
+        }
+        // Edge lines, centre line dashes.
+        rect(rx - hw + 0.3, rx - hw + 0.8, z0 + 2, z1 - 2, 0.075, white)
+        rect(rx + hw - 0.8, rx + hw - 0.3, z0 + 2, z1 - 2, 0.075, white)
+        z = z0 + 45
+        while z < z1 - 50 { rect(rx - 0.3, rx + 0.3, z, z + 18, 0.075, white); z += 30 }
+        // Each end: threshold bars, the runway number, aiming point blocks. `dir` points down the runway.
+        for (zt, dir, number) in [(z1, -1.0, "36"), (z0, 1.0, "18")] {
+            for k in 0..<4 {
+                let off = 1.5 + Double(k) * 2.0
+                for side in [-1.0, 1.0] {
+                    let xa = rx + side * off
+                    rect(min(xa - 0.6 * side, xa + 0.6 * side), max(xa - 0.6 * side, xa + 0.6 * side), min(zt + dir * 4, zt + dir * 26), max(zt + dir * 4, zt + dir * 26), 0.075, white)
+                }
+            }
+            for side in [-1.0, 1.0] {
+                let xa = rx + side * 5.5
+                rect(xa - 1.6, xa + 1.6, min(zt + dir * 110, zt + dir * 140), max(zt + dir * 110, zt + dir * 140), 0.075, white)
+            }
+            // Number in 7-segment strokes, read by a pilot landing along `dir` (text "up" = dir, "right" = −dir in x).
+            let digitH = 12.0, digitW = 5.0, stroke = 1.0
+            let baseZ = zt + dir * 32                     // bottom of the digits (nearer the threshold)
+            func seg(_ cx: Double, _ a: SIMD2<Double>, _ b: SIMD2<Double>) {
+                // a, b in digit coordinates (u right, v up); a stroke-wide bar between them.
+                let lo = SIMD2(min(a.x, b.x) - stroke / 2, min(a.y, b.y) - stroke / 2), hi = SIMD2(max(a.x, b.x) + stroke / 2, max(a.y, b.y) + stroke / 2)
+                let xa = cx - dir * lo.x, xb = cx - dir * hi.x
+                let za = baseZ + dir * lo.y, zb = baseZ + dir * hi.y
+                rect(min(xa, xb), max(xa, xb), min(za, zb), max(za, zb), 0.075, white)
+            }
+            let segs: [Character: [Int]] = ["0": [0, 1, 2, 4, 5, 6], "1": [2, 5], "2": [0, 2, 3, 4, 6], "3": [0, 2, 3, 5, 6], "4": [1, 2, 3, 5],
+                                             "5": [0, 1, 3, 5, 6], "6": [0, 1, 3, 4, 5, 6], "7": [0, 2, 5], "8": [0, 1, 2, 3, 4, 5, 6], "9": [0, 1, 2, 3, 5, 6]]
+            let w = digitW - stroke, h = digitH - stroke, m = h / 2
+            let ends: [(SIMD2<Double>, SIMD2<Double>)] = [([0, h], [w, h]), ([0, m], [0, h]), ([w, m], [w, h]), ([0, m], [w, m]), ([0, 0], [0, m]), ([w, 0], [w, m]), ([0, 0], [w, 0])]
+            for (i, ch) in number.enumerated() {
+                let left = -(digitW + 1.2) + Double(i) * (digitW + 2.4)          // u of the digit's left edge
+                let cx = rx - dir * (left + stroke / 2)
+                for sIdx in segs[ch] ?? [] { seg(cx, ends[sIdx].0, ends[sIdx].1) }
+            }
+        }
+        // Runway edge lights every 50 m (green at the thresholds).
+        var zl = z0
+        while zl <= z1 {
+            for side in [-1.0, 1.0] {
+                let lp = P(rx + side * (hw + 1.5), 0, zl)
+                g.mesh(post(lp, radius: 0.06, height: 0.35, segments: 5), C(0.85, 0.85, 0.82, 1))
+                g.mesh(ellipsoid(lp + P(0, 0.4, 0), P(0.1, 0.08, 0.1), segments: 6, rings: 3), zl == z0 || zl == z1 ? C(0.2, 0.85, 0.3, 1) : C(1, 0.95, 0.75, 1))
+            }
+            zl += 50
+        }
+        // Taxiway from the runway to the apron (yellow centre line), apron.
+        rect(rx + hw, 472, -18, -6, 0.05, scale(asphalt, 1.05))
+        rect(rx + hw, 472, -12.25, -11.75, 0.065, yellow)
+        rect(472, 530, -62, 20, 0.05, scale(asphalt, 1.08))
+        rect(500, 500.5, -58, 16, 0.065, yellow)
+        for k in 0..<3 { rect(478, 498, -52 + Double(k) * 16 - 0.25, -52 + Double(k) * 16 + 0.25, 0.065, yellow) }   // parking lead-in lines
+        // Hangars: walls, an arched roof, big doors facing the apron (−x).
+        let wall = C(0.78, 0.8, 0.8, 1), roof = C(0.55, 0.58, 0.6, 1), door = C(0.4, 0.43, 0.46, 1)
+        for h in hangars {
+            let base = P(h.x, -0.3, h.y)
+            g.mesh(block(base, 26, 6.3, 34), wall)
+            let arch = SceneBuilder.cylinder(center: .zero, radius: 17, length: 26.6, segments: 24).rotated(.pi / 2, axis: [0, 1, 0])
+                .transformed { q in P(q.x, max(q.y, 0) * 0.28, q.z) }.translated(P(h.x, 6, h.y))
+            g.mesh(arch, roof) { p in Float(0.8 + 0.25 * min(max((p.y - 6) / 4.8, 0), 1)) }
+            // Doors (front face at x − 13) in panels, a strip of windows above.
+            for k in 0..<6 {
+                let za = h.y - 15 + Double(k) * 5
+                g.quad(P(h.x - 13.05, 0, za + 0.1), P(h.x - 13.05, 0, za + 4.9), P(h.x - 13.05, 5.4, za + 4.9), P(h.x - 13.05, 5.4, za + 0.1), scale(door, k % 2 == 0 ? 1 : 0.92))
+            }
+            g.quad(P(h.x - 13.05, 5.6, h.y - 15), P(h.x - 13.05, 5.6, h.y + 15), P(h.x - 13.05, 6.1, h.y + 15), P(h.x - 13.05, 6.1, h.y - 15), C(0.25, 0.3, 0.36, 1))
+        }
+        // Clubhouse with a small control tower, a terrace, a flagpole.
+        house(&g, at: clubhouse, w: 14, d: 8, h: 3.4, roofH: 2.6, yaw: .pi / 2, wall: C(0.94, 0.9, 0.82, 1), roof: C(0.62, 0.22, 0.16, 1))
+        g.mesh(block(P(tower.x, -0.3, tower.y), 4, 8.3, 4), C(0.92, 0.9, 0.86, 1))
+        g.mesh(block(P(tower.x, 8, tower.y), 5, 2.4, 5), C(0.22, 0.3, 0.38, 1))
+        g.mesh(block(P(tower.x, 10.4, tower.y), 5.6, 0.35, 5.6), C(0.35, 0.35, 0.38, 1))
+        rect(507, 512, 42, 58, 0.15, C(0.6, 0.5, 0.4, 1))
+        g.mesh(post(P(506, 0, 70), radius: 0.06, height: 9), C(0.9, 0.9, 0.9, 1))
+        g.quad(P(506, 7.6, 70), P(506, 7.6, 72.4), P(506, 8.9, 72.4), P(506, 8.9, 70), C(0.85, 0.12, 0.15, 1))
+        // Parked light aircraft: high wing, tricycle gear, nose towards the runway.
+        let liveries: [(C, C)] = [(C(0.95, 0.95, 0.94, 1), C(0.75, 0.12, 0.12, 1)), (C(0.95, 0.95, 0.94, 1), C(0.12, 0.28, 0.65, 1)), (C(0.93, 0.85, 0.35, 1), C(0.2, 0.2, 0.22, 1))]
+        for pl in parkedPlanes {
+            let (body, trim) = liveries[Int(pl.z) % liveries.count]
+            let c = P(pl.x, 0, pl.y)
+            // Fuselage along x, nose at −x.
+            let shift = { (m: Mesh3D) in m.translated(c) }
+            g.mesh(shift(.box(min: [-3.4, 0.75, -0.55], max: [2.0, 1.95, 0.55])), body)
+            g.mesh(shift(.box(min: [2.0, 1.15, -0.3], max: [4.4, 1.75, 0.3])), body)                    // tail cone
+            g.mesh(shift(.box(min: [-3.45, 1.2, -0.56], max: [2.0, 1.4, 0.56])), trim)                  // stripe
+            g.mesh(shift(.box(min: [-1.6, 1.95, -5.2], max: [0.0, 2.08, 5.2])), body)                   // wing
+            g.mesh(shift(.box(min: [-1.55, 1.4, -0.57], max: [-0.2, 1.9, 0.57])), C(0.25, 0.32, 0.4, 1)) // windows
+            g.mesh(shift(.box(min: [3.6, 1.55, -1.7], max: [4.4, 1.62, 1.7])), body)                    // stabiliser
+            g.mesh(shift(.box(min: [3.4, 1.6, -0.05], max: [4.4, 2.9, 0.05])), trim)                    // fin
+            g.mesh(shift(.box(min: [-3.55, 1.25, -0.06], max: [-3.45, 1.45, 0.06])), C(0.15, 0.15, 0.15, 1))
+            g.mesh(shift(.box(min: [-3.6, 0.55, -0.9], max: [-3.5, 2.1, -0.82])), C(0.2, 0.2, 0.2, 1))   // prop blade
+            for (wx, wz) in [(-2.8, 0.0), (0.2, -1.1), (0.2, 1.1)] {
+                g.mesh(SceneBuilder.cylinder(center: .zero, radius: 0.28, length: 0.16, segments: 10).translated(c + P(wx, 0.28, wz)), C(0.1, 0.1, 0.1, 1))
+                g.mesh(post(c + P(wx, 0.28, wz), radius: 0.04, height: 0.5, segments: 4), C(0.3, 0.3, 0.32, 1))
+            }
+            // Wing struts.
+            for s in [-1.0, 1.0] { g.line(c + P(-0.8, 0.95, 0.5 * s), c + P(-0.8, 1.95, 2.8 * s), C(0.6, 0.6, 0.62, 1)) }
+        }
+        // Windsock on a mast, pointing downwind.
+        let ws = airfieldSock
+        g.mesh(post(P(ws.x, 0, ws.y), radius: 0.07, height: 6.5), C(0.85, 0.85, 0.87, 1))
+        for k in 0..<5 {
+            let r0 = 0.45 - Double(k) * 0.06, x0 = ws.x - Double(k) * 0.55
+            g.mesh(SceneBuilder.cylinder(center: .zero, radius: r0, length: 0.55, segments: 10).rotated(.pi / 2, axis: [0, 1, 0]).translated([x0 - 0.28, 6.3 - Double(k) * 0.07, ws.y]),
+                   k % 2 == 0 ? C(1, 0.4, 0.05, 1) : C(0.97, 0.97, 0.97, 1))
+        }
     }
 
     /// The pits behind the flight line: a gazebo, folding chairs, a table, flight boxes, a car, the fence, a windsock.
