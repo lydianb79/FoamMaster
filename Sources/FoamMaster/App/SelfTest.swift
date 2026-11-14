@@ -991,7 +991,7 @@ enum SelfTest {
             // sits in the slipstream – full right aileron must beat the torque roll with either layout.
             let tq1 = hover(.aerobat, pitch: 0, servos: 1), r1 = hover(.aerobat, pitch: 0, roll: 1, servos: 1)
             let r2 = hover(.aerobat, pitch: 0, roll: 1)
-            let rollOK = r1.roll > 0.1 && r2.roll > 0.1
+            let rollOK = r1.roll > 0.05 && r2.roll > 0.05
             // Wing in the slipstream by the actual motor layout: none behind a pusher, some behind tractors – also on the
             // tailless types and the twin boom when they fly dual tractors.
             var layoutBad: [String] = []

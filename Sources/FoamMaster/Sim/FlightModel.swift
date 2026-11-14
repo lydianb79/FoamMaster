@@ -43,6 +43,9 @@ struct FlightModel {
     /// Motor torque (N·m per N of thrust; + rolls left as seen from behind) and the prop's angular momentum per
     /// throttle (kg·m²/s along +z body; tractor props spin clockwise from behind → H points forward, −z).
     var torquePerThrust: Double = 0, propH: Double = 0
+    /// A centre-line fin in the slipstream (its swirl yaws the model); share of the motor torque a wing behind the
+    /// prop takes back by straightening the swirl.
+    var swirlFin = false, swirlRecovery = 0.0
 
     init(_ d: Design, _ a: Analysis) {
         let c = d.config
@@ -156,6 +159,10 @@ struct FlightModel {
         let pitchM = max(c.propModel.pitch, 1) * 0.0254
         let omegaMax = 2 * .pi * pitchSpeed / pitchM
         propH = propMass * (D / 2) * (D / 2) / 3 * omegaMax * sense
+        swirlFin = c.kind.hasTail ? !c.kind.isTwinBoom : (c.kind.isNutBall || c.hasCentreFin)
+        // (about 40 % with the wing right behind a single tractor prop, 20 % more where the + fuselage's vertical
+        // halves stand in the slipstream too, like stator vanes; nothing behind a pusher's)
+        swirlRecovery = c.isDual || c.isPusher ? 0 : (0.4 + (c.kind.hasFuselage ? 0.2 : 0)) * min(1, stripWash.reduce(0, +))
     }
 
     /// Lift coefficient with a soft stall: linear up to the stall angle, then down to a flat plate (sin 2α).
@@ -251,10 +258,10 @@ final class FlightSim {
         // Slipstream at the tail (momentum theory, half way between the disc and the fully developed wake):
         // v² = u² + T / (ρ A).
         let qWash = 0.5 * Self.rho * (u * u + thrust / (Self.rho * m.discArea))
-        // Motor torque: the airframe rolls against the prop (left behind a clockwise tractor prop). Side thrust built
-        // into the mount cancels it at cruise power (about a third of full thrust): what is left is the change –
-        // strongest at full power and low speed (hover, prop hang).
-        torque.z += m.torquePerThrust * (thrust - 0.35 * m.staticThrust)
+        // Motor torque: the airframe rolls against the prop (left behind a clockwise tractor prop) – a flat foam plane
+        // has no side thrust in its mount. A wing behind the prop straightens part of the slipstream's swirl and
+        // takes that much back (the swirl carries the torque's angular momentum – the wing can't give back more).
+        torque.z += m.torquePerThrust * thrust * (1 - m.swirlRecovery)
 
         // Wing in strips, each in its own airflow (body velocity + rotation × station): its own angle of attack, lift
         // and drag, its own stall. Roll damping, aileron power (with reversal near the stall), tip stall, wing drop and
@@ -264,6 +271,10 @@ final class FlightSim {
         // (cd = k · cl_strip · CL_wing) – adverse aileron yaw in the right measure.
         let CLwing = V > 0.3 ? m.CL(atan2(-vb.y, -vb.z)) : 0
         let washDelta = max((u * u + thrust / (Self.rho * m.discArea)).squareRoot() - u, 0)
+        // The slipstream's swirl (tangential speed ≈ Q / (ρ A v r̄), r̄ ≈ 0.35 D) on a centre fin in it: like a
+        // sideslip, yawing the nose left behind a clockwise tractor prop.
+        let swirlSense: Double = m.torquePerThrust > 0 ? 1 : (m.torquePerThrust < 0 ? -1 : 0)
+        let vSwirl = thrust > 0 ? 0.06 / 0.35 * thrust / (Self.rho * m.discArea * max(u + washDelta, 0.5)) : 0
         for side in [1.0, -1.0] {
             for k in 0..<m.stripY.count {
                 let rpos = SIMD3<Double>(side * m.stripY[k], 0, 0)
@@ -307,6 +318,10 @@ final class FlightSim {
             let Cl = m.Clb * beta
             let Cn = m.Cnb * beta                       // (adverse aileron yaw comes from the strips' drag)
             torque += SIMD3<Double>(qS * m.cbar * Cm, -qS * m.b * Cn, -qS * m.b * Cl)
+        }
+        // (what the wing and the fuselage ahead of it have straightened out no longer reaches the fin)
+        if m.swirlFin, m.washRudder > 0 {
+            torque.y += swirlSense * qWash * m.washRudder * m.S * m.b * m.Cnb * atan(vSwirl * (1 - m.swirlRecovery) / max(u + washDelta, 0.5))
         }
         // Pitch and yaw damping (mostly the tail): ½ρ·V·rate – the part of the tail in the prop's slipstream turns
         // through the slipstream's speed, so a hanging model is damped too, not only one with airspeed.
