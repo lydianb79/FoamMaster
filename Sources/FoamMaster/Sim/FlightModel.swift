@@ -301,14 +301,20 @@ final class FlightSim {
             stallFade = abs(alpha) > m.alphaStall ? 0.5 : 1.0
             let qS = qbar * m.S
             force += SIMD3<Double>(qS * m.CYb * beta, 0, 0)
-            let qh = qq * m.cbar / (2 * V), rh = r * m.b / (2 * V)
-            // Pitch: stability, trim and damping (the elevator below, with the wash). Roll: only the dihedral effect
-            // is left here – the rest comes from the strips. Yaw: weathercock and damping.
-            let Cm = m.Cm0 + m.Cma * alpha + m.Cmq * qh
+            // Pitch: stability and trim (damping and the elevator below, with the wash). Roll: only the dihedral effect
+            // is left here – the rest comes from the strips. Yaw: weathercock (damping below).
+            let Cm = m.Cm0 + m.Cma * alpha
             let Cl = m.Clb * beta
-            let Cn = m.Cnb * beta + m.Cnr * rh          // (adverse aileron yaw comes from the strips' drag)
+            let Cn = m.Cnb * beta                       // (adverse aileron yaw comes from the strips' drag)
             torque += SIMD3<Double>(qS * m.cbar * Cm, -qS * m.b * Cn, -qS * m.b * Cl)
         }
+        // Pitch and yaw damping (mostly the tail): ½ρ·V·rate – the part of the tail in the prop's slipstream turns
+        // through the slipstream's speed, so a hanging model is damped too, not only one with airspeed.
+        let vWash = u + washDelta
+        let vPitch = V * (1 - m.washElevator) + vWash * m.washElevator
+        let vYaw = V * (1 - m.washRudder) + vWash * m.washRudder
+        torque.x += 0.5 * Self.rho * vPitch * m.S * m.cbar * m.Cmq * qq * m.cbar / 2
+        torque.y += -0.5 * Self.rho * vYaw * m.S * m.b * m.Cnr * r * m.b / 2
         // Elevator and rudder: the part in the prop's slipstream keeps working at any airspeed (hover, prop hang),
         // the rest sees the free stream (and loses grip in a stall).
         let qElev = qbar * (1 - m.washElevator) * stallFade + qWash * m.washElevator
