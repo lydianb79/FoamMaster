@@ -185,7 +185,8 @@ extension AircraftConfig {
     /// Lateral position of the twin booms / fins.
     var boomX: Double { hStabSpan / 2 - 7 }
     /// Where the ailerons / elevons are along one half span (mm from the centre line) – as the builder lays them out:
-    /// from near the root with one central servo (else from about 30 % of the half span) to just short of the tip.
+    /// from near the root with one central servo and on the 3D Plane (else from about 30 % of the half span) to just
+    /// short of the tip.
     /// Nil without them. (The flight simulator puts them on its wing strips there – in the prop's slipstream when
     /// they reach in close.)
     var aileronStations: ClosedRange<Double>? {
@@ -207,7 +208,7 @@ extension AircraftConfig {
         } else {
             let hw = fuselagePlateWidth / 2
             let central = hasAilerons && aileronServos == 1 && kind.allowsSingleAileronServo
-            inner = hw + (central ? 3 : max(8, s * 0.3 - hw)); outer = s - 10 - tip
+            inner = hw + (central ? 3 : (kind == .aerobat ? 8 : max(8, s * 0.3 - hw))); outer = s - 10 - tip
         }
         return outer > inner + 1 ? inner...outer : nil
     }
@@ -995,7 +996,9 @@ enum DesignBuilder {
             let half = TaperedPanel(rootLE: w.le(hw), rootChord: w.chord(hw), tipChord: c.tipChord,
                                     sweep: c.sweep - w.le(hw), semiSpan: span)
             let central = centralAileron
-            let a0 = central ? 3 : max(8, s * 0.3 - hw)
+            // Ailerons from near the root with one central servo – and always on the 3D Plane: their inner part sits in
+            // the prop's slipstream, so they still work in a hover (holding the torque roll); else from ~30 % of the span.
+            let a0 = central ? 3 : (c.kind == .aerobat ? 8 : max(8, s * 0.3 - hw))
             let surfaces: [ClosedRange<Double>] = c.hasAilerons ? [aileronSpan(from: a0, to: span - 10 - wingTipRadius, what: "fuselage")] : []
             let out = half.build(full: false, surfaces: surfaces, fraction: f)
             let ua = half.le(0), ub = half.te(0)

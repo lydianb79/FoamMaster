@@ -194,7 +194,8 @@ enum SelfTest {
         let rudB = Poly.bounds(rud.polygon)
         let reach = (rudB.max.x - rudB.min.x) * sin(T * .pi / 180) + tw / 2
         var deepest = 0.0, at: Double?
-        for part in d.parts where part.instances.allSatisfy({ abs($0.normal.y) > 0.9 }) {
+        // (the elevator only – not the wing's ailerons, which may reach in close to the fuselage but turn far ahead of the fin)
+        for part in d.parts where part.role != .wing && part.instances.allSatisfy({ abs($0.normal.y) > 0.9 }) {
             for r in part.regions where r.isControl {
                 guard let axis = SceneBuilder.hingeAxis(part, r.polygon) else { continue }
                 var flat: [Vec2] = []
@@ -974,14 +975,14 @@ enum SelfTest {
             let h3dNone = hover(.aerobat, pitch: 0), h3d = hover(.aerobat, pitch: 0.5)
             let wingNone = hover(.flyingWing, pitch: 0), wing = hover(.flyingWing, pitch: 0.5)
             let e3d = h3d.pitchRate - h3dNone.pitchRate, eWing = wing.pitchRate - wingNone.pitchRate
-            // Roll in the hover: where the ailerons reach into the slipstream (3D Plane with one central aileron servo –
-            // its ailerons start at the fuselage) full right aileron must beat the torque roll; with two servos they start
-            // at 30 % of the half span, outside a 4" prop's slipstream, and can hardly act.
+            // Roll in the hover: the 3D Plane's ailerons start at the fuselage (one central servo or two), their inner part
+            // sits in the slipstream – full right aileron must beat the torque roll with either layout.
             let tq1 = hover(.aerobat, pitch: 0, servos: 1), r1 = hover(.aerobat, pitch: 0, roll: 1, servos: 1)
             let r2 = hover(.aerobat, pitch: 0, roll: 1)
-            let washOK = e3d > 1 && abs(eWing) < e3d * 0.25 && h3dNone.roll < -0.05 && r1.roll > 0.1
-            print(String(format: "Hover roll (3D Plane, full right aileron, no airspeed): 1 central servo %+.2f rad/s (torque alone %+.2f) – 2 servos %+.2f (ailerons outside the slipstream)%@",
-                         r1.roll, tq1.roll, r2.roll, r1.roll > 0.1 ? "" : "  ← PROBLEM"))
+            let rollOK = r1.roll > 0.1 && r2.roll > 0.1
+            let washOK = e3d > 1 && abs(eWing) < e3d * 0.25 && h3dNone.roll < -0.05 && rollOK
+            print(String(format: "Hover roll (3D Plane, full right aileron, no airspeed): 2 servos %+.2f rad/s (torque alone %+.2f), 1 central servo %+.2f (torque alone %+.2f)%@",
+                         r2.roll, h3dNone.roll, r1.roll, tq1.roll, rollOK ? "" : "  ← PROBLEM"))
             print(String(format: "Prop wash (hanging on the prop, no airspeed): elevator → pitch rate 3D Plane %.1f rad/s, Flying Wing (pusher, nothing in the wash) %.2f rad/s; motor torque rolls the 3D Plane %.2f rad/s (− = left)%@",
                          e3d, eWing, h3dNone.roll, washOK ? "" : "  ← PROBLEM"))
         }
