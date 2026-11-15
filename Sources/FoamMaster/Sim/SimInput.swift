@@ -294,6 +294,16 @@ final class SimInputState {
     func keyUp(_ code: UInt16) { pressed.remove(code) }
     /// Forget held keys (the window lost them, e.g. on close).
     func releaseAll() { pressed.removeAll() }
+    /// The motor is armed – as an ESC does, only once the throttle has been at zero. Every simulator session starts
+    /// disarmed with the keyboard throttle at zero, so the prop stands still until you give it throttle; a transmitter
+    /// whose throttle stick is up has to come down to zero first.
+    private(set) var armed = false
+    /// A new session: keyboard throttle and keys back to zero, the motor disarmed.
+    func startSession() {
+        pressed.removeAll()
+        keyStick = StickInput()
+        armed = false
+    }
     private func held(_ a: SimAction) -> Bool { pressed.contains(controls.key(a)) }
 
     /// Raw −1…1 (sticks) / 0…1 (throttle) value of a channel from the transmitter, calibrated; nil without one.
@@ -329,7 +339,11 @@ final class SimInputState {
             if let v = transmitter(.roll, dev), abs(keyStick.roll) < 0.01 { out.roll = v }
             if let v = transmitter(.pitch, dev), abs(keyStick.pitch) < 0.01 { out.pitch = v }
             if let v = transmitter(.yaw, dev), abs(keyStick.yaw) < 0.01 { out.yaw = v }
-            if let v = transmitter(.throttle, dev) { out.throttle = v; keyStick.throttle = v }
+            if let v = transmitter(.throttle, dev) {
+                // (the motor arms once the throttle stick has been down)
+                if !armed && v < 0.03 { armed = true }
+                out.throttle = armed ? v : 0; keyStick.throttle = out.throttle
+            } else { armed = true }       // (no throttle channel: the keyboard throttle, from zero)
             // Launch switch: flipping it into its active position throws the model (a switch already there when
             // the simulator starts has to be flipped again).
             switchState(launchSwitchActive(dev))
@@ -337,6 +351,7 @@ final class SimInputState {
             // Rate switch: its position picks the rates (active = high).
             if let high = rateSwitchActive(dev) { lowRates = !high; rateSwitchInCharge = true } else { rateSwitchInCharge = false }
         } else {
+            armed = true                  // (the keyboard throttle starts at zero)
             lastSwitch = nil; lastReset = nil
             if rateSwitchInCharge { rateSwitchInCharge = false; lowRates = controls.lowRateOn ?? false }
         }

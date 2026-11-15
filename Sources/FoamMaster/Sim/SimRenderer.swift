@@ -163,6 +163,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
 
     /// The aircraft in its own (mm) frame with moving surfaces and props, rotated about its CG.
     func setAircraft(_ d: Design, _ a: Analysis) {
+        propRPS = 0; propAngle = 0          // a new session: the prop stands still
         var scene = SceneBuilder.aircraft(d, a, deflection: 0, showCG: false, animated: true)
         // The props: dark, the blades taken out to be drawn with motion blur, the editor's ring left out; a disc per prop.
         var bladeVerts: [GPUVertex] = [], discVerts: [GPUVertex] = []

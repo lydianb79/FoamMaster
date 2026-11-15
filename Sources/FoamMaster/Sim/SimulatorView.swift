@@ -117,6 +117,7 @@ final class SimController: ObservableObject {
         trimMM = s.model.trimMillimetres(d.config)
         trimSurface = d.config.kind.isTailless ? "elevons" : "elevator"
         input.useTrim(for: "\(d.config.kind.rawValue)/\(d.config.name)")
+        input.startSession()          // throttle at zero, the prop standing still
         input.rudderOnly = d.config.kind.isNutBall
         isNutBall = d.config.kind.isNutBall
         renderer?.setAircraft(d, a)
@@ -338,6 +339,7 @@ struct SimulatorView: View {
             let off = ctl.cgOffset, c = ctl.input.controls
             let cg = (abs(off) < 2 ? "" : String(format: " · CG %.0f mm %@ the target", abs(off), off > 0 ? "behind" : "ahead of"))
                 + String(format: " · trimmed as built (%@ %.1f mm up) – fine-tune with %@ / %@", ctl.trimSurface, ctl.trimMM, keyName(c.key(.trimUp)), keyName(c.key(.trimDown)))
+            if !ctl.input.armed { return "Motor not armed – move the throttle stick all the way down to arm it" }
             return "In your hand – set the throttle, then press \(keyName(ctl.input.controls.key(.launch)))\(sw) to let it go\(cg)"
         case .flying: return String(format: "Flying · %.0f s", h.time)
         case .landed:
