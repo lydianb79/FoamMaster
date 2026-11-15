@@ -59,8 +59,10 @@ struct SimControls: Codable, Equatable {
         if low { var e = lowExpo ?? expo; e[ch.rawValue] = v; lowExpo = e } else { expo[ch.rawValue] = v }
     }
     var autoZoom = true
-    /// Pitch trim per design (−0.6…0.6 of the elevator throw, + = nose up). Optional so older settings still load.
-    var trims: [String: Double]?
+    /// Pitch trim per design on top of the trim the model is built with (−0.6…0.6 of the elevator throw, + = nose
+    /// up). Optional so older settings still load; the trims saved before the models had their built-in trim (key
+    /// "trims") made up for its lack, so they are left behind.
+    var trimsAsBuilt: [String: Double]?
     /// A transmitter switch that launches the model when flipped to its active position.
     struct SwitchMapping: Codable, Equatable {
         enum Kind: String, Codable { case axis, button }
@@ -240,14 +242,14 @@ final class SimInputState {
     /// The trim saved for this design.
     func useTrim(for design: String) {
         trimKey = design
-        trim = controls.trims?[design] ?? 0
+        trim = controls.trimsAsBuilt?[design] ?? 0
     }
     func adjustTrim(_ delta: Double) { setTrim(trim + delta) }
     func setTrim(_ v: Double) {
         trim = (min(max(v, -Self.trimLimit), Self.trimLimit) / Self.trimStep).rounded() * Self.trimStep
-        var t = controls.trims ?? [:]
+        var t = controls.trimsAsBuilt ?? [:]
         t[trimKey] = trim == 0 ? nil : trim
-        controls.trims = t
+        controls.trimsAsBuilt = t
         controls.save()
     }
 

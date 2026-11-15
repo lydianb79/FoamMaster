@@ -147,10 +147,15 @@ enum BuildDocs {
         s.append(BuildStep(title: "Install servos & linkages", text: "Push the servos into their cutouts (snug fit) and glue them, then centre them with the transmitter and fit the arms with a little clearance to the case and the foam. Glue the horns into the horn slots (hole row over the hinge line).\(d.parts.contains { $0.holes.contains { $0.note == "horn under" } } ? " The elevator horn goes in from below (HORN UNDER on the plan) – clear of the rudder; its pushrod passes through the PUSHROD slot in the plate." : "") Make pushrods from Ø1 mm carbon with Z-bent 0.8 mm wire ends.", symbol: "gearshape.2"))
         s.append(BuildStep(title: "Electronics", text: "Connect ESC and servos to the receiver, fix the receiver with double-sided tape, route wires flat and tape them down. Fix velcro for the \(c.battery.name).", symbol: "bolt"))
         s.append(BuildStep(title: "Balance (CG)", text: "Mark the CG \(cg) mm behind the root leading edge (marked ⊕ on the plan). Move the battery until the model balances level on your fingertips at that mark. Recommended range: \(String(format: "%.0f–%.0f", a.cgRange.lowerBound, a.cgRange.upperBound)) mm.", symbol: "scalemass"))
+        // Up-trim as built: a flat wing and stabiliser need a little up-elevator to fly level with the CG ahead of the
+        // neutral point – the same trim the flight simulator flies with.
+        let trimMM = max(0, FlightModel(d, a).trimMillimetres(c))
+        let surface = c.kind.isTailless ? "elevons" : "elevator"
+        let trim = String(format: " Set the %@ %.1f mm up (trailing edge) with the stick and the transmitter trim centred – the trim a flat wing needs to fly level at about half throttle at this CG; fine-tune with the transmitter trim on the first flights.", surface, (trimMM * 2).rounded() / 2)
         s.append(BuildStep(title: "Set throws & first flight", text: c.kind.isTailless
-            ? "Elevon throws: ±8 mm pitch, ±6 mm roll, 30 % expo. Trim elevons 1–2 mm up. Hand-launch firmly level at ~70 % throttle."
-            : c.kind.isNutBall ? "Throws: elevator ±12 mm, rudder ±20 mm, 40 % expo – a NutBall needs big throws and flies very slowly. Hand-launch level at ~50 % throttle."
-            : "Throws: elevator ±8 mm\(c.hasRudder ? ", rudder ±12 mm" : "")\(c.hasAilerons ? ", ailerons ±10 mm" : ""), 30 % expo. Hand-launch level at ~60 % throttle into the wind.", symbol: "paperplane"))
+            ? "Elevon throws: ±8 mm pitch, ±6 mm roll, 30 % expo.\(trim) Hand-launch firmly level at ~70 % throttle."
+            : c.kind.isNutBall ? "Throws: elevator ±12 mm, rudder ±20 mm, 40 % expo – a NutBall needs big throws and flies very slowly.\(trim) Hand-launch level at ~50 % throttle."
+            : "Throws: elevator ±8 mm\(c.hasRudder ? ", rudder ±12 mm" : "")\(c.hasAilerons ? ", ailerons ±10 mm" : ""), 30 % expo.\(trim) Hand-launch level at ~60 % throttle into the wind.", symbol: "paperplane"))
         return s
     }
 }

@@ -727,13 +727,11 @@ enum SelfTest {
         print("prop test: \(problems == 0 ? "ok" : "\(problems) problems")")
     }
 
-    /// The simulator has no built-in trim: the tests trim like a pilot would – the elevator set for level flight at
-    /// about 1.4 × stall speed (as a pitching moment), for the CG of `reference` (default: the model's own).
+    /// Every model is trimmed as built (`FlightModel.trimElevator`); with a `reference` the elevator keeps that model's
+    /// trim – the CG moved after the model was set up, so it is out of trim.
     static func pilotTrimmed(_ fm: FlightModel, for reference: FlightModel? = nil) -> FlightModel {
-        let r = reference ?? fm
-        let v = max(r.stallSpeed * 1.4, 3), clTrim = 2 * r.mass * 9.81 / (1.225 * v * v * r.S)
         var m = fm
-        m.Cm0 = -r.Cma * clTrim / r.CLa
+        if let reference { m.trimElevator = reference.trimElevator }
         return m
     }
 

@@ -59,6 +59,12 @@ struct FlightModel {
     /// Motor torque (N·m per N of thrust; + rolls left as seen from behind) and the prop's angular momentum per
     /// throttle (kg·m²/s along +z body; tractor props spin clockwise from behind → H points forward, −z).
     var torquePerThrust: Double = 0, propH: Double = 0
+    /// Elevator (elevons) set up as built (rad, + = trailing edge up): a flat wing and a flat stabiliser in one plane
+    /// make no lift at zero incidence, so a model with its CG ahead of the neutral point needs a little up-elevator to
+    /// fly level – set at the linkage when the model is set up (see the build instructions), not held by the pilot.
+    /// Sized for level flight at `trimSpeed` (1.5 × stall) at half throttle, the elevator's share in the slipstream
+    /// included – so more power blows more over the up-elevator and the model climbs, less and it sinks, as a real one.
+    var trimElevator: Double = 0, trimSpeed: Double = 0
     /// A centre-line fin in the slipstream (its swirl yaws the model); share of the motor torque a wing behind the
     /// prop takes back by straightening the swirl.
     var swirlFin = false, swirlRecovery = 0.0
@@ -101,9 +107,8 @@ struct FlightModel {
             Cmde = CLa * tauE * c.controlChordPct * 0.5     // elevons: lever about half the MAC behind the CG
             Cmq = -0.25 * CLa - 0.4
         }
-        // No built-in trim: the model flies as designed – flat wing and flat stabiliser in one plane, no incidence
-        // difference, so no pitching moment of its own (Cm0 = 0). With the CG ahead of the neutral point it trims to
-        // almost no lift and dives until the pilot trims nose up (T / G in the simulator); the CG is the design's own.
+        // Flat wing and flat stabiliser in one plane, no incidence difference: no pitching moment of its own (Cm0 = 0).
+        // The up-elevator a model with its CG ahead of the neutral point needs is set as built (`trimElevator`).
         Cm0 = 0
         // Roll: ailerons / elevons on the wing strips they cover (`ailTau`), damping of the wing, dihedral effect (flat
         // foam: little).
@@ -261,6 +266,24 @@ struct FlightModel {
         // (about 40 % with the wing right behind a single tractor prop, 20 % more where the + fuselage's vertical
         // halves stand in the slipstream too, like stator vanes; nothing behind a pusher's)
         swirlRecovery = c.isDual || c.isPusher ? 0 : (0.4 + (c.kind.hasFuselage ? 0.2 : 0)) * min(1, stripWash.reduce(0, +))
+        // Built-in trim: lift = weight at the trim speed gives the angle of attack; the elevator holds the pitch moment
+        // of that angle (Cmα · α) with its own dynamic pressure (free stream plus the slipstream at half throttle).
+        trimSpeed = max(stallSpeed * 1.5, 3)
+        let qbar = 0.5 * FlightSim.rho * trimSpeed * trimSpeed
+        let alphaTrim = mass * FlightSim.g / (qbar * S) / CLa
+        let tHalf = staticThrust * pow(0.5, 1.6) * max(0, 1 - trimSpeed / pitchSpeed)
+        let qWashHalf = 0.5 * FlightSim.rho * (trimSpeed * trimSpeed + tHalf / (FlightSim.rho * discArea))
+        let qElev = qbar * (1 - washElevator) + qWashHalf * washElevator
+        trimElevator = Cmde > 1e-6 ? min(max(-Cma * alphaTrim * qbar / (qElev * Cmde), -0.15), 0.15) : 0
+    }
+
+    /// The built-in trim at the elevator's (elevons') trailing edge, mm up (for the build instructions).
+    func trimMillimetres(_ c: AircraftConfig) -> Double {
+        let chord: Double
+        if c.kind.hasTail { chord = c.hStabChord * 0.4 }
+        else if c.kind.isNutBall { chord = c.rootChord * c.controlChordPct }
+        else { chord = cbar * 1000 * c.controlChordPct }
+        return chord * tan(trimElevator)
     }
 
     /// Throws as flown at full stick, degrees (roll, pitch, yaw), and the expo set with them on the radio – a setup
@@ -401,7 +424,8 @@ final class FlightSim {
         let de = surfaces.pitch
         // Deflections that count (rad): the throws as flown, levelling off above ~25°.
         func expo(_ x: Double) -> Double { m.throwExpo * x * x * x + (1 - m.throwExpo) * x }
-        let dA = FlightModel.effective(expo(da) * m.rollThrow), dE = FlightModel.effective(expo(de) * m.pitchThrow), dR = FlightModel.effective(expo(dr) * m.yawThrow)
+        let dA = FlightModel.effective(expo(da) * m.rollThrow), dR = FlightModel.effective(expo(dr) * m.yawThrow)
+        let dE = FlightModel.effective(expo(de) * m.pitchThrow + m.trimElevator)      // (the stick moves the trimmed elevator)
         // Thrust along the nose, falling off with airspeed.
         let u = max(-vb.z, 0)
         // (thrust grows about with rpm², rpm about with throttle → throttle^1.6)

@@ -85,6 +85,9 @@ final class SimController: ObservableObject {
     @Published var isNutBall = false
     /// CG behind (+) / ahead of (−) the recommended CG, mm.
     @Published var cgOffset = 0.0
+    /// Up-elevator the model is built with (mm at the trailing edge), the elevons on a tailless model.
+    @Published var trimMM = 0.0
+    @Published var trimSurface = "elevator"
     @Published var showControls = false
     @Published var autoZoom: Bool
     @Published var camera: SimCamera = SimControls.load().camera ?? .pilot
@@ -109,8 +112,10 @@ final class SimController: ObservableObject {
         sim = s
         loadedRevision = project.revision
         title = "\(d.config.name) · \(d.config.kind.title)"
-        // No built-in trim: say how far the CG is off the recommended one (the pilot trims with T / G).
+        // Say how far the CG is off the recommended one (the model is trimmed as built; T / G fine-tune).
         cgOffset = a.cg.z - a.recommendedCG
+        trimMM = s.model.trimMillimetres(d.config)
+        trimSurface = d.config.kind.isTailless ? "elevons" : "elevator"
         input.useTrim(for: "\(d.config.kind.rawValue)/\(d.config.name)")
         input.rudderOnly = d.config.kind.isNutBall
         isNutBall = d.config.kind.isNutBall
@@ -332,7 +337,7 @@ struct SimulatorView: View {
                 : " (a transmitter switch can launch too: Controls… ▸ Transmitter)"
             let off = ctl.cgOffset, c = ctl.input.controls
             let cg = (abs(off) < 2 ? "" : String(format: " · CG %.0f mm %@ the target", abs(off), off > 0 ? "behind" : "ahead of"))
-                + " · no built-in trim: trim nose up (\(keyName(c.key(.trimUp)))) until it flies level"
+                + String(format: " · trimmed as built (%@ %.1f mm up) – fine-tune with %@ / %@", ctl.trimSurface, ctl.trimMM, keyName(c.key(.trimUp)), keyName(c.key(.trimDown)))
             return "In your hand – set the throttle, then press \(keyName(ctl.input.controls.key(.launch)))\(sw) to let it go\(cg)"
         case .flying: return String(format: "Flying · %.0f s", h.time)
         case .landed:
@@ -438,7 +443,7 @@ struct SimControlsSheet: View {
             }
             .frame(height: 540)
             HStack {
-                Button("Reset to defaults") { let t = controls.trims; controls = SimControls(); controls.trims = t; apply() }
+                Button("Reset to defaults") { let t = controls.trimsAsBuilt; controls = SimControls(); controls.trimsAsBuilt = t; apply() }
                 Spacer()
                 Button("Done") { apply(); done() }.keyboardShortcut(.defaultAction)
             }
