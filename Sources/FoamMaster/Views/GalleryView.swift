@@ -34,6 +34,13 @@ struct RootView: View {
         .ignoresSafeArea(.container, edges: .top)
         .animation(.easeInOut(duration: 0.3), value: project.config == nil)
         .animation(.spring(duration: 0.35), value: project.statusMessage)
+        .onAppear {
+            // `--screenshots <dir>`: the README's screenshots (see Screenshots).
+            let args = CommandLine.arguments
+            if let i = args.firstIndex(of: "--screenshots") {
+                Screenshots.run(URL(fileURLWithPath: i + 1 < args.count ? args[i + 1] : "screenshots"), project: project)
+            }
+        }
     }
 }
 
