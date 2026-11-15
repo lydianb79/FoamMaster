@@ -138,19 +138,6 @@ enum SceneBuilder {
             }
             // Carbon: wing spars (if enabled), truss strips, boom grooves, X-bracing – drawn as strips on both faces.
             for f in part.features {
-                if case let .joiner(p0, p1, dia) = f {
-                    // Elevator joiner: rod in its groove on top, just behind the hinge.
-                    scene.label = "Elevator joiner – carbon rod Ø\(String(format: "%.1f", dia)) mm"
-                    for inst in part.instances {
-                        let up = inst.normal.y < 0 ? -inst.normal : inst.normal
-                        let a3 = inst.point(p0, offset: part.thickness / 2 - dia / 2 + 0.3), b3 = inst.point(p1, offset: part.thickness / 2 - dia / 2 + 0.3)
-                        let dir = simd_normalize(b3 - a3), side = simd_normalize(simd_cross(dir, up))
-                        let rod = Mesh3D.extrude(Poly.circle(.zero, dia / 2, segments: 12), z0: 0, z1: simd_distance(a3, b3))
-                            .transformed { p in a3 + side * p.x + up * p.y + dir * p.z }
-                        scene.addMesh(rod, color: Palette.carbon)
-                    }
-                    continue
-                }
                 if case let .rod(p0, p1, dia) = f {
                     // Rod in its groove under the wing: drawn 0.3 mm proud of the underside so it shows from below
                     // (flush it would flicker with the foam), plus a thin dark band on the top surface along the
@@ -816,12 +803,10 @@ struct SurfaceMove {
     /// The moved surface a control's horn sits on: horn standing out of that surface's face, nearest hinge line
     /// (the horn is a few mm behind its hinge; neighbouring surfaces are far away or face another way).
     static func driven(by ctrl: ControlSurface, in moves: [SurfaceMove]) -> SurfaceMove? {
-        // (two halves on one hinge line – the elevator split by the rudder: the half on the horn's side)
-        let side = { (m: SurfaceMove) in abs(ctrl.hornPosition.x) > 1 && m.probe.x * ctrl.hornPosition.x < 0 ? 1.0 : 0.0 }
-        return moves.filter { abs(simd_dot(simd_normalize(ctrl.hornAxis), $0.normal)) > 0.7 }
+        moves.filter { abs(simd_dot(simd_normalize(ctrl.hornAxis), $0.normal)) > 0.7 }
             .map { ($0, $0.distance(to: ctrl.hornPosition)) }
             .filter { $0.1 < 30 }
-            .min { ($0.1 + 1000 * side($0.0)) < ($1.1 + 1000 * side($1.0)) }?.0
+            .min { $0.1 < $1.1 }?.0
     }
     /// Distance of a point from the hinge segment.
     func distance(to p: SIMD3<Double>) -> Double {

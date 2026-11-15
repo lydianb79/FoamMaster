@@ -254,18 +254,6 @@ enum PlanDrawer {
                     let mid = (pa + pb) / 2 + Vec2(-d.y, d.x) * (dia / 2 + 2.2)
                     text("CARBON SPAR Ø\(dia == dia.rounded() ? String(format: "%.0f", dia) : String(format: "%.1f", dia)) MM – GROOVE UNDERNEATH", at: mid, size: 2.3, color: sparColor, weight: .bold, centered: true)
                 }
-            case let .joiner(a, b, dia):
-                // Elevator joiner: a band of the rod's width across the elevator halves, labelled beside it.
-                let pa = map(a), pb = map(b)
-                let d = simd_normalize(pb - pa), n = Vec2(-d.y, d.x) * max(dia, 0.8) / 2
-                ctx.saveGState()
-                let band = CGMutablePath()
-                band.addLines(between: [pa + n, pb + n, pb - n, pa - n].map { CGPoint(x: $0.x, y: $0.y) }); band.closeSubpath()
-                ctx.addPath(band); ctx.setFillColor(sparColor.withAlphaComponent(0.45).cgColor); ctx.fillPath()
-                ctx.addPath(band); ctx.setStrokeColor(sparColor.cgColor); ctx.setLineWidth(0.25); ctx.strokePath()
-                ctx.restoreGState()
-                let lead = pb + d * 2.5
-                text("ELEVATOR JOINER Ø\(dia == dia.rounded() ? String(format: "%.0f", dia) : String(format: "%.1f", dia)) – GROOVE ON TOP", at: lead + Vec2(-d.y, d.x) * 2.5, size: 2.0, color: sparColor, weight: .bold, centered: true)
             case let .spar(a, b, w):
                 let d = simd_normalize(map(b) - map(a)), n = Vec2(-d.y, d.x) * w / 2
                 line(ctx, map(a) + n, map(b) + n, color: sparColor, width: 0.3, dash: [3, 1.5])

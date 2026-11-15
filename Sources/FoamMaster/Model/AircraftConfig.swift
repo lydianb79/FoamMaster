@@ -157,7 +157,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
             c.wingspan = 560; c.rootChord = 190; c.tipChord = 150; c.sweep = 20; c.dihedral = 0
             c.controlChordPct = 0.32
             c.fuselageLength = 560; c.fuselageHeight = 135; c.noseLength = 110; c.tailArm = 290
-            c.hStabSpan = 250; c.hStabChord = 110; c.vStabHeight = 100; c.vStabChord = 105; c.hStabSweep = 11
+            c.hStabSpan = 250; c.hStabChord = 110; c.vStabHeight = 115; c.vStabChord = 125; c.hStabSweep = 11
             // Light for floaty 3D: 3 mm Depron (struts carry the wing), 2S 300, 2.5 g servos, slow-fly motor with an 8" 2-blade.
             c.material = .depron3; c.motor = .m1806s; c.battery = .s2_300; c.servo = .g25
         case .glider:

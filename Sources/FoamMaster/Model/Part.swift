@@ -31,9 +31,6 @@ enum Feature {
     case spar(Vec2, Vec2, Double)
     /// Wing spar: carbon rod (diameter) in a groove underneath, bottom flush with the underside.
     case rod(Vec2, Vec2, Double)
-    /// Elevator joiner: carbon rod (diameter) in a groove on top just behind the hinge, joining the two elevator halves
-    /// across the gap the rudder swings through (under the hinge tape).
-    case joiner(Vec2, Vec2, Double)
     /// Marker for the recommended centre of gravity.
     case cg(Vec2)
     /// Dashed outline for component placement (battery, receiver …).
@@ -161,8 +158,6 @@ struct Design {
     var geometryIssues: [String]
     /// Carbon truss strip length (mm, both sides) for the BOM.
     var trussLength: Double = 0
-    /// Carbon rod joining the two elevator halves (3D Plane, NutBall: the rudder reaches through between them), mm.
-    var elevatorJoinerLength: Double = 0
     /// Carbon stabilisation struts (rods between wing and fuselage webs).
     var struts: [Strut] = []
     /// Why planned struts were left out (shown in the checks).
