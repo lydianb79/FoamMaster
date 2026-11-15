@@ -61,9 +61,12 @@ struct SimControls: Codable, Equatable {
     var smoke: Bool?
     var mixesRollToRudder: Bool { rollToRudder ?? true }
 
-    func key(_ a: SimAction) -> UInt16 { keys[a.rawValue] ?? a.defaultKey }
-    /// Esc leaves the simulator unless one of its actions is bound to Esc.
-    var escExits: Bool { !SimAction.allCases.contains { key($0) == UInt16(kVK_Escape) } }
+    /// Esc always leaves the simulator, so it is never an action's key: an older setting that bound one to Esc falls
+    /// back to that action's default key.
+    func key(_ a: SimAction) -> UInt16 {
+        let k = keys[a.rawValue] ?? a.defaultKey
+        return k == UInt16(kVK_Escape) ? a.defaultKey : k
+    }
     static let storageKey = "simControls"
     static func load() -> SimControls {
         guard let d = UserDefaults.standard.data(forKey: storageKey), let c = try? JSONDecoder().decode(SimControls.self, from: d) else { return SimControls() }

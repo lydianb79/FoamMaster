@@ -11,6 +11,7 @@ final class SimSession: NSObject, NSWindowDelegate {
     let window: NSWindow
     let controller: SimController
     private var enteredFullScreen = false
+    private var escMonitor: Any?
 
     /// Opens the simulator for the project's design (a fresh session every time).
     static func open(_ project: Project) {
@@ -38,6 +39,13 @@ final class SimSession: NSObject, NSWindowDelegate {
         super.init()
         window.delegate = self
         controller.exitAction = { [weak self] in self?.close() }
+        // Esc leaves the simulator whatever has the focus in its window (the 3D view, a HUD button or slider) – but not
+        // while the controls sheet is open (Esc closes the sheet there).
+        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            guard e.keyCode == 53, let self, e.window === self.window, self.window.attachedSheet == nil else { return e }
+            self.close()
+            return nil
+        }
     }
 
     /// Shows the window, in full screen.
@@ -58,6 +66,7 @@ final class SimSession: NSObject, NSWindowDelegate {
     func windowWillEnterFullScreen(_ notification: Notification) { enteredFullScreen = true }
     func windowDidBecomeKey(_ notification: Notification) { goFullScreen() }
     func windowWillClose(_ notification: Notification) {
+        if let m = escMonitor { NSEvent.removeMonitor(m); escMonitor = nil }
         controller.shutdown()
         if Self.current === self { Self.current = nil }
         // Tear down the view (Metal view, renderer, HUD) once the window is gone.
@@ -165,11 +174,9 @@ final class SimController: ObservableObject {
 /// MTKView that takes the keyboard (the sim's keys) while the simulator window is in front; Esc leaves.
 final class SimMTKView: MTKView {
     var onKey: ((UInt16, Bool, Bool) -> Void)?
-    /// Whether Esc leaves the simulator (only while no simulator action is bound to Esc).
-    var escExits: () -> Bool = { true }
     override var acceptsFirstResponder: Bool { true }
     override func keyDown(with e: NSEvent) {
-        if e.keyCode == 53, escExits() { window?.performClose(nil); return }          // Esc
+        if e.keyCode == 53 { return }          // Esc: the session leaves the simulator
         onKey?(e.keyCode, true, e.isARepeat)
     }
     override func keyUp(with e: NSEvent) { onKey?(e.keyCode, false, false) }
@@ -189,7 +196,6 @@ struct SimMetalView: NSViewRepresentable {
         }
         let input = controller.input
         v.onKey = { code, down, rep in if down { input.keyDown(code, repeat: rep) } else { input.keyUp(code) } }
-        v.escExits = { input.controls.escExits }
 
         return v
     }
@@ -261,7 +267,7 @@ struct SimulatorView: View {
                 Button { ctl.load(project) } label: { Label("Reload design", systemImage: "arrow.clockwise") }
                 Button { ctl.showControls = true } label: { Label("Controls…", systemImage: "gamecontroller") }
                 Button { ctl.exitAction?() } label: { Label("Exit", systemImage: "xmark.circle.fill") }
-                    .help(ctl.input.controls.escExits ? "Leave the simulator (Esc)" : "Leave the simulator")
+                    .help("Leave the simulator (Esc)")
             }
             .padding(10).background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
             HStack(alignment: .top, spacing: 14) {
@@ -327,7 +333,7 @@ struct SimulatorView: View {
     private var keysHint: String {
         let c = ctl.input.controls
         let k = { (a: SimAction) in keyName(c.key(a)) }
-        return "\(k(.launch)) launch · \(k(.reset)) reset · \(k(.throttleUp))/\(k(.throttleDown)) throttle · \(k(.pitchUp))/\(k(.pitchDown)) elevator · \(k(.rollLeft))/\(k(.rollRight)) aileron · \(k(.yawLeft))/\(k(.yawRight)) rudder · \(k(.trimUp))/\(k(.trimDown)) pitch trim · \(k(.zoom)) zoom · \(k(.camera)) camera\(c.escExits ? " · Esc exit" : "") – or fly with your transmitter (USB, joystick mode)"
+        return "\(k(.launch)) launch · \(k(.reset)) reset · \(k(.throttleUp))/\(k(.throttleDown)) throttle · \(k(.pitchUp))/\(k(.pitchDown)) elevator · \(k(.rollLeft))/\(k(.rollRight)) aileron · \(k(.yawLeft))/\(k(.yawRight)) rudder · \(k(.trimUp))/\(k(.trimDown)) pitch trim · \(k(.zoom)) zoom · \(k(.camera)) camera · Esc exit – or fly with your transmitter (USB, joystick mode)"
     }
 }
 
@@ -432,6 +438,7 @@ struct SimControlsSheet: View {
         .onAppear {
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
                 guard let a = capture else { return e }
+                if e.keyCode == 53 { capture = nil; return nil }      // Esc is kept for leaving the simulator
                 controls.keys[a.rawValue] = e.keyCode
                 capture = nil; apply()
                 return nil
