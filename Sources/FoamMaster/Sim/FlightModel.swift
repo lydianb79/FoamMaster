@@ -47,6 +47,9 @@ struct FlightModel {
     var aileronDCL: Double = 0
     /// Share of the elevator / rudder inside the prop's slipstream, total disc area (m²).
     var washElevator: Double = 0, washRudder: Double = 0, discArea: Double = 0.01
+    /// The rudder's share in the slipstream above the thrust line less the share below it: the swirl turns the other
+    /// way below the axis, so a rudder reaching down through the elevator catches little net swirl.
+    var washSwirl: Double = 0
     /// Motor torque (N·m per N of thrust; + rolls left as seen from behind) and the prop's angular momentum per
     /// throttle (kg·m²/s along +z body; tractor props spin clockwise from behind → H points forward, −z).
     var torquePerThrust: Double = 0, propH: Double = 0
@@ -168,17 +171,24 @@ struct FlightModel {
             // (the slipstream's core contracts to about 0.7 D)
             washElevator = min(1, 0.7 * D / max(elevSpan, 0.05)) * (c.isDual ? 0.3 : 1)
             // The rudder: the part of its outline inside the slipstream's core (radius 0.35 D about the thrust line, at
-            // the plate) – it runs from just above the plate (less the cut-out the elevator swings up into) to the fin
-            // top. Not behind the dual tractor's outboard props, nor on the twin boom's fins out on the booms.
+            // the plate) – above the plate from just over it (less the cut-out the elevator swings up into) to the fin
+            // top; on the 3D Plane and the NutBall also below the plate, where it reaches down through the elevator.
+            // Not behind the dual tractor's outboard props, nor on the twin boom's fins out on the booms.
             if let r = d.controls.first(where: { $0.name == "Rudder" }), r.outline.count >= 3, !c.isDual {
-                let core = 0.35 * D * 1000 - c.material.thickness / 2
+                let core = 0.35 * D * 1000, half = c.material.thickness / 2     // outline v is above the plate top
                 let bb = Poly.bounds(r.outline)
-                let inCore = core > bb.min.y ? Poly.area(Poly.clip(r.outline, to: Poly.rect(minU: bb.min.x - 1, maxU: bb.max.x + 1, minV: bb.min.y - 1, maxV: core))) : 0
-                washRudder = min(1, inCore / max(Poly.area(r.outline), 1))
+                func inBand(_ lo: Double, _ hi: Double) -> Double {
+                    hi > bb.min.y ? Poly.area(Poly.clip(r.outline, to: Poly.rect(minU: bb.min.x - 1, maxU: bb.max.x + 1, minV: lo, maxV: hi))) : 0
+                }
+                let above = inBand(-half, core - half), below = inBand(-core - half, -half), area = max(Poly.area(r.outline), 1)
+                washRudder = min(1, (above + below) / area)
+                washSwirl = (above - below) / area
             } else if c.kind.isTwinBoom {
                 washRudder = c.boomX / 1000 < 0.35 * D ? 0.3 : 0
+                washSwirl = washRudder
             } else {
                 washRudder = c.isDual ? 0 : min(1, 0.35 * D / max(c.vStabHeight / 1000, 0.02))
+                washSwirl = washRudder
             }
         }
         // Motor torque Q ≈ 0.06 · T · D; counter-rotating dual props cancel. Pusher props turn the other way.
@@ -396,8 +406,8 @@ final class FlightSim {
             torque += SIMD3<Double>(qS * m.cbar * Cm, -qS * m.b * Cn, -qS * m.b * Cl)
         }
         // (what the wing and the fuselage ahead of it have straightened out no longer reaches the fin)
-        if m.swirlFin, m.washRudder > 0 {
-            torque.y += swirlSense * qWash * m.washRudder * m.S * m.b * m.Cnb * atan(vSwirl * (1 - m.swirlRecovery) / max(u + washDelta, 0.5))
+        if m.swirlFin, m.washSwirl != 0 {
+            torque.y += swirlSense * qWash * m.washSwirl * m.S * m.b * m.Cnb * atan(vSwirl * (1 - m.swirlRecovery) / max(u + washDelta, 0.5))
         }
         // Pitch and yaw damping (mostly the tail): ½ρ·V·rate – the part of the tail in the prop's slipstream turns
         // through the slipstream's speed, so a hanging model is damped too, not only one with airspeed.
