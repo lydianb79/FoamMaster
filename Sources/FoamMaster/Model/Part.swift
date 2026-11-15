@@ -127,6 +127,9 @@ struct ControlSurface {
     /// Tip of the servo arm (pushrod end at the servo) and the direction the horn sticks out of the surface.
     var armPosition: SIMD3<Double> = .zero
     var hornAxis: SIMD3<Double> = [0, 1, 0]
+    /// Outline in its part's plane (the rudder: u along the fuselage, v up from the plate's top) – the flight model
+    /// measures how much of it lies in the prop's slipstream.
+    var outline: [Vec2] = []
 }
 
 /// Complete derived design: parts plus the components that go into it.

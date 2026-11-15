@@ -167,7 +167,19 @@ struct FlightModel {
             let elevSpan = c.kind.isNutBall ? 0.6 * c.wingspan / 1000 : c.hStabSpan / 1000
             // (the slipstream's core contracts to about 0.7 D)
             washElevator = min(1, 0.7 * D / max(elevSpan, 0.05)) * (c.isDual ? 0.3 : 1)
-            washRudder = c.isDual ? 0 : min(1, 0.35 * D / max(c.vStabHeight / 1000, 0.02))
+            // The rudder: the part of its outline inside the slipstream's core (radius 0.35 D about the thrust line, at
+            // the plate) – it runs from just above the plate (less the cut-out the elevator swings up into) to the fin
+            // top. Not behind the dual tractor's outboard props, nor on the twin boom's fins out on the booms.
+            if let r = d.controls.first(where: { $0.name == "Rudder" }), r.outline.count >= 3, !c.isDual {
+                let core = 0.35 * D * 1000 - c.material.thickness / 2
+                let bb = Poly.bounds(r.outline)
+                let inCore = core > bb.min.y ? Poly.area(Poly.clip(r.outline, to: Poly.rect(minU: bb.min.x - 1, maxU: bb.max.x + 1, minV: bb.min.y - 1, maxV: core))) : 0
+                washRudder = min(1, inCore / max(Poly.area(r.outline), 1))
+            } else if c.kind.isTwinBoom {
+                washRudder = c.boomX / 1000 < 0.35 * D ? 0.3 : 0
+            } else {
+                washRudder = c.isDual ? 0 : min(1, 0.35 * D / max(c.vStabHeight / 1000, 0.02))
+            }
         }
         // Motor torque Q ≈ 0.06 · T · D; counter-rotating dual props cancel. Pusher props turn the other way.
         let sense: Double = c.isDual ? 0 : (c.kind.isPusher ? -1 : 1)

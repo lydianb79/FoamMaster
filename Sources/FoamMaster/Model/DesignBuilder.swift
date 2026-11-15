@@ -1285,7 +1285,7 @@ enum DesignBuilder {
                 let rBody: SIMD3<Double> = [0, 0, uRC]
                 controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [tw / 2 + 8, t / 2 + rHornV, uH + 2],
                                                servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
-                                               armPosition: armTip(rBody, side: 1), hornAxis: [1, 0, 0]))
+                                               armPosition: armTip(rBody, side: 1), hornAxis: [1, 0, 0], outline: rudder))
             }
 
             batteryPos = [tw / 2 + c.battery.size.h / 2, -c.batteryTop - c.battery.size.w / 2, c.batteryPosition]
@@ -1494,7 +1494,7 @@ enum DesignBuilder {
                 let rBody: SIMD3<Double> = [0, 0, uRJ]
                 controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [tw / 2 + 8, t / 2 + rHornV, uH + 2],
                                                servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
-                                               armPosition: armTip(rBody, side: 1), hornAxis: [1, 0, 0]))
+                                               armPosition: armTip(rBody, side: 1), hornAxis: [1, 0, 0], outline: rudder))
             }
             batteryPos = [tw / 2 + c.battery.size.h / 2, -c.batteryTop - c.battery.size.w / 2, c.batteryPosition]
         }
@@ -1784,7 +1784,7 @@ enum DesignBuilder {
             let rBody: SIMD3<Double> = [0, 0, uRN]
             controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [t / 2 + 8, t / 2 + rHornV, uH + 2],
                                            servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
-                                           armPosition: armTip(rBody, side: 1), hornAxis: [1, 0, 0]))
+                                           armPosition: armTip(rBody, side: 1), hornAxis: [1, 0, 0], outline: rudder))
             batteryPos = [t / 2 + c.battery.size.h / 2, -c.batteryTop - c.battery.size.w / 2, c.batteryPosition]
         }
 
