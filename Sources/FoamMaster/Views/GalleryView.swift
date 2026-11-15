@@ -369,6 +369,7 @@ struct SetupSheet: View {
                     .opacity(sized == nil ? 0.6 : 1)
             }
         }
+        .task { Project.prefetchSetups(preview.kind, near: choice) }
         .task(id: optionKey) {
             // Size this option set (all checks at score 100) in the background; cached after the first time.
             guard Project.cachedSetup(preview.kind, choice) == nil else { return }

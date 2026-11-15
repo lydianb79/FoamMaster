@@ -65,9 +65,45 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
         }
     }
     /// grams
-    var mass: Double { [.m0802: 3.0, .m1103: 4.5, .m1104: 6.5, .m1204: 7.5, .m1306: 11, .m1404: 8.8, .m1806: 19, .m2204: 25, .m1806s: 18][self]! }
-    var escMass: Double { [.m0802: 1.5, .m1103: 2.0, .m1104: 3.0, .m1204: 4, .m1306: 5, .m1404: 4, .m1806: 7, .m2204: 9, .m1806s: 4][self]! }
-    var allowedCells: ClosedRange<Int> { [.m0802: 1...1, .m1103: 1...2, .m1104: 1...2, .m1204: 2...3, .m1306: 2...3, .m1404: 2...3, .m1806: 2...3, .m2204: 2...3, .m1806s: 2...2][self]! }
+    var mass: Double {
+        switch self {
+        case .m0802: return 3.0
+        case .m1103: return 4.5
+        case .m1104: return 6.5
+        case .m1204: return 7.5
+        case .m1306: return 11
+        case .m1404: return 8.8
+        case .m1806: return 19
+        case .m2204: return 25
+        case .m1806s: return 18
+        }
+    }
+    var escMass: Double {
+        switch self {
+        case .m0802: return 1.5
+        case .m1103: return 2.0
+        case .m1104: return 3.0
+        case .m1204: return 4
+        case .m1306: return 5
+        case .m1404: return 4
+        case .m1806: return 7
+        case .m2204: return 9
+        case .m1806s: return 4
+        }
+    }
+    var allowedCells: ClosedRange<Int> {
+        switch self {
+        case .m0802: return 1...1
+        case .m1103: return 1...2
+        case .m1104: return 1...2
+        case .m1204: return 2...3
+        case .m1306: return 2...3
+        case .m1404: return 2...3
+        case .m1806: return 2...3
+        case .m2204: return 2...3
+        case .m1806s: return 2...2
+        }
+    }
     /// Static thrust in g for a given cell count (manufacturer typical values).
     func thrust(cells: Int) -> Double {
         guard allowedCells.contains(cells) else { return 0 }
@@ -94,8 +130,32 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
         return "\(fmt(propInches)) × \(fmt(pitch))\" \(blades)-blade \(pusher ? "pusher (reverse rotation)" : "tractor")"
     }
     /// Typical maximum current per motor at full throttle (A).
-    var maxCurrent: Double { [.m0802: 3, .m1103: 5, .m1104: 6, .m1204: 8, .m1306: 10, .m1404: 10, .m1806: 14, .m2204: 18, .m1806s: 7][self]! }
-    var propInches: Double { [.m0802: 2.5, .m1103: 3, .m1104: 4, .m1204: 4, .m1306: 5, .m1404: 4, .m1806: 6, .m2204: 6, .m1806s: 8][self]! }
+    var maxCurrent: Double {
+        switch self {
+        case .m0802: return 3
+        case .m1103: return 5
+        case .m1104: return 6
+        case .m1204: return 8
+        case .m1306: return 10
+        case .m1404: return 10
+        case .m1806: return 14
+        case .m2204: return 18
+        case .m1806s: return 7
+        }
+    }
+    var propInches: Double {
+        switch self {
+        case .m0802: return 2.5
+        case .m1103: return 3
+        case .m1104: return 4
+        case .m1204: return 4
+        case .m1306: return 5
+        case .m1404: return 4
+        case .m1806: return 6
+        case .m2204: return 6
+        case .m1806s: return 8
+        }
+    }
     /// Mounting pattern of the motor base (typical values of common motors of each size):
     /// 0802 3 × M1.4 on Ø6.6 · 1103 4 × M1.6 on Ø8.5 · 1104 / 1204 / 1404 4 × M2 9 × 9 · 1306 4 × M2 12 × 12 ·
     /// 1806 4 × M2 12 × 16 · 2204 4 × M3 16 × 19 (cross patterns give the distances between opposite holes).
@@ -115,7 +175,19 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
     var screw: String { pattern.screw }
     /// Shaft / circlip clearance hole in the middle of the firewall.
     var shaftClearance: Double { min(max(2.5, boltCircle * 0.28), min(pattern.a, pattern.b) / 2 - (pattern.headDiameter + 0.4) / 2 - 0.5) }
-    var bellDiameter: Double { [.m0802: 10, .m1103: 14, .m1104: 14, .m1204: 16, .m1306: 18, .m1404: 18, .m1806: 23, .m2204: 28, .m1806s: 23][self]! }
+    var bellDiameter: Double {
+        switch self {
+        case .m0802: return 10
+        case .m1103: return 14
+        case .m1104: return 14
+        case .m1204: return 16
+        case .m1306: return 18
+        case .m1404: return 18
+        case .m1806: return 23
+        case .m2204: return 28
+        case .m1806s: return 23
+        }
+    }
 }
 
 enum BatteryPack: String, CaseIterable, Identifiable, Codable {
@@ -124,23 +196,68 @@ enum BatteryPack: String, CaseIterable, Identifiable, Codable {
     var cells: Int { Int(String(rawValue.dropFirst().prefix(1)))! }
     var capacity: Double { Double(rawValue.split(separator: "_")[1])! }
     var name: String { "\(cells)S \(Int(capacity)) mAh LiPo" }
-    var mass: Double { [.s1_300: 8.5, .s1_450: 12, .s2_300: 18, .s2_450: 27, .s2_650: 38, .s3_450: 39, .s3_850: 70][self]! }
+    var mass: Double {
+        switch self {
+        case .s1_300: return 8.5
+        case .s1_450: return 12
+        case .s2_300: return 18
+        case .s2_450: return 27
+        case .s2_650: return 38
+        case .s3_450: return 39
+        case .s3_850: return 70
+        }
+    }
     var voltage: Double { Double(cells) * 3.7 }
     /// L x W x H (mm)
     var size: (l: Double, w: Double, h: Double) {
-        [.s1_300: (45, 17, 7), .s1_450: (52, 20, 8), .s2_300: (50, 17, 13), .s2_450: (57, 20, 14),
-         .s2_650: (60, 30, 13), .s3_450: (57, 20, 20), .s3_850: (65, 30, 20)][self]!
+        switch self {
+        case .s1_300: return (45, 17, 7)
+        case .s1_450: return (52, 20, 8)
+        case .s2_300: return (50, 17, 13)
+        case .s2_450: return (57, 20, 14)
+        case .s2_650: return (60, 30, 13)
+        case .s3_450: return (57, 20, 20)
+        case .s3_850: return (65, 30, 20)
+        }
     }
 }
 
 enum ServoClass: String, CaseIterable, Identifiable, Codable {
     case g17, g25, g37, g5
     var id: String { rawValue }
-    var name: String { [.g17: "1.7 g micro servo", .g25: "2.5 g micro servo", .g37: "3.7 g micro servo", .g5: "5 g micro servo"][self]! }
-    var mass: Double { [.g17: 1.7, .g25: 2.5, .g37: 3.7, .g5: 5][self]! }
+    var name: String {
+        switch self {
+        case .g17: return "1.7 g micro servo"
+        case .g25: return "2.5 g micro servo"
+        case .g37: return "3.7 g micro servo"
+        case .g5: return "5 g micro servo"
+        }
+    }
+    var mass: Double {
+        switch self {
+        case .g17: return 1.7
+        case .g25: return 2.5
+        case .g37: return 3.7
+        case .g5: return 5
+        }
+    }
     /// Body size without flanges: length, width, height (mm).
-    var size: (l: Double, w: Double, h: Double) { [.g17: (16, 7, 15), .g25: (18, 8, 17), .g37: (20, 8.5, 18), .g5: (22, 9, 20)][self]! }
-    var torque: Double { [.g17: 0.12, .g25: 0.25, .g37: 0.4, .g5: 0.6][self]! } // kg·cm
+    var size: (l: Double, w: Double, h: Double) {
+        switch self {
+        case .g17: return (16, 7, 15)
+        case .g25: return (18, 8, 17)
+        case .g37: return (20, 8.5, 18)
+        case .g5: return (22, 9, 20)
+        }
+    }
+    var torque: Double {
+        switch self {
+        case .g17: return 0.12
+        case .g25: return 0.25
+        case .g37: return 0.4
+        case .g5: return 0.6
+        }
+    } // kg·cm
     /// Mounting ears (flanges) like on every real micro servo: one at each end of the length, as wide as the body,
     /// sticking out `earLength`, `earThickness` thick, their mid-plane `earOffset` from the body centre towards the
     /// output shaft (a quarter of the height below the shaft face).
@@ -149,9 +266,23 @@ enum ServoClass: String, CaseIterable, Identifiable, Codable {
     var earOffset: Double { size.h * 0.25 }
     /// Servo arm (horn) as fitted: shaft → pushrod hole, the arm 2 mm off the case on the spline, 1.6 mm thick,
     /// 4 mm wide; the pushrod's Z-bend goes through the hole from the arm's OUTER side. Typical micro-servo arms.
-    var armLength: Double { [.g17: 11.0, .g25: 12, .g37: 13, .g5: 14][self]! }
+    var armLength: Double {
+        switch self {
+        case .g17: return 11.0
+        case .g25: return 12
+        case .g37: return 13
+        case .g5: return 14
+        }
+    }
     /// Half length of a double-ended arm (hub → each pushrod hole).
-    var doubleArmHalf: Double { [.g17: 10.0, .g25: 11, .g37: 12, .g5: 13][self]! }
+    var doubleArmHalf: Double {
+        switch self {
+        case .g17: return 10.0
+        case .g25: return 11
+        case .g37: return 12
+        case .g5: return 13
+        }
+    }
     static let armGap = 2.0, armThickness = 1.6, armWidth = 4.0
     /// The pushrod lies outside the arm: offset of the rod axis from the case face (gap + arm + rod radius).
     static var rodOffset: Double { armGap + armThickness + 0.5 }

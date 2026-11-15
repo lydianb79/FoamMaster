@@ -142,9 +142,36 @@ final class Project: ObservableObject {
     /// that still leaves warnings, the smallest airframe changes (sizes, fuselage structure, foam, battery) that clear them.
     nonisolated static func feasibleSetup(_ kind: AircraftKind, _ ch: SetupChoice) -> AircraftConfig {
         if let c = cachedSetup(kind, ch) { return c }
-        let c = sized(setupConfig(kind, ch))
-        setupLock.lock(); setupCache[setupKey(kind, ch)] = c; saveSetupCacheLocked(); setupLock.unlock()
-        return c
+        // One sizing per option set at a time: a pick in the setup sheet, its prefetch and the launch warm-up share it.
+        let key = setupKey(kind, ch)
+        setupLock.lock()
+        if let running = setupInFlight[key] {
+            setupLock.unlock()
+            running.wait()
+            if let c = cachedSetup(kind, ch) { return c }
+        } else {
+            let g = DispatchGroup(); g.enter()
+            setupInFlight[key] = g
+            setupLock.unlock()
+            let c = sized(setupConfig(kind, ch))
+            setupLock.lock(); setupCache[key] = c; saveSetupCacheLocked(); setupInFlight[key] = nil; setupLock.unlock()
+            g.leave()
+            return c
+        }
+        return sized(setupConfig(kind, ch))
+    }
+    nonisolated(unsafe) private static var setupInFlight: [String: DispatchGroup] = [:]
+
+    /// Sizes all option sets of a type in the background, those closest to `choice` first (the setup sheet calls it
+    /// when it opens, so switching options is usually instant).
+    nonisolated static func prefetchSetups(_ kind: AircraftKind, near choice: SetupChoice) {
+        func distance(_ a: SetupChoice) -> Int {
+            (a.fins == choice.fins ? 0 : 1) + (a.layout == choice.layout ? 0 : 1) + (a.servos == choice.servos ? 0 : 1)
+                + (a.motors == choice.motors ? 0 : 1) + (a.winglets == choice.winglets ? 0 : 1)
+        }
+        let todo = setupChoices(kind).filter { cachedSetup(kind, $0) == nil }.sorted { distance($0) < distance($1) }
+        guard !todo.isEmpty else { return }
+        Task.detached(priority: .utility) { for ch in todo { _ = feasibleSetup(kind, ch) } }
     }
 
     /// Sizes every setup of every type in the background (the defaults first), so picking any option is instant.

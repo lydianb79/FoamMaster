@@ -210,6 +210,7 @@ struct StrutPlanner {
     init(design: Design, totalMass: Double, stallSpeed: Double) {
         d = design; c = design.config; t = c.material.thickness
         self.totalMass = totalMass; self.stallSpeed = stallSpeed
+        webs = Self.findWebs(design)
         buildObstacles()
     }
 
@@ -424,8 +425,9 @@ struct StrutPlanner {
         crossings(poly.map { Vec2($0.y, $0.x) }, atV: u)
     }
 
-    /// Vertical fuselage webs (spine, keel, fuselage halves, pod halves).
-    var webs: [(part: Int, insts: [Int])] {
+    /// Vertical fuselage webs (spine, keel, fuselage halves, pod halves) – found once, when the planner is made.
+    private(set) var webs: [(part: Int, insts: [Int])] = []
+    static func findWebs(_ d: Design) -> [(part: Int, insts: [Int])] {
         d.parts.enumerated().compactMap { (pi, part) in
             guard part.role == .fuselage else { return nil }
             let ii = part.instances.indices.filter { abs(part.instances[$0].normal.x) > 0.9 && abs(part.instances[$0].u.z) > 0.9 }

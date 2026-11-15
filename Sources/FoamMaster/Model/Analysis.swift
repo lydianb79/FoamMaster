@@ -135,14 +135,9 @@ struct Analysis {
         // --- Performance
         wingLoading = totalMass / (wingArea * 1e-4)
         stallSpeed = Analysis.stallSpeed(c, totalMass: totalMass, wingArea: wingArea)
-        // A prop smaller than the motor's standard size (jet) gives proportionally less static thrust.
-        thrust = c.customProp
-            ? c.motor.thrust(cells: c.battery.cells) * Double(c.motorCount) * c.propModel.thrust
-            : c.motor.thrust(cells: c.battery.cells) * Double(c.motorCount) * c.propInches / c.motor.propInches
+        thrust = Analysis.staticThrust(c)
         thrustToWeight = thrust / max(totalMass, 1)
-        let wPerKg: Double = [.glider: 70, .trainer: 100, .twinBoom: 110, .jet: 150, .flyingWing: 120, .delta: 140, .aerobat: 170, .nutBall: 110][c.kind]!
-        let current = wPerKg * totalMass / 1000 / c.battery.voltage
-        flightTime = c.battery.capacity * 0.8 / 1000 / max(current, 0.01) * 60
+        flightTime = Analysis.flightTime(c, totalMass: totalMass)
 
         batteryLimits = Analysis.batteryLimits(c)
         if let bat {
@@ -151,6 +146,35 @@ struct Analysis {
             achievableCG = min(a, b)...max(a, b)
         }
         runChecks(d, t: t)
+    }
+
+    /// Static thrust (g) of the power system. A prop smaller than the motor's standard size (jet) gives proportionally
+    /// less static thrust.
+    static func staticThrust(_ c: AircraftConfig) -> Double {
+        c.customProp
+            ? c.motor.thrust(cells: c.battery.cells) * Double(c.motorCount) * c.propModel.thrust
+            : c.motor.thrust(cells: c.battery.cells) * Double(c.motorCount) * c.propInches / c.motor.propInches
+    }
+    /// Flight time (min) at the type's typical average power per kg.
+    static func flightTime(_ c: AircraftConfig, totalMass: Double) -> Double {
+        let wPerKg: Double
+        switch c.kind {
+        case .glider: wPerKg = 70
+        case .trainer: wPerKg = 100
+        case .twinBoom: wPerKg = 110
+        case .jet: wPerKg = 150
+        case .flyingWing: wPerKg = 120
+        case .delta: wPerKg = 140
+        case .aerobat: wPerKg = 170
+        case .nutBall: wPerKg = 110
+        }
+        let current = wPerKg * totalMass / 1000 / c.battery.voltage
+        return c.battery.capacity * 0.8 / 1000 / max(current, 0.01) * 60
+    }
+    /// Mass (g) of the power system as built: motors, ESCs, printed mounts, props and the battery.
+    static func powerMass(_ c: AircraftConfig) -> Double {
+        let prop = c.propInches * 0.35 * (c.customProp ? Double(c.propBladeCount) / Double(c.kind.propBlades) : 1)
+        return Double(c.motorCount) * (c.motor.mass + c.motor.escMass + 1.5 + c.motor.mass * 0.12 + prop) + c.battery.mass
     }
 
     static func stallSpeed(_ c: AircraftConfig, totalMass: Double, wingArea: Double) -> Double {
