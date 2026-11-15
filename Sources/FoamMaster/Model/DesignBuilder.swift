@@ -269,6 +269,7 @@ enum DesignBuilder {
         addPushrodSlots(&b.parts, controls: b.controls)
         var d = Design(config: c, parts: b.parts, components: b.components, controls: b.controls,
                        servoCutouts: b.servoCutouts, geometryIssues: b.issues, trussLength: b.trussLength)
+        d.elevatorJoinerLength = b.elevatorJoiner
         if c.struts != .off || (c.torsionTruss && c.offersTorsionTruss) { addStruts(&d) }
         return d
     }
@@ -392,6 +393,8 @@ enum DesignBuilder {
         var batteryPos = SIMD3<Double>.zero
         /// Total length of carbon truss strips (mm) for the BOM.
         var trussLength = 0.0
+        /// Carbon rod joining the elevator halves (mm, 0 = none) and where it sits along the fuselage (z).
+        var elevatorJoiner = 0.0, elevatorJoinerZ = 0.0
 
         var t: Double { c.material.thickness }
         /// ESC size (l × w × h) – bigger motors need bigger ESCs.
@@ -777,44 +780,69 @@ enum DesignBuilder {
         /// elevator's swing leaves little of the rudder in it.
         var rudderThroughElevator: Bool { c.kind == .aerobat || c.kind.isNutBall }
 
-        /// The full-depth rudder hinged on the elevator hinge line uH. The elevator stays one piece through a strip `d`
-        /// wide behind its hinge; behind that strip a V-notch, cut through to the trailing edge, holds the rudder's whole
+        /// The full-depth rudder hinged on the elevator hinge line uH, one solid piece from its top down below the plate.
+        /// The elevator is two halves: a V-notch from the hinge through to the trailing edge holds the rudder's whole
         /// sideways swing (throw + 5°, its thickness `tw` and a gap included), so rudder and elevator never meet in plan
-        /// view at any deflection – the elevator only moves forward as it swings. The rudder has a small notch at its
-        /// leading edge where the strip crosses it (the strip's swing up and down included), and below the plate it
+        /// view at any deflection – the elevator only moves forward as it swings. A carbon joiner rod in a groove on top
+        /// just behind the hinge (under the hinge tape) joins the halves across the notch – it lies so close to the hinge
+        /// line that it hardly moves as the elevator swings, so the rudder needs only a small notch at its leading edge
+        /// where the rod and the plate's edge pass it (both its swing and the rod's included). Below the plate the rudder
         /// reaches down to the slipstream's edge at the tail (the prop's radius below the thrust line).
         struct ThroughRudder {
             var path: [Vec2]                 // rudder bottom path in web coordinates (from the LE notch to the TE bottom)
             var bottom: Double               // lowest v of the rudder (web coordinates, v above the plate top)
-            var d: Double, tanT: Double, wMax: Double, w0: Double
+            var tanT: Double, wMax: Double, w0: Double
+            /// The joiner: rod diameter, its centre behind the hinge (u) and below the plate top (v), its length.
+            var joinerDia: Double, joinerU: Double, joinerV: Double, joinerLength: Double
             /// Half-width of the elevator notch at Δz behind the hinge.
             func w(_ dz: Double) -> Double { min(w0 + max(dz, 0) * tanT, wMax) }
-            /// The notch from the trailing edge forward to the strip and back out (plate coordinates, +v side first):
-            /// `te(v)` is the trailing edge, uH the hinge.
-            func notch(uH: Double, te: (Double) -> Double) -> [Vec2] {
+            /// One side (+v) of the notch, from the trailing edge in to the hinge (plate coordinates): `te(v)` is the
+            /// trailing edge, uH the hinge.
+            func notchSide(uH: Double, te: (Double) -> Double) -> [Vec2] {
                 var we = w(te(0) - uH)
                 we = w(te(we) - uH)
                 let knee = (wMax - w0) / tanT
                 var side = [Vec2(te(we), we)]
-                if knee > d && uH + knee < te(we) { side.append(Vec2(uH + knee, wMax)) }
-                side.append(Vec2(uH + d, w(d)))
+                if knee > 0 && uH + knee < te(we) { side.append(Vec2(uH + knee, wMax)) }
+                side.append(Vec2(uH, w0))
+                return side
+            }
+            /// The whole notch, +v side in to the hinge and out again on the −v side.
+            func notch(uH: Double, te: (Double) -> Double) -> [Vec2] {
+                let side = notchSide(uH: uH, te: te)
                 return side + side.reversed().map { Vec2($0.x, -$0.y) }
+            }
+            /// The joiner along the hinge, in plate coordinates.
+            func joiner(uH: Double) -> Feature {
+                .joiner(Vec2(uH + joinerU, -joinerLength / 2), Vec2(uH + joinerU, joinerLength / 2), joinerDia)
             }
         }
         func throughRudder(uH: Double, uR: Double, tw: Double) -> ThroughRudder {
             let T = (c.kind.maxSurfaceThrow + StrutPlanner.throwMargin) * .pi / 180
-            let d = 12.0, gap = 2.0, rg = TaperedPanel.endGap
-            // The strip's swing: tape hinge on top, it rises d·sinθ above the plate top and drops as far below its bottom.
-            let nTop = rg + d * sin(T), nBot = -(t + rg + d * sin(T))
-            // Rudder corner at radius r swung by θ, its thickness included, stays behind the strip: r·cosθ − tw/2·sinθ ≥ d + gap.
-            let nD = ((d + gap + tw / 2 * sin(T)) / cos(T)).rounded(.up)
+            let gap = 2.0, rg = TaperedPanel.endGap
+            // Joiner Ø1.5 mm just behind the hinge, just under the top face (the tape hinge's axis is the top edge).
+            let jd = 1.5, rr = jd / 2, clear = 1.0
+            let ju = rr + 0.5, jv = -(rr + 0.3)
+            // Where the rod meets the rudder: the elevator swings it about the hinge (±T), the rudder turned by θ meets
+            // the rod Δz behind the hinge at Δz / cos θ along its chord.
+            var sMax = 0.0, yLo = jv, yHi = jv
+            for i in 0...24 {
+                let phi = -T + 2 * T * Double(i) / 24
+                let dz = ju * cos(phi) - jv * sin(phi), y = ju * sin(phi) + jv * cos(phi)
+                sMax = max(sMax, dz / cos(T)); yLo = min(yLo, y); yHi = max(yHi, y)
+            }
+            // The rudder's corners swing forward by tw/2 · sin θ: behind the plate's edge at the hinge by `gap`.
+            let nD = max((gap + tw / 2 * sin(T)) / cos(T), sMax + rr + clear).rounded(.up)
+            let nTop = max(rg, yHi + rr + clear), nBot = min(-(t + rg), yLo - rr - clear)
             // Down to the slipstream's edge at the tail (about the prop's radius below the thrust line at the plate
-            // centre), at least 12 mm below the strip notch.
+            // centre), at least 12 mm below the notch.
             let bottom = min(-(c.propRadius + t / 2), nBot - 12).rounded(.down)
             let path = [Vec2(uH, nTop), Vec2(uH + nD, nTop), Vec2(uH + nD, nBot), Vec2(uH, nBot), Vec2(uH, bottom), Vec2(uR, bottom)]
             // A point of the swung rudder lies at x = Δz·tanθ + tw / (2 cosθ) at most.
             let w0 = gap + tw / 2 / cos(T)
-            return ThroughRudder(path: path, bottom: bottom, d: d, tanT: tan(T), wMax: w0 + (uR - uH) * sin(T), w0: w0)
+            // The joiner reaches 35 mm into each elevator half.
+            return ThroughRudder(path: path, bottom: bottom, tanT: tan(T), wMax: w0 + (uR - uH) * sin(T), w0: w0,
+                                 joinerDia: jd, joinerU: ju, joinerV: jv, joinerLength: (2 * (w0 + 35)).rounded(.up))
         }
 
         /// `under`: the horn is glued in from the underside (elevator – clear of the rudder above it).
@@ -1144,12 +1172,20 @@ enum DesignBuilder {
             let rMain = noseSide + wingSide + boomSide + [Vec2(uH, sh)]
             var plateOutline = Poly.ccw(rOutline + teCentre + mirrored(rOutline))
             let plateMain = Poly.ccw(rMain + mirrored(rMain))
-            var elevator = Poly.ccw([Vec2(uH, -sh), Vec2(uH, sh), Vec2(stab.te(sh), sh)] + teCentre + [Vec2(stab.te(sh), -sh)])
+            // One-piece elevator – or, with the rudder reaching through, two halves joined by the carbon joiner.
+            var elevators: [[Vec2]]
+            if let th = through {
+                let right = Poly.ccw([Vec2(uH, sh), Vec2(stab.te(sh), sh)] + th.notchSide(uH: uH, te: { stab.te($0) }))
+                elevators = [right, Poly.ccw(right.map { Vec2($0.x, -$0.y) })]
+            } else {
+                elevators = [Poly.ccw([Vec2(uH, -sh), Vec2(uH, sh), Vec2(stab.te(sh), sh)] + teCentre + [Vec2(stab.te(sh), -sh)])]
+            }
             if let th = through, th.wMax + 10 > sh { issues.append("The stabiliser is too narrow for the rudder's swing through the elevator – widen the stabiliser or shorten the rudder.") }
             if stabTipRadius > 0 {       // rounded elevator trailing-edge tips
-                let r = rounded([plateOutline, elevator], corners: [Vec2(stab.te(sh), sh), Vec2(stab.te(sh), -sh)], radius: stabTipRadius)
-                plateOutline = r[0]; elevator = r[1]
+                let r = rounded([plateOutline] + elevators, corners: [Vec2(stab.te(sh), sh), Vec2(stab.te(sh), -sh)], radius: stabTipRadius)
+                plateOutline = r[0]; elevators = Array(r.dropFirst())
             }
+            if let th = through { elevatorJoiner = th.joinerLength; elevatorJoinerZ = uH }
             if !Poly.isSimple(plateOutline) { issues.append("Fuselage plate outline intersects itself – check tail arm, stabiliser and wing chord.") }
 
             // --- Upper fuselage half (with fin & rudder) and lower half.
@@ -1308,8 +1344,9 @@ enum DesignBuilder {
 
             parts.append(Part(name: "Fuselage plate", role: .fuselage, outline: plateOutline, holes: plateHoles,
                               features: [.hinge(Vec2(uH, -sh), Vec2(uH, sh)),
-                                         .label("PLATE", Vec2(c.rootChord * 0.5, 0))] + (c.hasSparJoiner ? sparFeatures(w, from: -hw, to: 0) + sparFeatures(w, from: 0, to: hw) : sparFeatures(w, from: -hw, to: hw)),
-                              regions: [Region(polygon: plateMain, isControl: false), Region(polygon: elevator, isControl: true)],
+                                         .label("PLATE", Vec2(c.rootChord * 0.5, 0))] + (through.map { [$0.joiner(uH: uH)] } ?? [])
+                                         + (c.hasSparJoiner ? sparFeatures(w, from: -hw, to: 0) + sparFeatures(w, from: 0, to: hw) : sparFeatures(w, from: -hw, to: hw)),
+                              regions: [Region(polygon: plateMain, isControl: false)] + elevators.map { Region(polygon: $0, isControl: true) },
                               instances: [.horizontal(at: .zero)], material: c.material))
             let webX: [Double] = layers > 1 ? [-t / 2, t / 2] : [0]
             let layerNote = layers > 1 ? " · 2 layers laminated" : ""
@@ -1327,9 +1364,10 @@ enum DesignBuilder {
             let eBody: SIMD3<Double> = [0, 0, uEC]
             // Centred on the plate the elevator servo's arm points down: its pushrod runs under the plate straight to
             // the horn under the elevator.
+            // (the outline: one half where there are two – the flight model only needs its share in the slipstream)
             controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [-eHornV, -(t / 2 + 9), uH + 2],
-                                           servoPosition: eBody, area: Poly.area(elevator), chord: ef * hsc * 0.9, servoID: "Elevator",
-                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0], outline: elevator))
+                                           servoPosition: eBody, area: elevators.reduce(0) { $0 + Poly.area($1) }, chord: ef * hsc * 0.9, servoID: "Elevator",
+                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0], outline: elevators[0]))
             if hasRudder {
                 // Rudder horn on the right side of the rudder, servo arm on the right (elevator on the left): the
                 // pushrods run on opposite sides and never cross.
@@ -1750,8 +1788,11 @@ enum DesignBuilder {
             let rMain = tongue + arc(thN, thH)
             let outline = Poly.ccw(rOutline + notch.dropFirst().dropLast() + mirrored(rOutline))
             let mainRegion = Poly.ccw(rMain + mirrored(rMain))
+            // Two elevator halves joined by the carbon joiner across the rudder's notch.
             let rElev = arc(thH, thNotch)
-            let elevator = Poly.ccw(rElev + notch.dropFirst().dropLast() + mirrored(rElev))
+            let elevRight = Poly.ccw(rElev + Array(through.notchSide(uH: uH, te: teDisc).dropFirst()))
+            let elevators = [elevRight, Poly.ccw(elevRight.map { Vec2($0.x, -$0.y) })]
+            elevatorJoiner = through.joinerLength; elevatorJoinerZ = uH
             if through.wMax + 10 > pt(thH).y { issues.append("The disc is too narrow for the rudder's swing through the elevator – widen the disc or shorten the fin.") }
             if !Poly.isSimple(outline) { issues.append("Disc outline intersects itself – increase the width or reduce the elevator depth.") }
 
@@ -1762,7 +1803,7 @@ enum DesignBuilder {
             if finLE < L * 0.35 { issues.append("Fin chord is too long – the fin would reach the servos. Reduce the fin chord or the elevator depth.") }
             let noseFront = min(hs, max(mountHalf - t / 2 - 0.5, 4))
             let uR = uH + rudderChord
-            // Rudder horn above the elevator strip's reach (the notch at the rudder's leading edge).
+            // Rudder horn above the notch at the rudder's leading edge.
             let rHornV = max(rudderHornV(uH: uH, elevChord: f * L, tw: t), through.path[0].y + 8)
             // Elevator and rudder servos just ahead of the CG, centred on the disc as on the cross-fuselage types: half in
             // the spine, half in the keel, through flush openings in the disc.
@@ -1816,11 +1857,11 @@ enum DesignBuilder {
 
             let us = L * 0.3
             let vs = S * sin(acos(min(1, max(-1, 1 - 2 * us / L)))) * 0.88
-            var features: [Feature] = [.hinge(Vec2(uH, -pt(thH).y), pt(thH)), .label("NUTBALL", Vec2(L * 0.55, S * 0.35))]
+            var features: [Feature] = [.hinge(Vec2(uH, -pt(thH).y), pt(thH)), through.joiner(uH: uH), .label("NUTBALL", Vec2(L * 0.55, S * 0.35))]
             if c.sparEnabled { features.append(.rod(Vec2(us, -vs), Vec2(us, vs), c.sparSpec.widthMM)) }
             nutBallWinglets(holes: &discHoles, features: &features, uHinge: uH)
             parts.append(Part(name: "Disc wing", role: .wing, outline: outline, holes: discHoles, features: features,
-                              regions: [Region(polygon: mainRegion, isControl: false), Region(polygon: elevator, isControl: true)],
+                              regions: [Region(polygon: mainRegion, isControl: false)] + elevators.map { Region(polygon: $0, isControl: true) },
                               instances: [.horizontal(at: .zero)], material: c.material))
             parts.append(Part(name: "Spine & fin", role: .fuselage, outline: upperOut, holes: upperHoles,
                               features: [.hinge(Vec2(uH, through.bottom), Vec2(uH, finTop)), .label("SPINE", Vec2(L * 0.3, hs * 0.5))],
@@ -1835,8 +1876,8 @@ enum DesignBuilder {
             // through the disc.
             let eBody: SIMD3<Double> = [0, 0, uEN]
             controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [-eHornV, -(t / 2 + 9), uH + 2],
-                                           servoPosition: eBody, area: Poly.area(elevator), chord: f * L * 0.7, servoID: "Elevator",
-                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0], outline: elevator))
+                                           servoPosition: eBody, area: elevators.reduce(0) { $0 + Poly.area($1) }, chord: f * L * 0.7, servoID: "Elevator",
+                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0], outline: elevators[0]))
             let rBody: SIMD3<Double> = [0, 0, uRN]
             controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [t / 2 + 8, t / 2 + rHornV, uH + 2],
                                            servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",
@@ -1919,6 +1960,10 @@ enum DesignBuilder {
             if trussLength > 0 {
                 components.append(MassItem(name: "Carbon truss strips 3 × 0.5 mm", mass: trussLength / 1000 * CarbonSpar.flat3x05.gramsPerMeter,
                                            position: [0, 0, c.kind.hasFuselage ? (c.rootChord + c.tailArm) / 2 : c.rootChord * 0.4], category: "Hardware"))
+            }
+            if elevatorJoiner > 0 {
+                components.append(MassItem(name: "Elevator joiner – \(CarbonSpar.wingRods[0].name)", mass: elevatorJoiner / 1000 * CarbonSpar.wingRods[0].gramsPerMeter,
+                                           position: [0, 0, elevatorJoinerZ], category: "Hardware"))
             }
             var foam = 0.0, moment = SIMD3<Double>.zero
             for p in parts {
