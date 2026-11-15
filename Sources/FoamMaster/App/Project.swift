@@ -76,6 +76,7 @@ final class Project: ObservableObject {
             if ch.fins == .finAndWinglets { c.centreFinHeight = (c.wingletHeight * 0.8).rounded(); c.wingletHeight = (c.wingletHeight * 0.6).rounded() }
         }
         c.motorLayout = kind.allowsDualMotors ? ch.motors : .single
+        if !c.motor.fits(c) { c.motor = .m1806 }      // the slow-fly 8" is for a single tractor
         c.tailWinglets = ch.winglets && kind.offersWinglets
         if c.tailWinglets { c.wingletHeight = kind.isNutBall ? 50 : 45 }
         c.sparEnabled = true
@@ -478,7 +479,7 @@ final class Project: ObservableObject {
         c.autoPower = current.autoPower
         c.motor = current.motor; c.battery = current.battery; c.servo = current.servo
         if !c.autoPower {
-            c.motor = MotorClass.allCases.filter { $0 != .m2204 }.randomElement()!
+            c.motor = MotorClass.options(for: c).filter { $0 != .m2204 }.randomElement()!
             c.battery = BatteryPack.allCases.filter { c.motor.allowedCells.contains($0.cells) }.randomElement()!
             c.servo = ServoClass.allCases.randomElement()!
         }

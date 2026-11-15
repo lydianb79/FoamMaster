@@ -124,7 +124,7 @@ enum FixFinder {
             var c = config; c.battery = b
             consider(c, title: "Battery: \(b.name)", cost: 2)
         }
-        for m in MotorClass.allCases where m != config.motor {
+        for m in MotorClass.options(for: config) where m != config.motor {
             var c = config; c.motor = m
             if !m.allowedCells.contains(c.battery.cells) {
                 guard let b = BatteryPack.allCases.filter({ m.allowedCells.contains($0.cells) }).min(by: { abs($0.mass - config.battery.mass) < abs($1.mass - config.battery.mass) }) else { continue }

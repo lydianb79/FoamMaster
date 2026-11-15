@@ -134,7 +134,7 @@ extension AircraftConfig {
     /// (momentum theory) ∝ P^(2/3) · D^(2/3), a 3-blade ≈ 6 % less efficient. Speed ∝ pitch × rpm.
     struct PropModel { var pitch: Double; var thrust: Double; var power: Double; var speed: Double }
     var propModel: PropModel {
-        let ratio = (battery.cells <= 1 ? 0.6 : (battery.cells == 2 ? 0.55 : 0.45))
+        let ratio = motor.pitchRatio(cells: battery.cells)
         func basePitch(_ d: Double, _ blades: Int) -> Double { d * (ratio - (blades >= 3 ? 0.05 : 0)) }
         let d0 = motor.propInches, b0 = kind.propBlades
         let p0 = basePitch(d0, b0)

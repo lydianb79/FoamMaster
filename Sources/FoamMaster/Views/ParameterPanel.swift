@@ -203,7 +203,7 @@ struct ParameterContent: View {
                             }
                         }
                         .toggleStyle(.switch).tint(Theme.accent)
-                        PickerRow(label: "Motor", selection: manual(\.motor), options: MotorClass.allCases) { $0.name }
+                        PickerRow(label: "Motor", selection: manual(\.motor), options: MotorClass.options(for: c)) { $0.name }
                         PickerRow(label: "Battery", selection: manual(\.battery), options: BatteryPack.allCases) { "\($0.name) · \(Int($0.mass)) g" }
                         PickerRow(label: "Servos", selection: bind(\.servo), options: ServoClass.allCases) { $0.name }
                         if c.offersPropChoice {

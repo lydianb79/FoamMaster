@@ -18,7 +18,7 @@ enum PowerOptimizer {
 
     static func best(for input: AircraftConfig) -> Result? {
         let target = input.kind.recommendedThrustToWeight
-        var best: (key: (Int, Int, Double), result: Result)?
+        var best: (key: (Int, Int, Int, Double), result: Result)?
         // Dual tractor: the single-motor version's power system ×2 – motors at least that size and a battery with at
         // least its cells and capacity – instead of two tiny motors on a small pack that cancel out the second motor,
         // ESC and mounts. So switching to dual always adds that hardware's weight.
@@ -30,7 +30,7 @@ enum PowerOptimizer {
                 minMotorMass = s.motor.mass; minCells = s.battery.cells; minCapacity = s.battery.capacity
             }
         }
-        for motor in MotorClass.allCases where motor.mass >= minMotorMass {
+        for motor in MotorClass.options(for: input) where motor.mass >= minMotorMass {
             for battery in BatteryPack.allCases where motor.allowedCells.contains(battery.cells)
                 && battery.cells >= minCells && battery.capacity >= minCapacity {
                 var c = input
@@ -39,9 +39,10 @@ enum PowerOptimizer {
                 let (balanced, a) = FixFinder.evaluate(c)
                 guard a.feasible else { continue }
                 let meets = a.thrustToWeight >= target && a.flightTime >= minFlightTime
-                // Meeting the target first, then fewer warnings, then the lightest (or, if nothing meets it, the
-                // one with the most thrust per weight).
-                let key = (meets ? 0 : 1, -a.score, meets ? a.totalMass : -a.thrustToWeight)
+                // Meeting the target first, then (3D Plane) the slow-fly motor with its big prop, then fewer warnings,
+                // then the lightest (or, if nothing meets it, the one with the most thrust per weight).
+                let style = input.kind.prefersSlowFly && !motor.isSlowFly ? 1 : 0
+                let key = (meets ? 0 : 1, style, -a.score, meets ? a.totalMass : -a.thrustToWeight)
                 if best == nil || key < best!.key { best = (key, Result(config: balanced, analysis: a)) }
             }
         }

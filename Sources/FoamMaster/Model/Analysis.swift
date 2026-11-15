@@ -218,7 +218,9 @@ struct Analysis {
         case ..<28: add(.warning, "Performance", "Wing loading \(f1(wingLoading)) g/dm²", "On the heavy side for flat foam – expect a fast stall (\(f0(stallSpeed)) km/h).")
         default: add(.error, "Performance", "Wing loading \(f1(wingLoading)) g/dm²", "Too heavy for a flat foam wing. Increase area, lighter battery or thinner foam.")
         }
-        if !c.motor.allowedCells.contains(c.battery.cells) {
+        if !c.motor.fits(c) {
+            add(.error, "Power", "Slow-fly motor doesn't fit", "The \(c.motor.name) swings an 8\" prop – it needs a single tractor on the Park Trainer, 3D Plane, Micro Glider or NutBall. Pick another motor.")
+        } else if !c.motor.allowedCells.contains(c.battery.cells) {
             add(.error, "Power", "Battery not compatible with motor", "\(c.motor.name) runs on \(c.motor.allowedCells.lowerBound)–\(c.motor.allowedCells.upperBound)S, selected \(c.battery.cells)S.")
         } else if thrustToWeight < c.kind.minThrustToWeight * 0.7 {
             add(.error, "Power", "Thrust/weight \(f1(thrustToWeight))", "Far below the \(f1(c.kind.minThrustToWeight)) needed – it will not climb.")

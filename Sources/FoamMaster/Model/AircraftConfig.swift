@@ -89,16 +89,18 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
     /// is limited (prop slot / trailing-edge cutout) or for strong, smooth thrust in 3D flying.
     var propBlades: Int {
         switch self {
-        case .trainer, .glider, .twinBoom, .nutBall: return 2
-        case .aerobat, .jet, .flyingWing, .delta: return 3
+        case .trainer, .glider, .twinBoom, .nutBall, .aerobat: return 2
+        case .jet, .flyingWing, .delta: return 3
         }
     }
     /// Types whose single tractor prop the pilot can choose (size up to 8", 2 or 3 blades).
+    /// The 3D Plane flies the slow-fly motor with the big 8" 2-blade when the power system is picked automatically.
+    var prefersSlowFly: Bool { self == .aerobat }
     var allowsPropChoice: Bool { self == .trainer || self == .aerobat || self == .glider || self == .nutBall }
     var propBladeReason: String {
         switch self {
         case .trainer, .glider, .twinBoom, .nutBall: return "2-blade – most efficient, longest flight time"
-        case .aerobat: return "3-blade – more thrust and smoother response for 3D"
+        case .aerobat: return "2-blade 8\" slow-fly – a big, slow prop: most thrust per watt and a wide slipstream over the tail for hovering"
         case .jet: return "3-blade – diameter is limited by the prop slot"
         case .flyingWing, .delta: return "3-blade – diameter is limited by the trailing-edge cutout"
         }
@@ -119,7 +121,7 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
         case .jet: return 1.0
         case .flyingWing: return 0.6
         case .delta: return 0.8
-        case .aerobat: return 1.1
+        case .aerobat: return 1.3
         case .nutBall: return 0.6
         }
     }
@@ -156,7 +158,8 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
             c.controlChordPct = 0.32
             c.fuselageLength = 560; c.fuselageHeight = 135; c.noseLength = 110; c.tailArm = 290
             c.hStabSpan = 250; c.hStabChord = 110; c.vStabHeight = 100; c.vStabChord = 105; c.hStabSweep = 11
-            c.material = .depron6; c.motor = .m1306; c.battery = .s2_450; c.servo = .g37
+            // Light for floaty 3D: 3 mm Depron (struts carry the wing), 2S 300, 2.5 g servos, slow-fly motor with an 8" 2-blade.
+            c.material = .depron3; c.motor = .m1806s; c.battery = .s2_300; c.servo = .g25
         case .glider:
             c.wingspan = 600; c.rootChord = 95; c.tipChord = 60; c.sweep = 15; c.dihedral = 0
             c.fuselageLength = 470; c.fuselageHeight = 92; c.noseLength = 62; c.tailArm = 265
@@ -390,7 +393,7 @@ struct AircraftConfig: Codable, Equatable {
         let foams: [FoamMaterial] = [.depron3, .depron5, .depron6, .epp5, .epp6, .depron8, .epp8, .depron10, .epp10]
         c.material = foams.filter { $0.thickness <= (kind == .glider ? 5 : 10) }.randomElement()!
         c.sparEnabled = true
-        c.motor = MotorClass.allCases.filter { $0 != .m2204 }.randomElement()!
+        c.motor = MotorClass.options(for: c).filter { $0 != .m2204 }.randomElement()!
         c.battery = BatteryPack.allCases.filter { c.motor.allowedCells.contains($0.cells) }.randomElement()!
         c.servo = ServoClass.allCases.randomElement()!
         c.name = ["Foamhawk", "Swift", "Cumulus", "Hornet", "Dart", "Pixie", "Zephyr", "Kestrel", "Bolt", "Nimbus"].randomElement()! + " " + String(Int.random(in: 10...99))

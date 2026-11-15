@@ -766,11 +766,15 @@ enum SelfTest {
             let pb = run(0.6, StickInput(pitch: 0.6, throttle: 0.6), from: warm())
             let yr = run(1.0, StickInput(yaw: 0.8, throttle: 0.6), from: warm())
             // Each against the same time flown hands-off from the same start (a flat wing drifts a little by itself).
-            let w08 = euler(run(0.3, base, from: warm()).state.orientation), w06 = euler(run(0.6, base, from: warm()).state.orientation)
+            let w08 = euler(run(0.3, base, from: warm()).state.orientation), w06 = run(0.6, base, from: warm()).state.orientation
             let w10 = euler(run(1.0, base, from: warm()).state.orientation)
-            let er = euler(rr.state.orientation), ep = euler(pb.state.orientation), ey = euler(yr.state.orientation)
+            let er = euler(rr.state.orientation), ey = euler(yr.state.orientation)
             func wrap(_ a: Double) -> Double { var x = a; while x > 180 { x -= 360 }; while x < -180 { x += 360 }; return x }
-            let dRoll = wrap(er.roll - w08.roll), dPitch = wrap(ep.pitch - w06.pitch), dHead = wrap(ey.heading - w10.heading), dBank = wrap(ey.roll - w10.roll)
+            // Pitch through the vertical plane of the start heading, so a pull that carries a steep climber (the light 3D
+            // Plane climbs at ~55° at 60 % throttle) over the top keeps counting up past 90° instead of folding back.
+            let f0 = warm().state.orientation.act([0, 0, -1]), h0 = simd_normalize(SIMD3(f0.x, 0, f0.z))
+            func loopPitch(_ q: simd_quatd) -> Double { let f = q.act([0, 0, -1]); return atan2(f.y, simd_dot(SIMD3(f.x, 0, f.z), h0)) * 180 / .pi }
+            let dRoll = wrap(er.roll - w08.roll), dPitch = wrap(loopPitch(pb.state.orientation) - loopPitch(w06)), dHead = wrap(ey.heading - w10.heading), dBank = wrap(ey.roll - w10.roll)
             line += String(format: " · roll right 0.3 s → bank %+.0f° · pull → pitch %+.0f° · yaw right → heading %+.0f°, bank %+.0f°", dRoll, dPitch, dHead, dBank)
             // Right stick, right response (heading for yaw right is negative = to the right in this frame, as before).
             if dRoll <= 0 || dPitch <= 0 { line += "  ← PROBLEM" }
