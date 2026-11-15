@@ -30,6 +30,8 @@ struct FlightModel {
     /// Throws as flown at full stick (the radio's end points – a typical setup for the type, smaller than the most
     /// the hinges allow), rad: aileron / elevon roll, elevator / elevon pitch, rudder.
     var rollThrow: Double, pitchThrow: Double, yawThrow: Double
+    /// Expo on the throws (0…1): throw · (e · x³ + (1 − e) · x) for stick x.
+    var throwExpo = 0.0
     /// Effectiveness of the aileron / elevon chord (flap theory, flat foam with a tape hinge).
     var ailTau: Double = 0
     /// Horizontal tail: volume, lift slope, share of the wing's angle it sees (1 − downwash gradient), arm (m),
@@ -78,6 +80,7 @@ struct FlightModel {
         hasRudder = c.hasRudder
         let th = Self.flightThrows(c.kind)
         rollThrow = th.roll * .pi / 180; pitchThrow = th.pitch * .pi / 180; yawThrow = th.yaw * .pi / 180
+        throwExpo = Self.flightExpo(c.kind)
         // Pitch: static margin at the actual CG (− Cmα), control power and damping from the tail.
         let sm = min(max(a.staticMargin, -0.3), 0.4)
         Cma = -CLa * sm
@@ -260,18 +263,30 @@ struct FlightModel {
         swirlRecovery = c.isDual || c.isPusher ? 0 : (0.4 + (c.kind.hasFuselage ? 0.2 : 0)) * min(1, stripWash.reduce(0, +))
     }
 
-    /// Throws as flown at full stick, degrees (roll, pitch, yaw): what a typical setup of the type uses – a trainer
-    /// or glider gentle, a sport model more, the 3D Plane and the NutBall all the way.
+    /// Throws as flown at full stick, degrees (roll, pitch, yaw), and the expo set with them on the radio – a setup
+    /// that gives usable rates in level cruise (1.8 × stall speed) at 100 % rate: full-stick roll ≈ 90°/s on the
+    /// Micro Glider, 140 on the Park Trainer, 150 on the Twin Boom, 200 on the Sport Jet and the Flying Wing, 230 on
+    /// the Delta Jet; pitch ≈ 80–130°/s. The Park Trainer keeps the elevator a spin needs with 30 % expo; the 3D Plane
+    /// and the NutBall keep the big throws a hover needs, with 70 % / 40 % expo – gentle around the centre, the full
+    /// 3D rates only at full stick. Rudders keep their full throw (spins, hovering).
     static func flightThrows(_ kind: AircraftKind) -> (roll: Double, pitch: Double, yaw: Double) {
         switch kind {
         case .trainer: return (12, 15, 35)
-        case .glider: return (10, 12, 35)
-        case .twinBoom: return (13, 15, 35)
-        case .jet: return (16, 16, 35)
-        case .flyingWing: return (18, 15, 25)
-        case .delta: return (26, 22, 25)
-        case .aerobat: return (45, 45, 45)
+        case .glider: return (7, 6, 35)
+        case .twinBoom: return (12, 8, 35)
+        case .jet: return (15, 13, 35)
+        case .flyingWing: return (14, 12, 25)
+        case .delta: return (12, 23, 25)
+        case .aerobat: return (35, 45, 45)
         case .nutBall: return (30, 35, 40)
+        }
+    }
+    static func flightExpo(_ kind: AircraftKind) -> Double {
+        switch kind {
+        case .trainer: return 0.3
+        case .aerobat: return 0.7
+        case .nutBall: return 0.4
+        default: return 0
         }
     }
     /// The fin's side force against sideslip β, per unit of its linear slope (2.5 / rad): linear, rounding off past
@@ -385,7 +400,8 @@ final class FlightSim {
         da = max(min(da, 1), -1); dr = max(min(dr, 1), -1)
         let de = surfaces.pitch
         // Deflections that count (rad): the throws as flown, levelling off above ~25°.
-        let dA = FlightModel.effective(da * m.rollThrow), dE = FlightModel.effective(de * m.pitchThrow), dR = FlightModel.effective(dr * m.yawThrow)
+        func expo(_ x: Double) -> Double { m.throwExpo * x * x * x + (1 - m.throwExpo) * x }
+        let dA = FlightModel.effective(expo(da) * m.rollThrow), dE = FlightModel.effective(expo(de) * m.pitchThrow), dR = FlightModel.effective(expo(dr) * m.yawThrow)
         // Thrust along the nose, falling off with airspeed.
         let u = max(-vb.z, 0)
         // (thrust grows about with rpm², rpm about with throttle → throttle^1.6)
