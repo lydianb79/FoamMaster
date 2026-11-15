@@ -98,6 +98,17 @@ float4 shade(Out in, constant Uni& u, float sun) {
     // In shade the occluder also hides part of the sky: the ambient and sky light drop a little too.
     float shadeAmb = mix(0.72, 1.0, sun);
     float3 col = base * (0.32 * shadeAmb + 0.62 * diff + fill) + spec + rim * float3(0.35, 0.65, 1.0) + base * u.sky.rgb * skyFill * shadeAmb;
+    if (u.fog.w > 0) {
+        // Simulator outdoors: warm sunlight, and an ambient light from the sky above (blue) and the sunlit grass below
+        // (green) – shadows turn cool, undersides pick up the green, rounded shapes read round.
+        float3 sunCol = float3(1.0, 0.95, 0.85);
+        float hemi = n.y * 0.5 + 0.5;
+        float3 amb = mix(float3(0.36, 0.42, 0.26), float3(0.5, 0.62, 0.86), hemi) * 0.62 * shadeAmb;
+        float near = clamp(1.0 - distance(in.w, u.eye.xyz) / 600.0, 0.0, 1.0);     // no rim glow on distant hills
+        col = base * (amb + 0.68 * diff * sunCol + fill * 0.7) + spec * 0.45 * sunCol + rim * float3(0.35, 0.65, 1.0) * 0.8 * near;
+        // a gentle filmic curve keeps sunlit highlights from clipping flat
+        col = col * (1.0 + col * 0.08) / (1.0 + col * 0.18);
+    }
     return hazed(float4(col, in.c.a), in.w, u);
 }
 

@@ -362,6 +362,40 @@ enum SimScenery {
                 else { tri(t.0, t.1, t.2, col) }
             }
         }
+        /// A rounded blob (tree crown, bush): an ellipsoid with smooth normals, so it shades round instead of faceted;
+        /// `shade` darkens / brightens per corner (baked occlusion), `tint` varies the colour a little over the blob.
+        mutating func blob(_ c: P, _ r: P, segments: Int = 10, rings: Int = 7, _ col: C, seed: Int = 0, shade: ((P) -> Float)? = nil) {
+            func p(_ i: Int, _ j: Int) -> (P, P) {
+                let th = Double(i) / Double(rings) * .pi, ph = Double(j) / Double(segments) * 2 * .pi
+                // a little lumpy: leafy crowns are not perfect ellipsoids
+                let bump = 1 + 0.09 * (SimScenery.hash(i, j % segments, 300 + seed) - 0.5) * (i == 0 || i == rings ? 0 : 1)
+                let u = P(sin(th) * cos(ph), cos(th), sin(th) * sin(ph))
+                return (c + u * r * bump, simd_normalize(u / r))
+            }
+            let baseCol = col
+            func tint(_ q: P) -> C {
+                var k = shade?(q) ?? 1
+                k *= Float(0.93 + 0.14 * SimScenery.noise(q.x * 0.9, q.z * 0.9 + q.y, 310 + seed))
+                return SimScenery.scale(baseCol, k)
+            }
+            for i in 0..<rings { for j in 0..<segments {
+                let a = p(i, j), b = p(i + 1, j + 1), cc = p(i + 1, j), d = p(i, j + 1)
+                tri(a.0, b.0, cc.0, tint(a.0), tint(b.0), tint(cc.0), normals: (a.1, b.1, cc.1))
+                tri(a.0, d.0, b.0, tint(a.0), tint(d.0), tint(b.0), normals: (a.1, d.1, b.1))
+            } }
+        }
+        /// A cone (conifer tier) with smooth side normals.
+        mutating func smoothCone(_ base: P, radius rr: Double, height h: Double, segments n: Int = 10, _ col: C, shade: ((P) -> Float)? = nil) {
+            let tip = base + P(0, h, 0), slope = rr / h
+            func k(_ q: P) -> C { SimScenery.scale(col, shade?(q) ?? 1) }
+            for j in 0..<n {
+                let a0 = Double(j) / Double(n) * 2 * .pi, a1 = Double(j + 1) / Double(n) * 2 * .pi, am = (a0 + a1) / 2
+                let p0 = base + P(cos(a0) * rr, 0, sin(a0) * rr), p1 = base + P(cos(a1) * rr, 0, sin(a1) * rr)
+                let n0 = simd_normalize(P(cos(a0), slope, sin(a0))), n1 = simd_normalize(P(cos(a1), slope, sin(a1))), nm = simd_normalize(P(cos(am), slope, sin(am)))
+                tri(p0, tip, p1, k(p0), k(tip), k(p1), normals: (n0, nm, n1))
+                tri(p0, p1, base, k(p0), k(p1), k(base), normals: (P(0, -1, 0), P(0, -1, 0), P(0, -1, 0)))
+            }
+        }
         mutating func line(_ a: P, _ b: P, _ col: C) {
             for p in [a, b] { lines.append(GPUVertex(position: SIMD4(Float(p.x), Float(p.y), Float(p.z), 1), normal: SIMD4(0, 0, 0, 0), color: col)) }
         }
@@ -707,8 +741,8 @@ enum SimScenery {
                 for k in 0..<4 {
                     let f = Double(k) / 4
                     let base = P(x, y + h * (0.15 + 0.22 * f), z)
-                    g.mesh(cone(base, radius: h * (0.27 - 0.06 * f), height: h * (0.42 - 0.04 * f), segments: 9), col) { p in
-                        Float(0.7 + 0.45 * min(max((p.y - base.y) / (h * 0.4), 0), 1))
+                    g.smoothCone(base, radius: h * (0.27 - 0.06 * f), height: h * (0.42 - 0.04 * f), segments: 11, col) { p in
+                        Float(0.62 + 0.5 * min(max((p.y - base.y) / (h * 0.4), 0), 1))
                     }
                 }
             case .poplar:
@@ -716,26 +750,29 @@ enum SimScenery {
                 g.mesh(post(P(x, y, z), radius: 0.25, height: h * 0.2), C(0.38, 0.3, 0.22, 1))
                 let col = C(0.24 + v * 0.06, 0.42 + v * 0.08, 0.17, 1)
                 let c = P(x, y + h * 0.55, z)
-                g.mesh(ellipsoid(c, P(h * 0.12, h * 0.46, h * 0.12), segments: 8, rings: 7), col) { p in Float(0.75 + 0.35 * (p.y - c.y + h * 0.46) / (h * 0.92)) }
+                g.blob(c, P(h * 0.12, h * 0.46, h * 0.12), segments: 9, rings: 9, col, seed: s) { p in Float(0.68 + 0.42 * (p.y - c.y + h * 0.46) / (h * 0.92)) }
             case .birch:
                 shadow(x, z, h * 0.22)
                 g.mesh(post(P(x, y, z), radius: 0.16, height: h * 0.7), C(0.88, 0.87, 0.82, 1))
                 for k in 0..<3 {
                     let ox = (hash(s, 10 + k, 41) - 0.5) * h * 0.25, oz = (hash(s, 20 + k, 41) - 0.5) * h * 0.25
                     let c = P(x + ox, y + h * (0.6 + 0.12 * Double(k)), z + oz), rr = h * 0.16
-                    g.mesh(ellipsoid(c, P(rr, rr * 1.2, rr), segments: 7, rings: 5), C(0.42 + v * 0.08, 0.58, 0.24, 1)) { p in Float(0.75 + 0.3 * (p.y - c.y + rr) / (2 * rr)) }
+                    g.blob(c, P(rr, rr * 1.2, rr), segments: 9, rings: 6, C(0.42 + v * 0.08, 0.58, 0.24, 1), seed: s + k) { p in Float(0.68 + 0.38 * (p.y - c.y + rr) / (2 * rr)) }
                 }
             case .broadleaf:
                 shadow(x, z, h * 0.32)
                 g.mesh(post(P(x, y, z), radius: 0.3 + h * 0.012, height: h * 0.5), C(0.36, 0.26, 0.18, 1))
-                let col = C(0.2 + v * 0.1, 0.38 + v * 0.14, 0.15 + v * 0.04, 1)
+                let col0 = C(0.2 + v * 0.1, 0.38 + v * 0.14, 0.15 + v * 0.04, 1)
                 for k in 0..<5 {
+                    // each lobe a slightly different green
+                    let w = Float(hash(s, 50 + k, 41))
+                    let col = C(col0.x * (0.92 + 0.16 * w), col0.y * (0.95 + 0.1 * w), col0.z, 1)
                     let ox = (hash(s, 10 + k, 41) - 0.5) * h * 0.38, oz = (hash(s, 20 + k, 41) - 0.5) * h * 0.38
                     let oy = h * (0.5 + hash(s, 30 + k, 41) * 0.3), rr = h * (0.18 + hash(s, 40 + k, 41) * 0.1)
                     let c = P(x + ox, y + oy, z + oz)
                     let top = y + h
-                    g.mesh(ellipsoid(c, P(rr, rr * 0.85, rr), segments: 8, rings: 5), col) { p in
-                        Float(0.62 + 0.5 * min(max((p.y - (y + h * 0.35)) / (top - y - h * 0.35), 0), 1))
+                    g.blob(c, P(rr, rr * 0.85, rr), segments: 10, rings: 7, col, seed: s + k) { p in
+                        Float(0.55 + 0.6 * min(max((p.y - (y + h * 0.35)) / (top - y - h * 0.35), 0), 1))
                     }
                 }
             }
@@ -745,8 +782,8 @@ enum SimScenery {
             let y = surfaceHeight(b.x, b.z)
             let v = Float(hash(Int(b.x * 7), Int(b.z * 7), 141))
             let c = P(b.x, y + b.r * 0.55, b.z)
-            g.mesh(ellipsoid(c, P(b.r * 1.25, b.r * 0.8, b.r), segments: 7, rings: 4), C(0.18 + v * 0.06, 0.34 + v * 0.1, 0.14, 1)) { p in
-                Float(0.65 + 0.45 * (p.y - y) / (b.r * 1.35))
+            g.blob(c, P(b.r * 1.25, b.r * 0.8, b.r), segments: 8, rings: 5, C(0.18 + v * 0.06, 0.34 + v * 0.1, 0.14, 1), seed: Int(b.x)) { p in
+                Float(0.6 + 0.5 * (p.y - y) / (b.r * 1.35))
             }
         }
     }
@@ -1037,38 +1074,64 @@ enum SimScenery {
     }
 
     /// Wooded ridges at ~1.7 km, a mountain range at ~3 km with snow caps, a paler range behind at ~4.6 km.
+    /// Hills and mountains on the horizon: massifs with depth – a grid from the front foot over the crest to the back,
+    /// smooth normals so the sun models ridges and valleys, coloured by height and slope (woods on the lower slopes,
+    /// rock above, snow on the high peaks with a ragged snow line).
     static func ridgesAndMountains(_ g: inout Geo) {
-        func ring(r: Double, depth: Double, n: Int, color: C, snowAbove: Double?, peak: (Double) -> Double) {
-            for i in 0..<n {
-                let a0 = Double(i) / Double(n) * 2 * .pi, a1 = Double(i + 1) / Double(n) * 2 * .pi
-                let p0 = peak(a0), p1 = peak(a1)
-                let b0 = P(cos(a0) * r, -12, sin(a0) * r), b1 = P(cos(a1) * r, -12, sin(a1) * r)
-                let t0 = P(cos(a0) * (r + depth), p0, sin(a0) * (r + depth)), t1 = P(cos(a1) * (r + depth), p1, sin(a1) * (r + depth))
-                let shade = Float(0.88 + 0.22 * hash(i, Int(r), 83))
-                let lo = scale(color, shade * 0.8), hi = scale(color, shade * 1.08)
-                g.tri(b0, t0, b1, lo, hi, lo)
-                g.tri(b1, t0, t1, lo, hi, hi)
-                if let snow = snowAbove, max(p0, p1) > snow {
-                    func down(_ t: P, _ b: P, _ h: Double) -> P { t + (b - t) * (min(max((h - snow) / max(h + 12, 1), 0), 0.6) * 0.6) }
-                    let c = C(0.95, 0.96, 0.99, 1)
-                    // Lifted off the slope (towards the pilot and up), so it never shares the slope's plane.
-                    func lift(_ q: P) -> P { let k = r * 0.004; return q - simd_normalize(P(q.x, 0, q.z)) * k + P(0, k * 0.5, 0) }
-                    let d0 = lift(down(t0, b0, p0)), d1 = lift(down(t1, b1, p1))
-                    let t0 = lift(t0), t1 = lift(t1)
-                    g.tri(d0, t0, d1, scale(c, 0.9), c, scale(c, 0.9))
-                    g.tri(d1, t0, t1, scale(c, 0.9), c, c)
-                }
+        func massif(r: Double, depth: Double, n: Int, rows: Int, low: C, rock: C, snowLine: Double?, seed: Int, peak: (Double) -> Double) {
+            // height at angle a and depth fraction t (0 front foot … 1 back): rising to the crest at 45–60 %, detail on top
+            func height(_ a: Double, _ t: Double) -> Double {
+                let crest = 0.45 + 0.15 * noise(a * 7, 0.5, seed + 1)
+                let prof = t < crest ? sin(t / crest * .pi / 2) : cos((t - crest) / (1 - crest) * .pi / 2) * 0.85 + 0.15
+                // ridges and gullies running down the slopes (ridged noise across the angle), finer detail on top
+                let ridged = 1 - abs(noise(a * 90, t * 2.2, seed + 5) * 2 - 1)
+                let detail = (ridged - 0.55) * 0.34 + (fbm(a * 160, t * 6, seed + 2, octaves: 3) - 0.5) * 0.16
+                return max(-12, -12 + (peak(a) + 12) * max(prof * (1 + detail), 0))
             }
+            func point(_ i: Int, _ k: Int) -> P {
+                let a = Double(i) / Double(n) * 2 * .pi, t = Double(k) / Double(rows)
+                let rr = r + depth * t
+                return P(cos(a) * rr, height(a, t), sin(a) * rr)
+            }
+            var pts = [[P]](repeating: [], count: n + 1)
+            for i in 0...n { pts[i] = (0...rows).map { point(i % n, $0) } }
+            func normal(_ i: Int, _ k: Int) -> P {
+                let a = pts[(i + 1) % n][k] - pts[(i + n - 1) % n][k]
+                let b = pts[i][min(k + 1, rows)] - pts[i][max(k - 1, 0)]
+                var nn = simd_normalize(simd_cross(b, a))
+                if nn.y < 0 { nn = -nn }
+                return nn
+            }
+            func colour(_ q: P, _ nn: P) -> C {
+                let steep = 1 - nn.y
+                var c = low
+                // rock where it is high or steep
+                let rockK = Float(min(max((q.y - (snowLine ?? 400) * 0.35) / 160 + steep * 1.4 - 0.3, 0), 1))
+                c = c * (1 - rockK) + rock * rockK
+                if let sl = snowLine {
+                    let line = sl + (noise(q.x * 0.01, q.z * 0.01, seed + 3) - 0.5) * 160
+                    let snowK = Float(min(max((q.y - line) / 60, 0), 1)) * Float(min(max(1.7 - steep * 1.5, 0), 1))
+                    c = c * (1 - snowK) + C(0.93, 0.95, 0.99, 1) * snowK
+                }
+                let v = Float(0.9 + 0.2 * noise(q.x * 0.02, q.z * 0.02, seed + 4))
+                return C(c.x * v, c.y * v, c.z * v, 1)
+            }
+            for i in 0..<n { for k in 0..<rows {
+                let a = pts[i][k], b = pts[i + 1][k], c = pts[i + 1][k + 1], d = pts[i][k + 1]
+                let na = normal(i, k), nb = normal(i + 1, k), nc = normal(i + 1, k + 1), nd = normal(i, k + 1)
+                g.tri(a, d, c, colour(a, na), colour(d, nd), colour(c, nc), normals: (na, nd, nc))
+                g.tri(a, c, b, colour(a, na), colour(c, nc), colour(b, nb), normals: (na, nc, nb))
+            } }
         }
-        ring(r: 1700, depth: 120, n: 200, color: C(0.19, 0.31, 0.19, 1), snowAbove: nil) { a in
+        massif(r: 1700, depth: 260, n: 240, rows: 5, low: C(0.17, 0.29, 0.16, 1), rock: C(0.24, 0.33, 0.2, 1), snowLine: nil, seed: 860) { a in
             40 + fbm(a * 5, 2.3, 87) * 160 + noise(a * 40, 0.3, 88) * 18
         }
-        ring(r: 3000, depth: 220, n: 360, color: C(0.33, 0.39, 0.48, 1), snowAbove: 420) { a in
+        massif(r: 3000, depth: 520, n: 520, rows: 8, low: C(0.14, 0.24, 0.14, 1), rock: C(0.3, 0.31, 0.33, 1), snowLine: 430, seed: 870) { a in
             let big = fbm(a * 4, 0.7, 81, octaves: 3)
             let ridge = 1 - abs(noise(a * 22, 1.1, 82) * 2 - 1)
             return 80 + big * big * 760 + ridge * 130 * big
         }
-        ring(r: 4600, depth: 300, n: 300, color: C(0.5, 0.56, 0.66, 1), snowAbove: 650) { a in
+        massif(r: 4600, depth: 700, n: 480, rows: 8, low: C(0.2, 0.28, 0.24, 1), rock: C(0.34, 0.35, 0.39, 1), snowLine: 620, seed: 880) { a in
             let big = fbm(a * 3 + 5, 0.2, 91, octaves: 3)
             let ridge = 1 - abs(noise(a * 18, 2.1, 92) * 2 - 1)
             return 200 + big * big * 1100 + ridge * 160 * big

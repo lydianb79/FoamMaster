@@ -78,7 +78,7 @@ final class SimSession: NSObject, NSWindowDelegate {
 @MainActor
 final class SimController: ObservableObject {
     struct HUD { var phase = FlightState.Phase.held; var speed = 0.0; var height = 0.0; var throttle = 0.0; var stick = StickInput(); var message = ""; var time = 0.0; var trim = 0.0
-        var climb = 0.0; var noseAngle = 0.0; var towards = false; var inset = false }
+        var climb = 0.0; var noseAngle = 0.0; var towards = false; var inset = false; var lowRates = false; var rateSwitch = false }
     @Published var hud = HUD()
     @Published var title = ""
     /// The loaded model is a NutBall (the roll-to-rudder mix applies).
@@ -133,7 +133,8 @@ final class SimController: ObservableObject {
             Task { @MainActor in
                 self?.hud = HUD(phase: sim.state.phase, speed: sim.airspeed, height: sim.height, throttle: stick.throttle, stick: stick,
                                 message: sim.state.message, time: sim.state.time, trim: self?.input.trim ?? 0,
-                                climb: climb, noseAngle: nose.angle, towards: nose.towards, inset: insetShown)
+                                climb: climb, noseAngle: nose.angle, towards: nose.towards, inset: insetShown,
+                                lowRates: self?.input.lowRates ?? false, rateSwitch: self?.input.rateSwitchInCharge ?? false)
             }
         }
         load(project)
@@ -159,6 +160,7 @@ final class SimController: ObservableObject {
         sim = nil
     }
     func adjustTrim(_ d: Double) { input.adjustTrim(d); hud.trim = input.trim }
+    func toggleRates() { input.toggleRates(); hud.lowRates = input.lowRates }
     func resetTrim() { input.setTrim(0); hud.trim = 0 }
     func setVolume(_ v: Double) { volume = v; SimAudio.volume = Float(v); if v > 0, muted { setMuted(false) } }
     func setMuted(_ m: Bool) { muted = m; SimAudio.muted = m }
@@ -296,6 +298,15 @@ struct SimulatorView: View {
                         Button("0") { ctl.resetTrim() }.help("Trim back to neutral")
                     }
                     .buttonStyle(.borderless).controlSize(.small)
+                    HStack(spacing: 6) {
+                        Text("Rates")
+                        Picker("", selection: Binding(get: { h.lowRates }, set: { if $0 != h.lowRates { ctl.toggleRates() } })) {
+                            Text("Low").tag(true); Text("High").tag(false)
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 110).controlSize(.small).disabled(h.rateSwitch)
+                        .help(h.rateSwitch ? "Set by the rate switch on your transmitter" : "Low / high rates (\(keyName(ctl.input.controls.key(.rates)))) – set them in Controls… ▸ Rates & expo")
+                        if h.rateSwitch { Text("switch").font(.system(size: 10)).foregroundStyle(.secondary) }
+                    }
                 }
                 .font(.system(size: 12, weight: .medium, design: .rounded)).monospacedDigit()
                 StickBox(x: h.stick.yaw, y: 2 * h.throttle - 1, label: "Throttle · Rudder")
@@ -333,7 +344,7 @@ struct SimulatorView: View {
     private var keysHint: String {
         let c = ctl.input.controls
         let k = { (a: SimAction) in keyName(c.key(a)) }
-        return "\(k(.launch)) launch · \(k(.reset)) reset · \(k(.throttleUp))/\(k(.throttleDown)) throttle · \(k(.pitchUp))/\(k(.pitchDown)) elevator · \(k(.rollLeft))/\(k(.rollRight)) aileron · \(k(.yawLeft))/\(k(.yawRight)) rudder · \(k(.trimUp))/\(k(.trimDown)) pitch trim · \(k(.zoom)) zoom · \(k(.camera)) camera · Esc exit – or fly with your transmitter (USB, joystick mode)"
+        return "\(k(.launch)) launch · \(k(.reset)) reset · \(k(.throttleUp))/\(k(.throttleDown)) throttle · \(k(.pitchUp))/\(k(.pitchDown)) elevator · \(k(.rollLeft))/\(k(.rollRight)) aileron · \(k(.yawLeft))/\(k(.yawRight)) rudder · \(k(.trimUp))/\(k(.trimDown)) pitch trim · \(k(.rates)) low / high rates · \(k(.zoom)) zoom · \(k(.camera)) camera · Esc exit – or fly with your transmitter (USB, joystick mode)"
     }
 }
 
@@ -506,6 +517,8 @@ struct SimControlsSheet: View {
                               help: "Press Detect, then flip the switch you want to the launch position – that flip throws the model (like the launch key). Works with a switch the radio sends as a button or as a channel (axis); Invert swaps the positions.")
                     switchRow(dev, "Reset switch", \.resetSwitch, activeLabel: "RESET",
                               help: "Press Detect, then flip or press the switch / button you want: the model is back in your hand, any time – in the air or after a landing.")
+                    switchRow(dev, "Rate switch", \.rateSwitch, activeLabel: "HIGH", inactiveLabel: "LOW",
+                              help: "Press Detect, then flip the switch you want to its high-rate position: there it flies the high rates, in the other position the low rates (Rates & expo). While it is set up and connected it picks the rates – not the rates key.")
                     Divider()
                     if calibrating {
                         Text("Move all sticks to every corner and the throttle from low to high. Then centre the sticks, throttle low, and press Finish.")
@@ -525,7 +538,7 @@ struct SimControlsSheet: View {
 
     /// A transmitter switch (launch or reset): any button or axis, found with Detect (flip it to the active position).
     @ViewBuilder private func switchRow(_ dev: JoystickManager.Device, _ title: String, _ key: WritableKeyPath<SimControls, SimControls.SwitchMapping?>,
-                                        activeLabel: String, help: String) -> some View {
+                                        activeLabel: String, inactiveLabel: String = "ready", help: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(title).frame(width: 120, alignment: .leading)
@@ -545,7 +558,7 @@ struct SimControlsSheet: View {
                     detectingSwitch = key; switchStartAxes = dev.axes.map(\.value); switchStartButtons = dev.buttons
                 }
                 if let active = input.switchActive(controls[keyPath: key], dev) {
-                    Text(active ? activeLabel : "ready").font(.system(size: 11, weight: .bold))
+                    Text(active ? activeLabel : inactiveLabel).font(.system(size: 11, weight: .bold))
                         .foregroundStyle(active ? Theme.orange : .secondary)
                 }
             }
@@ -579,23 +592,37 @@ struct SimControlsSheet: View {
     }
 
     private var ratesTab: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach([SimChannel.roll, .pitch, .yaw]) { ch in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(ch.title).font(.system(size: 12, weight: .semibold))
-                    HStack {
-                        Text("Rate").frame(width: 40, alignment: .leading)
-                        Slider(value: Binding(get: { controls.rates[ch.rawValue] ?? 1 }, set: { controls.rates[ch.rawValue] = $0; apply() }), in: 0.3...1)
-                        Text(String(format: "%.0f %%", (controls.rates[ch.rawValue] ?? 1) * 100)).frame(width: 44)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Two sets of rates and expo per stick: low for gentle flying and landings, high for aerobatics. Switch between them with \(keyName(controls.key(.rates))) or the Rates control in the HUD – or a rate switch on your transmitter (Transmitter tab). 100 % is the type's full throw as flown.")
+                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Picker("Flying now", selection: Binding(get: { controls.lowRateOn ?? false }, set: { controls.lowRateOn = $0; apply(); if input.lowRates != $0 { input.toggleRates() } })) {
+                Text("Low rates").tag(true); Text("High rates").tag(false)
+            }
+            .pickerStyle(.segmented).frame(width: 300).disabled(input.rateSwitchInCharge)
+            if input.rateSwitchInCharge { Text("The rate switch on your transmitter picks the rates.").font(.system(size: 10)).foregroundStyle(.secondary) }
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
+                GridRow {
+                    Text("")
+                    Text("").gridCellColumns(1)
+                    Text("Rate").font(.system(size: 11, weight: .semibold)).gridCellColumns(2)
+                    Text("Expo").font(.system(size: 11, weight: .semibold)).gridCellColumns(2)
+                }
+                ForEach([SimChannel.roll, .pitch, .yaw]) { ch in
+                    ForEach([true, false], id: \.self) { low in
+                        GridRow {
+                            Text(low ? ch.title : "").font(.system(size: 12, weight: .semibold)).frame(width: 120, alignment: .leading)
+                            Text(low ? "Low" : "High").font(.system(size: 11)).foregroundStyle(low ? Theme.accent : Theme.orange).frame(width: 32, alignment: .leading)
+                            Slider(value: Binding(get: { controls.rate(ch, low: low) }, set: { controls.setRate(ch, low: low, $0); apply() }), in: 0.2...1).frame(width: 150)
+                            Text(String(format: "%.0f %%", controls.rate(ch, low: low) * 100)).frame(width: 40, alignment: .trailing).monospacedDigit()
+                            Slider(value: Binding(get: { controls.expo(ch, low: low) }, set: { controls.setExpo(ch, low: low, $0); apply() }), in: 0...0.7).frame(width: 110)
+                            Text(String(format: "%.0f %%", controls.expo(ch, low: low) * 100)).frame(width: 40, alignment: .trailing).monospacedDigit()
+                        }
                     }
-                    HStack {
-                        Text("Expo").frame(width: 40, alignment: .leading)
-                        Slider(value: Binding(get: { controls.expo[ch.rawValue] ?? 0 }, set: { controls.expo[ch.rawValue] = $0; apply() }), in: 0...0.7)
-                        Text(String(format: "%.0f %%", (controls.expo[ch.rawValue] ?? 0) * 100)).frame(width: 44)
-                    }
+                    if ch != .yaw { GridRow { Divider().gridCellColumns(6) } }
                 }
             }
             Toggle("Auto zoom (keeps a small model visible far out)", isOn: Binding(get: { controls.autoZoom }, set: { controls.autoZoom = $0; apply() }))
+            Spacer()
         }
         .padding(8)
     }

@@ -5,19 +5,21 @@ import Carbon
 
 /// Keyboard actions of the simulator.
 enum SimAction: String, CaseIterable, Codable, Identifiable {
-    case throttleUp, throttleDown, pitchUp, pitchDown, rollLeft, rollRight, yawLeft, yawRight, trimUp, trimDown, launch, reset, zoom, camera
+    case throttleUp, throttleDown, pitchUp, pitchDown, rollLeft, rollRight, yawLeft, yawRight, trimUp, trimDown, launch, reset, zoom, camera, rates
     var id: String { rawValue }
     var title: String {
         [.throttleUp: "Throttle up", .throttleDown: "Throttle down", .pitchUp: "Elevator up (pull)", .pitchDown: "Elevator down (push)",
          .rollLeft: "Aileron left", .rollRight: "Aileron right", .yawLeft: "Rudder left", .yawRight: "Rudder right",
          .trimUp: "Pitch trim nose up", .trimDown: "Pitch trim nose down",
-         .launch: "Launch (let go)", .reset: "Reset", .zoom: "Auto zoom on / off", .camera: "Camera: pilot / chase / onboard"][self]!
+         .launch: "Launch (let go)", .reset: "Reset", .zoom: "Auto zoom on / off", .camera: "Camera: pilot / chase / onboard",
+         .rates: "Low / high rates"][self]!
     }
     var defaultKey: UInt16 {
         [.throttleUp: UInt16(kVK_ANSI_W), .throttleDown: UInt16(kVK_ANSI_S), .pitchUp: UInt16(kVK_DownArrow), .pitchDown: UInt16(kVK_UpArrow),
          .rollLeft: UInt16(kVK_LeftArrow), .rollRight: UInt16(kVK_RightArrow), .yawLeft: UInt16(kVK_ANSI_A), .yawRight: UInt16(kVK_ANSI_D),
          .trimUp: UInt16(kVK_ANSI_T), .trimDown: UInt16(kVK_ANSI_G),
-         .launch: UInt16(kVK_Space), .reset: UInt16(kVK_ANSI_R), .zoom: UInt16(kVK_ANSI_Z), .camera: UInt16(kVK_ANSI_C)][self]!
+         .launch: UInt16(kVK_Space), .reset: UInt16(kVK_ANSI_R), .zoom: UInt16(kVK_ANSI_Z), .camera: UInt16(kVK_ANSI_C),
+         .rates: UInt16(kVK_ANSI_E)][self]!
     }
 }
 
@@ -39,9 +41,23 @@ struct SimControls: Codable, Equatable {
     var calibration: [Int: Calibration] = [:]
     var deviceName = ""
     var useTransmitter = true
-    /// Rates (0.3…1) and expo (0…0.7) per stick channel.
-    var rates: [String: Double] = ["roll": 0.8, "pitch": 0.8, "yaw": 1.0]
+    /// High rates: rate (0.3…1) and expo (0…0.7) per stick channel.
+    var rates: [String: Double] = ["roll": 1.0, "pitch": 1.0, "yaw": 1.0]
     var expo: [String: Double] = ["roll": 0.3, "pitch": 0.3, "yaw": 0.2]
+    /// Low rates (optional: older settings load – they get the defaults), and whether they are on (without a rate
+    /// switch: the rates key or the HUD chooses; with one, the switch does).
+    var lowRates: [String: Double]?
+    var lowExpo: [String: Double]?
+    var lowRateOn: Bool?
+    static let defaultLowRates: [String: Double] = ["roll": 0.55, "pitch": 0.55, "yaw": 0.75]
+    func rate(_ ch: SimChannel, low: Bool) -> Double { (low ? (lowRates ?? Self.defaultLowRates) : rates)[ch.rawValue] ?? 1 }
+    func expo(_ ch: SimChannel, low: Bool) -> Double { (low ? (lowExpo ?? expo) : expo)[ch.rawValue] ?? 0 }
+    mutating func setRate(_ ch: SimChannel, low: Bool, _ v: Double) {
+        if low { var r = lowRates ?? Self.defaultLowRates; r[ch.rawValue] = v; lowRates = r } else { rates[ch.rawValue] = v }
+    }
+    mutating func setExpo(_ ch: SimChannel, low: Bool, _ v: Double) {
+        if low { var e = lowExpo ?? expo; e[ch.rawValue] = v; lowExpo = e } else { expo[ch.rawValue] = v }
+    }
     var autoZoom = true
     /// Pitch trim per design (−0.6…0.6 of the elevator throw, + = nose up). Optional so older settings still load.
     var trims: [String: Double]?
@@ -53,6 +69,8 @@ struct SimControls: Codable, Equatable {
     var launchSwitch: SwitchMapping?
     /// A transmitter switch / button that puts the model back in the hand (like the reset key).
     var resetSwitch: SwitchMapping?
+    /// A transmitter switch that picks the rates: active position high, the other low.
+    var rateSwitch: SwitchMapping?
     /// Mix: the aileron stick also steers the rudder (NutBall – no ailerons). Optional: on unless switched off.
     var rollToRudder: Bool?
     /// View settings (optional: older settings load): camera, zoom inset, smoke trail.
@@ -74,9 +92,9 @@ struct SimControls: Codable, Equatable {
     }
     func save() { if let d = try? JSONEncoder().encode(self) { UserDefaults.standard.set(d, forKey: Self.storageKey) } }
 
-    /// Rate and expo on a stick value −1…1.
-    func shaped(_ ch: SimChannel, _ x: Double) -> Double {
-        let r = rates[ch.rawValue] ?? 1, e = expo[ch.rawValue] ?? 0
+    /// Rate and expo (low or high rates) on a stick value −1…1.
+    func shaped(_ ch: SimChannel, _ x: Double, low: Bool = false) -> Double {
+        let r = rate(ch, low: low), e = expo(ch, low: low)
         return r * (e * x * x * x + (1 - e) * x)
     }
 }
@@ -207,6 +225,17 @@ final class SimInputState {
     static let trimStep = 0.01, trimLimit = 0.6
     private var lastSwitch: Bool?
     private var lastReset: Bool?
+    /// Low rates are flying now (from the rate switch when there is one, else the rates key / HUD).
+    private(set) var lowRates = SimControls.load().lowRateOn ?? false
+    /// The rate switch is in charge (set up and its transmitter connected).
+    private(set) var rateSwitchInCharge = false
+    /// Switch low / high rates (key or HUD) – without a rate switch in charge; saved.
+    func toggleRates() {
+        guard !rateSwitchInCharge else { return }
+        lowRates.toggle()
+        controls.lowRateOn = lowRates
+        controls.save()
+    }
 
     /// The trim saved for this design.
     func useTrim(for design: String) {
@@ -238,6 +267,7 @@ final class SimInputState {
     }
     func launchSwitchActive(_ dev: JoystickManager.Device) -> Bool? { switchActive(controls.launchSwitch, dev) }
     func resetSwitchActive(_ dev: JoystickManager.Device) -> Bool? { switchActive(controls.resetSwitch, dev) }
+    func rateSwitchActive(_ dev: JoystickManager.Device) -> Bool? { switchActive(controls.rateSwitch, dev) }
 
     /// Feeds the launch switch position; a flip into the active position launches.
     func switchState(_ active: Bool?) {
@@ -256,6 +286,7 @@ final class SimInputState {
         if code == controls.key(.trimUp) { adjustTrim(Self.trimStep); return }
         if code == controls.key(.trimDown) { adjustTrim(-Self.trimStep); return }
         guard !isRepeat else { return }
+        if code == controls.key(.rates) { toggleRates(); return }
         for a in [SimAction.launch, .reset, .zoom, .camera] where controls.key(a) == code { events?(a) }
     }
     func keyUp(_ code: UInt16) { pressed.remove(code) }
@@ -301,10 +332,15 @@ final class SimInputState {
             // the simulator starts has to be flipped again).
             switchState(launchSwitchActive(dev))
             resetSwitchState(resetSwitchActive(dev))
+            // Rate switch: its position picks the rates (active = high).
+            if let high = rateSwitchActive(dev) { lowRates = !high; rateSwitchInCharge = true } else { rateSwitchInCharge = false }
         } else {
             lastSwitch = nil; lastReset = nil
+            if rateSwitchInCharge { rateSwitchInCharge = false; lowRates = controls.lowRateOn ?? false }
         }
-        out.roll = controls.shaped(.roll, out.roll); out.pitch = controls.shaped(.pitch, out.pitch); out.yaw = controls.shaped(.yaw, out.yaw)
+        let low = lowRates
+        out.roll = controls.shaped(.roll, out.roll, low: low); out.pitch = controls.shaped(.pitch, out.pitch, low: low)
+        out.yaw = controls.shaped(.yaw, out.yaw, low: low)
         out.pitch = min(max(out.pitch + trim, -1), 1)
         // Mix (Controls ▸ Mixes): on the NutBall the aileron stick also works the rudder.
         if rudderOnly, controls.mixesRollToRudder { out.yaw = min(max(out.yaw + out.roll, -1), 1) }
