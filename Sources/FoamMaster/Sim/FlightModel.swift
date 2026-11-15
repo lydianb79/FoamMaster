@@ -129,12 +129,10 @@ struct FlightModel {
         staticThrust = a.thrust * 9.81 / 1000
         stallSpeed = a.stallSpeed / 3.6
         pitchSpeed = max(10, 3.2 * stallSpeed + 4) * (c.customProp ? c.propModel.speed : 1)   // a lower-pitch prop runs out of thrust sooner
-        // Inertia: wing mass spread over the span, the rest along the fuselage.
-        let L = max(d.overallLength / 1000, b * 0.5)
-        let mw = mass * 0.45
-        let Iroll = mw * b * b / 12 + mass * 0.0004
-        let Ipitch = mass * L * L / 18 + mass * cbar * cbar / 12
-        inertia = [Ipitch, Iroll + Ipitch, Iroll]
+        // Inertia from the model as built: every foam part spread over its outline, every component where it sits,
+        // about the CG – a flat foam plane carries most of its weight (motor, battery, servos) near the middle, so it
+        // turns far more readily than a mass spread over the span would.
+        inertia = Self.inertia(d, cg: a.cg)
         groundClearance = max(c.fuselageHeight * 0.5, 15) / 1000
 
         // Wing strips: 8 per half, chord tapering root → tip (an ellipse on the NutBall's disc), areas adding up to
@@ -290,7 +288,7 @@ struct FlightModel {
     /// that gives usable rates in level cruise (1.8 × stall speed) at 100 % rate: full-stick roll ≈ 90°/s on the
     /// Micro Glider, 140 on the Park Trainer, 150 on the Twin Boom, 200 on the Sport Jet and the Flying Wing, 230 on
     /// the Delta Jet; pitch ≈ 80–130°/s. The Park Trainer keeps the elevator a spin needs with 30 % expo; the 3D Plane
-    /// and the NutBall keep the big throws a hover needs, with 70 % / 40 % expo – gentle around the centre, the full
+    /// and the NutBall keep the big throws a hover needs, with 30 % / 40 % expo – gentle around the centre, the full
     /// 3D rates only at full stick. Rudders keep their full throw (spins, hovering).
     static func flightThrows(_ kind: AircraftKind) -> (roll: Double, pitch: Double, yaw: Double) {
         switch kind {
@@ -304,10 +302,33 @@ struct FlightModel {
         case .nutBall: return (30, 35, 40)
         }
     }
+    /// Moments of inertia about the CG (kg·m²; x pitch, y yaw, z roll) from the parts and components of the design.
+    static func inertia(_ d: Design, cg: SIMD3<Double>) -> SIMD3<Double> {
+        var I = SIMD3<Double>.zero
+        func add(_ grams: Double, _ p: SIMD3<Double>) {
+            let r: SIMD3<Double> = (p - cg) / 1000
+            let xx = r.x * r.x, yy = r.y * r.y, zz = r.z * r.z, m = grams / 1000
+            I += SIMD3<Double>(m * (yy + zz), m * (xx + zz), m * (xx + yy))
+        }
+        for part in d.parts {
+            // (the outline sampled on an 8 mm grid, the part's mass shared out over the samples)
+            let bb = Poly.bounds(part.outline)
+            var pts: [Vec2] = []
+            var u = bb.min.x + 4
+            while u < bb.max.x { var v = bb.min.y + 4; while v < bb.max.y { if Poly.contains(part.outline, Vec2(u, v)) { pts.append(Vec2(u, v)) }; v += 8 }; u += 8 }
+            if pts.isEmpty { pts = [part.centroid2D] }
+            let each = part.massEach / Double(pts.count)
+            for inst in part.instances { for p in pts { add(each, inst.point(p)) } }
+        }
+        for item in d.components { add(item.mass, item.position) }
+        // (a floor for degenerate designs)
+        return SIMD3(max(I.x, 1e-6), max(I.y, 1e-6), max(I.z, 1e-6))
+    }
+
     static func flightExpo(_ kind: AircraftKind) -> Double {
         switch kind {
         case .trainer: return 0.3
-        case .aerobat: return 0.7
+        case .aerobat: return 0.3
         case .nutBall: return 0.4
         default: return 0
         }
