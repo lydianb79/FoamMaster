@@ -782,7 +782,7 @@ enum DesignBuilder {
         /// sideways swing (throw + 5°, its thickness `tw` and a gap included), so rudder and elevator never meet in plan
         /// view at any deflection – the elevator only moves forward as it swings. The rudder has a small notch at its
         /// leading edge where the strip crosses it (the strip's swing up and down included), and below the plate it
-        /// reaches down to the slipstream's edge (0.35 × prop diameter below the thrust line).
+        /// reaches down to the slipstream's edge at the tail (the prop's radius below the thrust line).
         struct ThroughRudder {
             var path: [Vec2]                 // rudder bottom path in web coordinates (from the LE notch to the TE bottom)
             var bottom: Double               // lowest v of the rudder (web coordinates, v above the plate top)
@@ -808,8 +808,9 @@ enum DesignBuilder {
             let nTop = rg + d * sin(T), nBot = -(t + rg + d * sin(T))
             // Rudder corner at radius r swung by θ, its thickness included, stays behind the strip: r·cosθ − tw/2·sinθ ≥ d + gap.
             let nD = ((d + gap + tw / 2 * sin(T)) / cos(T)).rounded(.up)
-            // Down to the slipstream's edge (thrust line at the plate centre), at least 12 mm below the strip notch.
-            let bottom = min(-(0.7 * c.propRadius + t / 2), nBot - 12).rounded(.down)
+            // Down to the slipstream's edge at the tail (about the prop's radius below the thrust line at the plate
+            // centre), at least 12 mm below the strip notch.
+            let bottom = min(-(c.propRadius + t / 2), nBot - 12).rounded(.down)
             let path = [Vec2(uH, nTop), Vec2(uH + nD, nTop), Vec2(uH + nD, nBot), Vec2(uH, nBot), Vec2(uH, bottom), Vec2(uR, bottom)]
             // A point of the swung rudder lies at x = Δz·tanθ + tw / (2 cosθ) at most.
             let w0 = gap + tw / 2 / cos(T)
@@ -1328,7 +1329,7 @@ enum DesignBuilder {
             // the horn under the elevator.
             controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [-eHornV, -(t / 2 + 9), uH + 2],
                                            servoPosition: eBody, area: Poly.area(elevator), chord: ef * hsc * 0.9, servoID: "Elevator",
-                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0]))
+                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0], outline: elevator))
             if hasRudder {
                 // Rudder horn on the right side of the rudder, servo arm on the right (elevator on the left): the
                 // pushrods run on opposite sides and never cross.
@@ -1538,7 +1539,7 @@ enum DesignBuilder {
             let eBody: SIMD3<Double> = [0, 0, uEJ]
             controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [-eHornV, -(t / 2 + 9), uH + 2],
                                            servoPosition: eBody, area: Poly.area(elevator), chord: 0.4 * hsc * 0.8, servoID: "Elevator",
-                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0]))
+                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0], outline: elevator))
             if c.hasRudder {
                 // Rudder servo arm up on the right, horn on the right side of the rudder: the pushrods never cross.
                 let rBody: SIMD3<Double> = [0, 0, uRJ]
@@ -1835,7 +1836,7 @@ enum DesignBuilder {
             let eBody: SIMD3<Double> = [0, 0, uEN]
             controls.append(ControlSurface(name: "Elevator", hingeMid: [0, 0, uH], hornPosition: [-eHornV, -(t / 2 + 9), uH + 2],
                                            servoPosition: eBody, area: Poly.area(elevator), chord: f * L * 0.7, servoID: "Elevator",
-                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0]))
+                                           armPosition: armTip(eBody, side: -1, down: true), hornAxis: [0, -1, 0], outline: elevator))
             let rBody: SIMD3<Double> = [0, 0, uRN]
             controls.append(ControlSurface(name: "Rudder", hingeMid: [0, t / 2 + finTop / 2, uH], hornPosition: [t / 2 + 8, t / 2 + rHornV, uH + 2],
                                            servoPosition: rBody, area: Poly.area(rudder), chord: rudderChord, servoID: "Rudder",

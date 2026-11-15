@@ -50,6 +50,10 @@ struct FlightModel {
     /// The rudder's share in the slipstream above the thrust line less the share below it: the swirl turns the other
     /// way below the axis, so a rudder reaching down through the elevator catches little net swirl.
     var washSwirl: Double = 0
+    /// Hanging on the prop, a sideways slide blows across everything in the slipstream: lift per radian × arm behind
+    /// the CG (m³, negative ahead of it) of the vertical keel (fuselage halves, fin, rudder) and of the horizontal
+    /// slab (plate, wing, stabiliser, elevator) inside it.
+    var blownKeelMoment = 0.0, blownPlateMoment = 0.0
     /// Motor torque (N·m per N of thrust; + rolls left as seen from behind) and the prop's angular momentum per
     /// throttle (kg·m²/s along +z body; tractor props spin clockwise from behind → H points forward, −z).
     var torquePerThrust: Double = 0, propH: Double = 0
@@ -168,14 +172,21 @@ struct FlightModel {
         let blowsTail = !(c.kind.isTailless)
         if blowsTail {
             let elevSpan = c.kind.isNutBall ? 0.6 * c.wingspan / 1000 : c.hStabSpan / 1000
-            // (the slipstream's core contracts to about 0.7 D)
-            washElevator = min(1, 0.7 * D / max(elevSpan, 0.05)) * (c.isDual ? 0.3 : 1)
-            // The rudder: the part of its outline inside the slipstream's core (radius 0.35 D about the thrust line, at
-            // the plate) – above the plate from just over it (less the cut-out the elevator swings up into) to the fin
-            // top; on the 3D Plane and the NutBall also below the plate, where it reaches down through the elevator.
+            // At the tail the slipstream has mixed out to about the prop's diameter (with v² = u² + T / (ρA) that carries
+            // the thrust's momentum). The elevator: the part of its outline inside it, where the builder stores one.
+            let tube = D / 2 * 1000
+            if let e = d.controls.first(where: { $0.name == "Elevator" }), e.outline.count >= 3, !c.isDual {
+                let bb = Poly.bounds(e.outline)
+                washElevator = min(1, Poly.area(Poly.clip(e.outline, to: Poly.rect(minU: bb.min.x - 1, maxU: bb.max.x + 1, minV: -tube, maxV: tube))) / max(Poly.area(e.outline), 1))
+            } else {
+                washElevator = min(1, D / max(elevSpan, 0.05)) * (c.isDual ? 0.3 : 1)
+            }
+            // The rudder: the part of its outline inside the slipstream (radius D / 2 about the thrust line, at the
+            // plate) – above the plate from just over it (less the cut-out the elevator swings up into) to the fin top;
+            // on the 3D Plane and the NutBall also below the plate, where it reaches down through the elevator.
             // Not behind the dual tractor's outboard props, nor on the twin boom's fins out on the booms.
             if let r = d.controls.first(where: { $0.name == "Rudder" }), r.outline.count >= 3, !c.isDual {
-                let core = 0.35 * D * 1000, half = c.material.thickness / 2     // outline v is above the plate top
+                let core = tube, half = c.material.thickness / 2     // outline v is above the plate top
                 let bb = Poly.bounds(r.outline)
                 func inBand(_ lo: Double, _ hi: Double) -> Double {
                     hi > bb.min.y ? Poly.area(Poly.clip(r.outline, to: Poly.rect(minU: bb.min.x - 1, maxU: bb.max.x + 1, minV: lo, maxV: hi))) : 0
@@ -184,11 +195,55 @@ struct FlightModel {
                 washRudder = min(1, (above + below) / area)
                 washSwirl = (above - below) / area
             } else if c.kind.isTwinBoom {
-                washRudder = c.boomX / 1000 < 0.35 * D ? 0.3 : 0
+                washRudder = c.boomX / 1000 < 0.5 * D ? 0.3 : 0
                 washSwirl = washRudder
             } else {
-                washRudder = c.isDual ? 0 : min(1, 0.35 * D / max(c.vStabHeight / 1000, 0.02))
+                washRudder = c.isDual ? 0 : min(1, 0.5 * D / max(c.vStabHeight / 1000, 0.02))
                 washSwirl = washRudder
+            }
+            // The keel and the plate in the slipstream, from the parts – a single tractor's slipstream on the centre line
+            // (not the dual tractors' outboard ones, nor the pushers'). Both are flat slabs, long against their height /
+            // width inside the slipstream: slender-body theory puts their side force where that height or width grows
+            // (dF = π/2 · q · β · d(h²)), so the nose of the fuselage and the wing's leading edge carry it, not the
+            // constant-height boom behind. The tail surfaces in the slipstream add their own lift (low aspect ratio,
+            // ≈ 1.5 per radian), halved in the vortex sheet the keel and the wing shed ahead of them.
+            if !c.isDual && !c.isPusher && !c.kind.isTailless {
+                let cgz = a.cg.z, step = 2.0
+                // (the slabs end where the tail surfaces begin: the fin's leading edge)
+                let finLE = c.kind.isNutBall ? c.rootChord * (1 - c.controlChordPct) - c.vStabChord
+                                             : c.tailArm + 0.6 * c.hStabChord - 1.25 * c.vStabChord
+                func slender(_ pieces: [(outline: [Vec2], lo: Double, hi: Double)]) -> Double {
+                    let us = pieces.flatMap { p -> [Double] in let b = Poly.bounds(p.outline); return [b.min.x, b.max.x] }
+                    guard let u0 = us.min(), let u1 = us.max().map({ min($0, finLE) }) else { return 0 }
+                    var hMax = 0.0, moment = 0.0, u = u0
+                    while u < u1 {
+                        var h = 0.0
+                        for p in pieces { h += Poly.area(Poly.clip(p.outline, to: Poly.rect(minU: u, maxU: u + step, minV: p.lo, maxV: p.hi))) / step }
+                        if h > hMax { moment += .pi / 2 * (h * h - hMax * hMax) * (u + step / 2 - cgz); hMax = h }
+                        u += step
+                    }
+                    return moment * 1e-9
+                }
+                var keel: [(outline: [Vec2], lo: Double, hi: Double)] = [], plate: [(outline: [Vec2], lo: Double, hi: Double)] = []
+                for part in d.parts {
+                    guard let first = part.instances.first else { continue }
+                    if abs(first.normal.x) > 0.9 && abs(first.origin.x) < 5 && part.role != .winglet {
+                        // vertical on the centre line (one layer of a laminated web): world y = origin.y + v
+                        keel.append((part.outline, -tube - first.origin.y, tube - first.origin.y))
+                    } else if abs(first.normal.y) > 0.9 && abs(first.origin.y) < 5 {
+                        // horizontal at the thrust line, every instance (both wing halves): world x = origin.x + v · v̂.x
+                        for pl in part.instances where abs(pl.v.x) > 0.5 {
+                            let a0 = (-tube - pl.origin.x) / pl.v.x, a1 = (tube - pl.origin.x) / pl.v.x
+                            plate.append((part.outline, min(a0, a1), max(a0, a1)))
+                        }
+                    }
+                }
+                blownKeelMoment = slender(keel)
+                blownPlateMoment = slender(plate)
+                let tailLift = 1.5 * 0.5
+                let arm = (c.kind.isNutBall ? c.rootChord * (1 - c.controlChordPct) : c.tailArm + 0.4 * c.hStabChord) / 1000 - cgz / 1000
+                blownKeelMoment += tailLift * c.vStabHeight * c.vStabChord * 1e-6 * washRudder * arm
+                if c.kind.hasTail { blownPlateMoment += tailLift * c.hStabSpan * c.hStabChord * 1e-6 * washElevator * arm }
             }
         }
         // Motor torque Q ≈ 0.06 · T · D; counter-rotating dual props cancel. Pusher props turn the other way.
@@ -218,6 +273,12 @@ struct FlightModel {
         case .aerobat: return (45, 45, 45)
         case .nutBall: return (30, 35, 40)
         }
+    }
+    /// The fin's side force against sideslip β, per unit of its linear slope (2.5 / rad): linear, rounding off past
+    /// ~20°, a flat plate's normal force ≈ 1.1 broadside.
+    static func finCurve(_ beta: Double) -> Double {
+        let s = sin(beta)
+        return (liftCurve(beta, slope: 2.5, stall: 20 * .pi / 180) * cos(beta) + 1.1 * s * abs(s)) / 2.5
     }
     /// A hinged flat surface turns the flow less and less beyond about 25°: the deflection that counts (rad).
     static let surfaceSaturation = 0.45
@@ -402,12 +463,24 @@ final class FlightSim {
                 Cm += -m.tailVH * (actual - linear) * (1 - m.washElevator)
             }
             let Cl = m.Clb * beta
-            let Cn = m.Cnb * beta                       // (adverse aileron yaw comes from the strips' drag)
+            // (adverse aileron yaw comes from the strips' drag) The fin stalls too: beyond ~20° of sideslip its push
+            // levels off, broadside (a sideways slide in a hover) it is a flat plate's ≈ 1.1 – not the linear term at 90°.
+            let Cn = m.Cnb * FlightModel.finCurve(beta)
             torque += SIMD3<Double>(qS * m.cbar * Cm, -qS * m.b * Cn, -qS * m.b * Cl)
         }
         // (what the wing and the fuselage ahead of it have straightened out no longer reaches the fin)
         if m.swirlFin, m.washSwirl != 0 {
             torque.y += swirlSense * qWash * m.washSwirl * m.S * m.b * m.Cnb * atan(vSwirl * (1 - m.swirlRecovery) / max(u + washDelta, 0.5))
+        }
+        // Hanging on the prop, a sideways slide blows across the slipstream: everything in it – keel, fin, rudder,
+        // plate, wing, stabiliser, elevator – meets it at atan(slide / slipstream speed) with the thrust's share of
+        // the slipstream's dynamic pressure (levelling off past 20°). What pushes behind the CG swings the nose into
+        // the slide and tips the model further over; the nose of the flat fuselage and the wing's leading edge push
+        // back. (Only the moment: the wing's strips already carry the force.)
+        if m.blownKeelMoment != 0 || m.blownPlateMoment != 0, thrust > 0 {
+            let qT = 0.5 * thrust / m.discArea, vS = max(u + washDelta, 0.5)
+            torque.y += -qT * FlightModel.liftCurve(atan(vb.x / vS), slope: 1, stall: 20 * .pi / 180) * m.blownKeelMoment
+            torque.x += qT * FlightModel.liftCurve(atan(vb.y / vS), slope: 1, stall: 20 * .pi / 180) * m.blownPlateMoment
         }
         // Pitch and yaw damping (mostly the tail): ½ρ·V·rate – the part of the tail in the prop's slipstream turns
         // through the slipstream's speed, so a hanging model is damped too, not only one with airspeed.
