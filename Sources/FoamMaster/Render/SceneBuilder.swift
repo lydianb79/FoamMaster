@@ -29,6 +29,10 @@ struct SceneData {
     }
     static let maxGroups = 10
     var groups: [Group] = []
+    /// Where each propeller's blades sit in `triangles` (vertex range) and its editor ring in `lines` – the flight
+    /// simulator draws the blades on their own (motion blur, prop disc) and leaves the ring out.
+    struct RotorBlades { var group: Int; var tris: Range<Int>; var ring: Range<Int>; var radius: Float; var hub: Float; var blades: Int }
+    var rotorBlades: [RotorBlades] = []
     var rotors: [Group] { groups.filter { $0.kind == .prop } }
     var spinGroup = -1
     var triLabels: [Int32] = []
@@ -237,6 +241,7 @@ enum SceneBuilder {
                               color: SIMD4(0.75, 0.75, 0.78, 1))
                 scene.addMesh(cylinder(center: [p.x, 0, shaftStart + out * 1.2], radius: 2.2, length: 2.4, segments: 12), color: SIMD4(0.72, 0.72, 0.76, 1))
                 scene.spinGroup = -1
+                let ringStart = scene.lines.count
                 for k in 0..<48 {
                     let a0 = Double(k) / 48 * 2 * .pi, a1 = Double(k + 1) / 48 * 2 * .pi
                     scene.addLine([p.x + cos(a0) * pr, sin(a0) * pr, z], [p.x + cos(a1) * pr, sin(a1) * pr, z], color: SIMD4(1, 1, 1, 0.25))
@@ -245,9 +250,13 @@ enum SceneBuilder {
                 scene.label = "Propeller – \(c.propRecommendation)"
                 // Same rotor as the bell (spins with Motor on): the blades turn so the leading edge advances – a
                 // mirrored prop the other way.
+                let ring = ringStart..<scene.lines.count
                 scene.spinGroup = rotor
-                scene.addMesh(propeller(radius: pr, blades: c.propBladeCount, z: z, hub: r * 0.45, outward: out, mirrored: mirroredProp)
-                                .translated([p.x, 0, 0]), color: Palette.prop)
+                scene.addMesh(propellerHub(radius: pr, z: z, hub: r * 0.45, outward: out).translated([p.x, 0, 0]), color: Palette.prop)
+                let bladeStart = scene.triangles.count
+                scene.addMesh(propellerBlades(radius: pr, blades: c.propBladeCount, z: z, mirrored: mirroredProp).translated([p.x, 0, 0]), color: Palette.prop)
+                scene.rotorBlades.append(SceneData.RotorBlades(group: rotor, tris: bladeStart..<scene.triangles.count, ring: ring,
+                                                               radius: Float(pr), hub: Float(r * 0.45), blades: c.propBladeCount))
                 scene.spinGroup = -1
             case "Power" where item.name.hasPrefix("ESC"):
                 let e: SIMD3<Double> = c.motor.escMass > 4 ? [24, 13, 5] : [18, 10, 4]
@@ -639,8 +648,23 @@ enum SceneBuilder {
     /// of tractor props (reverse rotation), so `mirrored` flips the blade handedness; the pitch always gives
     /// forward thrust (trailing edge aft).
     static func propeller(radius R: Double, blades n: Int, z: Double, hub: Double, outward: Double = -1, mirrored: Bool = false) -> Mesh3D {
+        var m = propellerBlades(radius: R, blades: n, z: z, mirrored: mirrored)
+        m.append(propellerHub(radius: R, z: z, hub: hub, outward: outward))
+        return m
+    }
+    /// Blade planform: chord as a fraction of the radius at stations along the radius.
+    static let bladeStations: [(r: Double, chord: Double)] = [(0.12, 0.13), (0.25, 0.2), (0.38, 0.22), (0.55, 0.19), (0.72, 0.15), (0.88, 0.1), (0.97, 0.06), (1.0, 0.02)]
+    /// Chord fraction at a radius fraction (linear between the stations).
+    static func bladeChord(_ x: Double) -> Double {
+        let s = bladeStations
+        if x <= s[0].r { return s[0].chord }
+        for i in 1..<s.count where x <= s[i].r { let t = (x - s[i - 1].r) / (s[i].r - s[i - 1].r); return s[i - 1].chord + t * (s[i].chord - s[i - 1].chord) }
+        return s.last!.chord
+    }
+    /// The blades alone (see `propeller`).
+    static func propellerBlades(radius R: Double, blades n: Int, z: Double, mirrored: Bool = false) -> Mesh3D {
         var m = Mesh3D()
-        let stations: [(r: Double, chord: Double)] = [(0.12, 0.13), (0.25, 0.2), (0.38, 0.22), (0.55, 0.19), (0.72, 0.15), (0.88, 0.1), (0.97, 0.06), (1.0, 0.02)]
+        let stations = bladeStations
         let thick = max(0.6, R * 0.012)
         for b in 0..<n {
             let phi = Double(b) / Double(n) * 2 * .pi + 0.4
@@ -670,6 +694,11 @@ enum SceneBuilder {
                 m.triangles.append((w(trail[i], -thick / 2), w(trail[i + 1], thick / 2), w(trail[i + 1], -thick / 2)))
             }
         }
+        return m
+    }
+    /// Hub and spinner (see `propeller`).
+    static func propellerHub(radius R: Double, z: Double, hub: Double, outward: Double = -1) -> Mesh3D {
+        var m = Mesh3D()
         m.append(cylinder(center: [0, 0, z], radius: hub, length: R * 0.12))
         // Spinner: nose cone on the outward side of the hub.
         let tipZ = z + outward * hub * 0.8

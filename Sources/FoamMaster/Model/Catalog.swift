@@ -61,7 +61,7 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
         case .m1306: return "1306 brushless"
         case .m1806: return "1806 brushless"
         case .m2204: return "2204 brushless"
-        case .m1806s: return "1806 slow-fly (≈ 1500 KV)"
+        case .m1806s: return "1806 slow-fly brushless (≈ 1500 KV)"
         }
     }
     /// grams

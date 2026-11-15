@@ -24,8 +24,10 @@ vertex Out vmain(const device Vtx* v [[buffer(0)]], constant Uni& u [[buffer(1)]
     float tag = v[id].nrm.w;
     float lit = tag > 0.5 ? 1.0 : 0.0;
     float g = abs(tag);
+    float fade = 1.0;
     if (g > 1.5) {
         int k = int(g - 2.0 + 0.5);
+        fade = grp[2 * k].w;          // the group's opacity (1; the simulator fades prop blades and the prop disc)
         float3 c = grp[2 * k].xyz, ax = normalize(grp[2 * k + 1].xyz);
         float a = grp[2 * k + 1].w;
         p = c + rot(p - c, ax, a);
@@ -37,6 +39,7 @@ vertex Out vmain(const device Vtx* v [[buffer(0)]], constant Uni& u [[buffer(1)]
     o.w = wp.xyz;
     bool flat = u.tint.w > 0;
     o.c = flat ? u.tint : v[id].col;
+    if (!flat) { o.c.a *= fade; }
     o.lit = flat ? 0.0 : lit;
     // Water surfaces carry the tag 0.75 (lit, plus ripples and reflections in the simulator).
     o.water = (tag > 0.6 && tag < 0.9) ? 1.0 : 0.0;
@@ -400,7 +403,7 @@ struct Uniforms {
     var clip: SIMD4<Float> = [0, 0, 0, 1]
 }
 
-/// Centre and axis + angle (w) of each moving group, as the shader reads them (buffer 2, 10 groups).
+/// Centre + opacity (w, 1) and axis + angle (w) of each moving group, as the shader reads them (buffer 2, 10 groups).
 func groupBuffer(_ groups: [SceneData.Group], angle: (Int, SceneData.Group) -> Float) -> [SIMD4<Float>] {
     var out = [SIMD4<Float>](repeating: [0, 0, 1, 0], count: 2 * SceneData.maxGroups)
     for (k, g) in groups.prefix(SceneData.maxGroups).enumerated() {

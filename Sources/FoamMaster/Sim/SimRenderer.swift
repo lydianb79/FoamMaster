@@ -28,6 +28,14 @@ final class SimRenderer: NSObject, MTKViewDelegate {
     private var cgMM = SIMD3<Float>.zero
     private var span: Double = 0.5
     private var propAngle: Float = 0
+    /// Propeller: turns per second now and at full throttle (from the model's pitch speed and the prop's pitch).
+    private var propRPS: Float = 0, propRPSFull: Float = 150
+    /// The blades (drawn apart from the model: motion blur) and the prop disc a fast prop turns into.
+    private var blades: (tri: MTLBuffer?, triCount: Int) = (nil, 0)
+    private var disc: (tri: MTLBuffer?, triCount: Int) = (nil, 0)
+    private var bladeCount = 2
+    /// Colour of the props in the simulator (the editor shows them yellow).
+    static let propColor = SIMD4<Float>(0.13, 0.13, 0.14, 1)
     private var worldGroups: [SceneData.Group] = []
     private var worldTime: Float = 0
     private var lastTime = CACurrentMediaTime()
@@ -155,7 +163,22 @@ final class SimRenderer: NSObject, MTKViewDelegate {
 
     /// The aircraft in its own (mm) frame with moving surfaces and props, rotated about its CG.
     func setAircraft(_ d: Design, _ a: Analysis) {
-        let scene = SceneBuilder.aircraft(d, a, deflection: 0, showCG: false, animated: true)
+        var scene = SceneBuilder.aircraft(d, a, deflection: 0, showCG: false, animated: true)
+        // The props: dark, the blades taken out to be drawn with motion blur, the editor's ring left out; a disc per prop.
+        var bladeVerts: [GPUVertex] = [], discVerts: [GPUVertex] = []
+        for rb in scene.rotorBlades.sorted(by: { $0.tris.lowerBound > $1.tris.lowerBound }) {
+            bladeVerts += scene.triangles[rb.tris]
+            scene.triangles.removeSubrange(rb.tris)
+        }
+        for rb in scene.rotorBlades.sorted(by: { $0.ring.lowerBound > $1.ring.lowerBound }) { scene.lines.removeSubrange(rb.ring) }
+        for i in scene.triangles.indices where scene.triangles[i].color == Palette.prop { scene.triangles[i].color = Self.propColor }
+        for i in bladeVerts.indices { bladeVerts[i].color = Self.propColor }
+        for rb in scene.rotorBlades where rb.group < scene.groups.count { discVerts += Self.propDisc(rb, scene.groups[rb.group]) }
+        bladeCount = scene.rotorBlades.first?.blades ?? 2
+        blades = (bladeVerts.isEmpty ? nil : device.makeBuffer(bytes: bladeVerts, length: MemoryLayout<GPUVertex>.stride * bladeVerts.count), bladeVerts.count)
+        disc = (discVerts.isEmpty ? nil : device.makeBuffer(bytes: discVerts, length: MemoryLayout<GPUVertex>.stride * discVerts.count), discVerts.count)
+        let fm = FlightModel(d, a)
+        propRPSFull = Float(fm.pitchSpeed / (max(d.config.propModel.pitch, 1) * 0.0254))
         plane = buffers(scene)
         groups = scene.groups
         cgMM = SIMD3<Float>(a.cg)
@@ -184,8 +207,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
             tickAccum += dt
             if tickAccum > 1.0 / 15 { tickAccum = 0; onTick?(sim, stick) }
             audio?.update(sim: sim, eye: [0, 1.7, 0], dt: dt)
-            propAngle += Float(dt) * 2 * .pi * Float(20 * sim.surfaces.throttle)
-            propAngle = propAngle.truncatingRemainder(dividingBy: 2 * .pi * 100)
+            spinProp(dt, throttle: sim.surfaces.throttle)
             worldTime += Float(dt)
             advanceEffects(sim, dt: Float(dt))
         }
@@ -259,7 +281,73 @@ final class SimRenderer: NSObject, MTKViewDelegate {
     }
 
     /// Advance the propeller animation (for snapshots outside the view loop).
-    func spinProp(_ dt: Double, throttle: Double) { propAngle += Float(dt) * 2 * .pi * Float(20 * throttle) }
+    func spinProp(_ dt: Double, throttle: Double) {
+        // rpm ∝ throttle^0.8 (thrust ∝ rpm² ∝ throttle^1.6), spooling up and down in about a tenth of a second.
+        let want = propRPSFull * Float(pow(max(throttle, 0), 0.8))
+        propRPS += (want - propRPS) * Float(min(dt * 10, 1))
+        propAngle = (propAngle + Float(dt) * 2 * .pi * propRPS).truncatingRemainder(dividingBy: 2 * .pi)
+    }
+
+    /// A prop disc: an annulus as dense as the blades cover each radius (blade chords over the circumference – dark
+    /// near the hub, faint at the tips), with a faint ghost of each blade and a thin tip ring. In the prop's group,
+    /// unlit, translucent.
+    static func propDisc(_ rb: SceneData.RotorBlades, _ g: SceneData.Group) -> [GPUVertex] {
+        let n = rb.blades, R = Double(rb.radius), r0 = Double(rb.hub) * 1.15
+        let tag = -Float(2 + rb.group)
+        let rings = 10, segs = 96
+        func vtx(_ r: Double, _ a: Double, _ alpha: Float) -> GPUVertex {
+            let p = SIMD3<Float>(Float(cos(a) * r), Float(sin(a) * r), 0) + g.center
+            return GPUVertex(position: SIMD4(p, 1), normal: SIMD4(0, 0, 1, tag), color: SIMD4(0.16, 0.16, 0.17, alpha))
+        }
+        func alpha(_ r: Double, _ a: Double) -> Float {
+            let x = r / R
+            let cover = Double(n) * SceneBuilder.bladeChord(x) / (2 * .pi * x)
+            let ghost = 0.72 + 0.28 * cos(Double(n) * (a - 0.4))               // at the blades' own angles (phi = 0.4 + k·2π/n)
+            let tip = x > 0.93 ? 0.10 : 0.0
+            return Float(min(cover * 1.5 * ghost + tip, 0.6))
+        }
+        var out: [GPUVertex] = []
+        for i in 0..<rings {
+            let ra = r0 + (R - r0) * Double(i) / Double(rings), rb2 = r0 + (R - r0) * Double(i + 1) / Double(rings)
+            for j in 0..<segs {
+                let a0 = Double(j) / Double(segs) * 2 * .pi, a1 = Double(j + 1) / Double(segs) * 2 * .pi
+                let q = [vtx(ra, a0, alpha(ra, a0)), vtx(rb2, a0, alpha(rb2, a0)), vtx(rb2, a1, alpha(rb2, a1)), vtx(ra, a1, alpha(ra, a1))]
+                out += [q[0], q[1], q[2], q[0], q[2], q[3]]
+            }
+        }
+        return out
+    }
+
+    /// The blades and the disc: a slow prop shows its blades, with a blur trail over the angle they turn in a frame; a
+    /// fast one turns into the disc with faint blade ghosts. Translucent, after the model, not writing depth.
+    private func drawProps(_ enc: MTLRenderCommandEncoder, surfaces s: StickInput) {
+        let n = Float(max(bladeCount, 1))
+        let rps = propRPS
+        let discOn = min(max((rps - 4) / 22, 0), 1)                  // 4 → 26 turns a second: blades → disc
+        let perFrame = 2 * Float.pi * rps / 60                       // angle the blades turn in a frame
+        let sweep = min(perFrame, 2 * .pi / n * 0.85)
+        let copies = rps < 1.5 ? 1 : 16
+        enc.setDepthStencilState(lineDepthState)
+        func groupsWith(_ angle: Float, _ opacity: Float) {
+            var g = groupBuffer(groups) { _, gr in Self.groupAngle(gr, s, prop: angle) }
+            for (k, gr) in groups.prefix(SceneData.maxGroups).enumerated() where gr.kind == .prop { g[2 * k].w = opacity }
+            enc.setVertexBytes(&g, length: MemoryLayout<SIMD4<Float>>.stride * g.count, index: 2)
+        }
+        if let t = blades.tri, discOn < 1 {
+            enc.setVertexBuffer(t, offset: 0, index: 0)
+            for k in 0..<copies {
+                let f = Float(k) / Float(copies)
+                let opacity = (1 - discOn) * (k == 0 ? 1 : 0.3 * (1 - f))
+                groupsWith(propAngle - sweep * f, opacity)
+                enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: blades.triCount)
+            }
+        }
+        if let t = disc.tri, discOn > 0 {
+            groupsWith(propAngle, discOn)
+            enc.setVertexBuffer(t, offset: 0, index: 0)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: disc.triCount)
+        }
+    }
 
     /// Effects follow the flight: a crash, a landing, the pond, the smoke trail.
     private func advanceEffects(_ sim: FlightSim, dt: Float) {
@@ -447,6 +535,7 @@ final class SimRenderer: NSObject, MTKViewDelegate {
             enc.setVertexBytes(&grp, length: MemoryLayout<SIMD4<Float>>.stride * grp.count, index: 2)
             uni.model = bodyMatrix(st)
             draw(plane)
+            drawProps(enc, surfaces: s)
         }
         _ = target
         // Effects: camera-facing quads, translucent, not writing depth.
