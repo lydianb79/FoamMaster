@@ -154,10 +154,12 @@ enum AircraftKind: String, CaseIterable, Identifiable, Codable {
             c.hStabSpan = 200; c.hStabChord = 70; c.vStabHeight = 80; c.vStabChord = 75; c.hStabSweep = 7
             c.material = .depron6; c.motor = .m1104; c.battery = .s2_300; c.servo = .g25
         case .aerobat:
-            c.wingspan = 560; c.rootChord = 190; c.tipChord = 150; c.sweep = 20; c.dihedral = 0
-            c.controlChordPct = 0.32
-            c.fuselageLength = 560; c.fuselageHeight = 135; c.noseLength = 110; c.tailArm = 290
-            c.hStabSpan = 250; c.hStabChord = 110; c.vStabHeight = 115; c.vStabChord = 125; c.hStabSweep = 11
+            // Big, light wing for slow, floaty 3D: 760 mm span, ≈ 17 dm² (the ailerons as big in mm as on a smaller wing
+            // with a bigger share – the servos keep their reserve), tail and fuselage grown with it.
+            c.wingspan = 760; c.rootChord = 250; c.tipChord = 210; c.sweep = 20; c.dihedral = 0
+            c.controlChordPct = 0.24
+            c.fuselageLength = 600; c.fuselageHeight = 135; c.noseLength = 110; c.tailArm = 394
+            c.hStabSpan = 340; c.hStabChord = 110; c.vStabHeight = 115; c.vStabChord = 125; c.hStabSweep = 11
             // Light for floaty 3D: 3 mm Depron (struts carry the wing), 2S 300, 2.5 g servos, slow-fly motor with an 8" 2-blade.
             c.material = .depron3; c.motor = .m1806s; c.battery = .s2_300; c.servo = .g25
         case .glider:
