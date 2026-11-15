@@ -182,10 +182,11 @@ final class Project: ObservableObject {
         }
     }
 
+    /// Score 100 and balanced near the recommended CG (not just anywhere in the CG range).
     nonisolated static func perfect(_ c: AircraftConfig) -> Bool {
         let d = DesignBuilder.build(c)
         let a = Analysis(design: d)
-        return d.geometryIssues.isEmpty && a.feasible && a.score == 100
+        return d.geometryIssues.isEmpty && a.feasible && a.score == 100 && a.balancedNearTarget
     }
 
     /// Servo, power system and balance for an airframe.
@@ -203,12 +204,13 @@ final class Project: ObservableObject {
         return a.feasible && !a.checks.contains { $0.severity >= .warning && !["Power", "Performance"].contains($0.category) }
     }
 
-    /// Weighted count of the airframe's problems (power and flight performance left out): 0 = clean.
+    /// Weighted count of the airframe's problems (power and flight performance left out; a CG away from the
+    /// recommended one counts as one): 0 = clean.
     nonisolated static func airframePenalty(_ c: AircraftConfig) -> Double {
         let d = DesignBuilder.build(c)
         let a = Analysis(design: d)
         return a.checks.filter { !["Power", "Performance"].contains($0.category) }
-            .reduce(Double(d.geometryIssues.count) * 2) { $0 + ($1.severity == .error ? 3 : ($1.severity == .warning ? 1 : 0)) }
+            .reduce(Double(d.geometryIssues.count) * 2 + (a.balancedNearTarget ? 0 : 1)) { $0 + ($1.severity == .error ? 3 : ($1.severity == .warning ? 1 : 0)) }
     }
 
     /// Single airframe changes around `base`, cheapest first: every slider ±1…`maxSteps` steps (4 % of its range),
@@ -262,7 +264,7 @@ final class Project: ObservableObject {
 
     nonisolated static func sized(_ input: AircraftConfig, deadline: TimeInterval = 40) -> AircraftConfig {
         let base = powered(input)
-        if perfect(base) { return base }
+        if perfect(base) { return lighterWithLongerNose(base, input) ?? base }
         let t0 = Date()
         let basePenalty = airframePenalty(base)
         // Stage 1: one change (smallest first). Stage 2: a second change on top of the most promising first ones.
@@ -290,6 +292,29 @@ final class Project: ObservableObject {
         // Last resort: a random airframe of the same type and options that passes everything.
         if let (c, _) = randomVariant(like: base, deadline: 20) { var c = c; c.name = base.name; return c }
         return base
+    }
+
+    /// When the power system balanced the model with a heavier battery than the lightest one, a longer nose with the
+    /// lightest power system may balance it too and weigh less – that build, if it passes everything and is lighter.
+    nonisolated static func lighterWithLongerNose(_ base: AircraftConfig, _ input: AircraftConfig) -> AircraftConfig? {
+        guard !base.kind.isTailless, base.autoPower, let light = PowerOptimizer.best(for: base, balance: false)?.config,
+              light.battery.mass < base.battery.mass || light.motor != base.motor else { return nil }
+        let range = AircraftConfig.range(\AircraftConfig.noseLength, kind: base.kind)
+        let step = (range.upperBound - range.lowerBound) * 0.04
+        var trials: [AircraftConfig] = []
+        for k in 1...15 {
+            var c = base; c.motor = light.motor; c.battery = light.battery
+            c.noseLength = base.noseLength + step * Double(k)
+            guard range.contains(c.noseLength) else { break }
+            trials.append(c)
+        }
+        let mass = { (c: AircraftConfig) in Analysis(design: DesignBuilder.build(c)).totalMass }
+        let baseMass = mass(base)
+        for r in screen(trials) where r.penalty == 0 {
+            if let f = finished(r.config), mass(f) < baseMass { return f }
+            break
+        }
+        return nil
     }
 
     // MARK: Fix suggestions

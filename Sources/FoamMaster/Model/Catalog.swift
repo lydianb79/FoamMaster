@@ -191,7 +191,7 @@ enum MotorClass: String, CaseIterable, Identifiable, Codable {
 }
 
 enum BatteryPack: String, CaseIterable, Identifiable, Codable {
-    case s1_300, s1_450, s2_300, s2_450, s2_650, s3_450, s3_850
+    case s1_300, s1_400, s1_450, s2_300, s2_350, s2_450, s2_550, s2_650, s3_450, s3_850
     var id: String { rawValue }
     var cells: Int { Int(String(rawValue.dropFirst().prefix(1)))! }
     var capacity: Double { Double(rawValue.split(separator: "_")[1])! }
@@ -199,9 +199,12 @@ enum BatteryPack: String, CaseIterable, Identifiable, Codable {
     var mass: Double {
         switch self {
         case .s1_300: return 8.5
+        case .s1_400: return 10.5
         case .s1_450: return 12
         case .s2_300: return 18
+        case .s2_350: return 21
         case .s2_450: return 27
+        case .s2_550: return 32
         case .s2_650: return 38
         case .s3_450: return 39
         case .s3_850: return 70
@@ -212,9 +215,12 @@ enum BatteryPack: String, CaseIterable, Identifiable, Codable {
     var size: (l: Double, w: Double, h: Double) {
         switch self {
         case .s1_300: return (45, 17, 7)
+        case .s1_400: return (50, 18, 7.5)
         case .s1_450: return (52, 20, 8)
         case .s2_300: return (50, 17, 13)
+        case .s2_350: return (52, 17, 13.5)
         case .s2_450: return (57, 20, 14)
+        case .s2_550: return (60, 21, 14)
         case .s2_650: return (60, 30, 13)
         case .s3_450: return (57, 20, 20)
         case .s3_850: return (65, 30, 20)

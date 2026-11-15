@@ -43,6 +43,12 @@ struct Analysis {
     var recommendedCG = 0.0     // z
     var cgRange: ClosedRange<Double> = 0...0
     var staticMargin = 0.0      // fraction of MAC
+    /// Static margin at the recommended CG (fraction of MAC: 8 % tailless / NutBall, 12 % tailed).
+    var targetStaticMargin: Double { mac > 0 ? (neutralPoint - recommendedCG) / mac : 0 }
+    /// The CG is not tail-heavy: at most 2 % of the MAC behind the recommended one (ahead of it, the CG range check
+    /// sets the limit – nose-heavy is safe). What the default setups and the automatic power system aim for; anywhere
+    /// in the CG range still passes the checks.
+    var balancedNearTarget: Bool { staticMargin >= targetStaticMargin - 0.02 }
     var wingLoading = 0.0       // g/dm²
     var stallSpeed = 0.0        // km/h
     var thrust = 0.0            // g

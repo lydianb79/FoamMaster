@@ -16,9 +16,11 @@ enum PowerOptimizer {
         var analysis: Analysis
     }
 
-    static func best(for input: AircraftConfig) -> Result? {
+    /// `balance`: among equally good combinations, one whose battery brings the CG near the recommended one (a heavier
+    /// pack in the nose instead of the lightest one that leaves the model tail-heavy) – off: simply the lightest.
+    static func best(for input: AircraftConfig, balance: Bool = true) -> Result? {
         let target = input.kind.recommendedThrustToWeight
-        var best: (key: (Int, Int, Int, Double), result: Result)?
+        var best: (key: (Int, Int, Int, Int, Double), result: Result)?
         // Dual tractor: the single-motor version's power system ×2 – motors at least that size and a battery with at
         // least its cells and capacity – instead of two tiny motors on a small pack that cancel out the second motor,
         // ESC and mounts. So switching to dual always adds that hardware's weight.
@@ -26,7 +28,7 @@ enum PowerOptimizer {
         if input.isDual {
             var single = input
             single.motorLayout = .single
-            if let s = PowerOptimizer.best(for: single)?.config {
+            if let s = PowerOptimizer.best(for: single, balance: balance)?.config {
                 minMotorMass = s.motor.mass; minCells = s.battery.cells; minCapacity = s.battery.capacity
             }
         }
@@ -40,18 +42,38 @@ enum PowerOptimizer {
         // swapped); the builds then run in parallel batches, most promising first, and stop once no combination left
         // can beat the best one found even with a few grams' and per cent's slack. Ties: the first in the list.
         guard !combos.isEmpty else { return nil }
-        let inputMass = Analysis(design: DesignBuilder.build(input)).totalMass
-        func optimistic(_ i: Int) -> (Int, Int, Int, Double) {
+        let inputDesign = DesignBuilder.build(input)
+        let inputA = Analysis(design: inputDesign)
+        let inputMass = inputA.totalMass
+        // For the balance estimate: the motor end (motors, ESCs, mounts, props) as one lump where it sits now, the battery
+        // anywhere it can go, the rest of the model unchanged.
+        let motorEnd = inputDesign.components.filter { $0.category == "Power" || $0.name.hasPrefix("Motor mount") }
+        let motorEndMass = motorEnd.reduce(0) { $0 + $1.mass }
+        let motorEndZ = motorEndMass > 0 ? motorEnd.reduce(0) { $0 + $1.mass * $1.position.z } / motorEndMass : 0
+        let batteryItem = inputDesign.components.first { $0.category == "Battery" }
+        let restMass = inputMass - motorEndMass - (batteryItem?.mass ?? 0)
+        let restMoment = inputA.cg.z * inputMass - motorEndMass * motorEndZ - (batteryItem.map { $0.mass * $0.position.z } ?? 0)
+        func optimistic(_ i: Int) -> (Int, Int, Int, Int, Double) {
             var c = input; c.motor = combos[i].0; c.battery = combos[i].1
             let mass = inputMass - Analysis.powerMass(input) + Analysis.powerMass(c)
             let tw = Analysis.staticThrust(c) / max(mass, 1), time = Analysis.flightTime(c, totalMass: mass)
             let meets = tw * 1.04 >= target && time * 1.04 >= minFlightTime
             let style = input.kind.prefersSlowFly && !c.motor.isSlowFly ? 1 : 0
-            return (meets ? 0 : 1, style, -100, meets ? mass - 4 : -tw * 1.04)
+            // Can the battery bring the CG forward to the recommended one (with a few per cent of slack)?
+            var offCG = 0
+            if balance, batteryItem != nil, inputA.mac > 0 {
+                let lump = Analysis.powerMass(c) - c.battery.mass
+                let lim = Analysis.batteryLimits(c)
+                let base = restMoment + lump * motorEndZ, m = restMass + lump + c.battery.mass
+                let cgs = [lim.lowerBound, lim.upperBound].map { (base + c.battery.mass * $0) / m }
+                let want = inputA.recommendedCG, slack = 0.06 * inputA.mac
+                if cgs.min()! > want + slack { offCG = 1 }
+            }
+            return (meets ? 0 : 1, style, -100, offCG, meets ? mass - 4 : -tw * 1.04)
         }
         let bound = combos.indices.map(optimistic)
         let order = combos.indices.sorted { bound[$0] != bound[$1] ? bound[$0] < bound[$1] : $0 < $1 }
-        var results = [(key: (Int, Int, Int, Double), result: Result)?](repeating: nil, count: combos.count)
+        var results = [(key: (Int, Int, Int, Int, Double), result: Result)?](repeating: nil, count: combos.count)
         let lock = NSLock()
         let batch = max(ProcessInfo.processInfo.activeProcessorCount, 4)
         var next = 0
@@ -68,9 +90,11 @@ enum PowerOptimizer {
                 guard a.feasible else { return }
                 let meets = a.thrustToWeight >= target && a.flightTime >= minFlightTime
                 // Meeting the target first, then (3D Plane) the slow-fly motor with its big prop, then fewer warnings,
-                // then the lightest (or, if nothing meets it, the one with the most thrust per weight).
+                // then (balance) the CG near the recommended one, then the lightest (or, if nothing meets it, the one
+                // with the most thrust per weight).
                 let style = input.kind.prefersSlowFly && !c.motor.isSlowFly ? 1 : 0
-                let key = (meets ? 0 : 1, style, -a.score, meets ? a.totalMass : -a.thrustToWeight)
+                let offCG = balance && !a.balancedNearTarget ? 1 : 0
+                let key = (meets ? 0 : 1, style, -a.score, offCG, meets ? a.totalMass : -a.thrustToWeight)
                 lock.lock(); results[i] = (key, Result(config: balanced, analysis: a)); lock.unlock()
             }
             // (in list order, so equal keys keep the first combination)

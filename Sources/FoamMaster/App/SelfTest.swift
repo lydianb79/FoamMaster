@@ -976,8 +976,9 @@ enum SelfTest {
                 s.input = StickInput(roll: 1, pitch: 1, yaw: 1, throttle: 0)
                 var maxYaw = 0.0
                 for k in 0..<240 { s.step(1.0 / 60); if k > 120 { maxYaw = max(maxYaw, abs(s.state.omega.y)) } }
-                let spun = maxYaw > 1.5
-                print(String(format: "Spin (Park Trainer, full up + rudder + aileron at the stall): yaw rate %.1f rad/s after 2–4 s%@", maxYaw, spun ? "" : "  ← PROBLEM"))
+                // (balanced at its recommended CG it spins more gently than a tail-heavy one – ≈ 1.5 rad/s)
+                let spun = maxYaw > 1.2
+                print(String(format: "Spin (Park Trainer, full up + rudder + aileron at the stall): yaw rate %.2f rad/s after 2–4 s%@", maxYaw, spun ? "" : "  ← PROBLEM"))
             }
             // Prop wash: hanging on the prop (nose up, no airspeed, hover throttle) – the elevator still works on a
             // tractor; a tailless pusher has nothing in its slipstream. Motor torque rolls the tractor left.
