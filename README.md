@@ -20,6 +20,10 @@ The app is not notarized: on first launch right-click it and choose **Open** (or
 - **Plans and parts.** 1:1 A4 PDF plans with every dimension, a bill of materials and build instructions; STL files for motor mounts, horns, strut anchors and the spar joiner.
 - **Fly it before you cut it.** A flight simulator flies exactly the design on screen – with its weight, inertia, CG, trim, prop slipstream, torque and stall.
 
+<img src="docs/images/setup.jpg" alt="Setup sheet for the 3D Plane" width="560">
+
+*Pick a type and its options – controls, wing tips, aileron servos, single or dual motor. The sheet sizes the build to pass every check before you start.*
+
 ![Editor with the 3D Plane](docs/images/editor.jpg)
 
 *The editor: parameters on the left, the live 3D model with every component, analysis and checks on the right.*

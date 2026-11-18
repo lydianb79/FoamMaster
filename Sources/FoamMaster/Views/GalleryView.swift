@@ -144,6 +144,7 @@ struct GalleryContent: View {
                 project.start(kind, choice: ch)
             } cancel: { selected = nil }
         }
+        .onReceive(project.$setupSheetRequest) { r in if let r { selected = r } }
     }
 }
 

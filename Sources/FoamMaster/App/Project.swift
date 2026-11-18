@@ -45,6 +45,8 @@ final class Project: ObservableObject {
     @Published var statusMessage: String?
     /// Credits splash – shown at start-up, closed with a click.
     @Published var showAbout = true
+    /// Opens (a type) or closes (nil) the gallery's setup sheet from outside the gallery – the screenshot mode.
+    @Published var setupSheetRequest: AircraftKind??
     /// Result of the last balance fix, shown in the CG panel until the design changes.
     @Published var balanceNote: String?
 

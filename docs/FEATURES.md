@@ -53,4 +53,4 @@ The full, detailed description of everything FoamMaster does – construction ru
 
 Builds every model type, prints the analysis, writes PDFs, STLs and offscreen Metal/UI renders.
 
-`--screenshots <dir>` – drives the app through the gallery, the editor with the 3D Plane and the flight simulator (chase view, in flight) and saves each window as a PNG – the README screenshots (resized to JPEG in `docs/images`). The app captures its own windows, so it needs no screen-recording permission.
+`--screenshots <dir>` – drives the app through the gallery, the 3D Plane's setup sheet, the editor with the 3D Plane and the flight simulator (chase view, in flight) and saves each window as a PNG – the README screenshots (resized to JPEG in `docs/images`). The app captures its own windows, so it needs no screen-recording permission.
