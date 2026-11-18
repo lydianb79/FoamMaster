@@ -1,12 +1,23 @@
 #!/bin/zsh
-# Builds FoamMaster.app (release) into ./build
+# Builds FoamMaster.app (release) into ./build – for this Mac, or with an architecture argument (arm64 / x86_64)
+# into ./build/<arch>/FoamMaster.app (see make_release.sh).
 set -euo pipefail
 cd "$(dirname "$0")"
-swift build -c release
-APP=build/FoamMaster.app
+VERSION=1.2.1
+BUILD=4
+ARCH=${1:-}
+if [[ -n "$ARCH" ]]; then
+  swift build -c release --arch "$ARCH"
+  BIN=$(swift build -c release --arch "$ARCH" --show-bin-path)
+  APP=build/$ARCH/FoamMaster.app
+else
+  swift build -c release
+  BIN=.build/release
+  APP=build/FoamMaster.app
+fi
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp .build/release/FoamMaster "$APP/Contents/MacOS/FoamMaster"
+cp "$BIN/FoamMaster" "$APP/Contents/MacOS/FoamMaster"
 
 # Icon
 ICONSET=build/AppIcon.iconset
@@ -30,8 +41,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>FoamMaster</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.2.1</string>
-  <key>CFBundleVersion</key><string>4</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$BUILD</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -40,5 +51,7 @@ PLIST
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 # The bundle is recreated on every build: make Finder/Dock pick up the icon again.
 touch "$APP"
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" >/dev/null 2>&1 || true
+if [[ -z "$ARCH" ]]; then
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" >/dev/null 2>&1 || true
+fi
 echo "Built $APP"

@@ -8,7 +8,7 @@ Created by TriX aka Rock FPV – [YouTube](https://www.youtube.com/@RockFPV) · 
 
 ## Download
 
-Get `FoamMaster-<version>-macOS.zip` from the [Releases](https://github.com/lydianb79/FoamMaster/releases) page, unzip it and move `FoamMaster.app` to *Applications*. Requires macOS 14 or newer (Apple silicon).
+Get the zip for your Mac from the [Releases](https://github.com/lydianb79/FoamMaster/releases) page – `FoamMaster-<version>-build<build>-macOS-arm64.zip` for Apple silicon (M1 and later), `…-macOS-x86_64.zip` for Intel – unzip it and move `FoamMaster.app` to *Applications*. Requires macOS 14 or newer.
 
 The app is not notarized: on first launch right-click it and choose **Open** (or allow it under *System Settings ▸ Privacy & Security*).
 
@@ -43,9 +43,12 @@ The app is not notarized: on first launch right-click it and choose **Open** (or
 ## Build & run
 
 ```bash
-./build_app.sh          # → build/FoamMaster.app
+./build_app.sh          # → build/FoamMaster.app (for this Mac)
 open build/FoamMaster.app
+./make_release.sh       # → build/release/FoamMaster-<version>-build<build>-macOS-{arm64,x86_64}.zip
 ```
+
+Version and build number are set at the top of `build_app.sh`.
 
 Requires Xcode / Swift 5.9+ and macOS 14+. `swift run` also works for quick iteration.
 
