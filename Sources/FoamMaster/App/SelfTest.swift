@@ -937,6 +937,14 @@ enum SelfTest {
             let calOK = read(.roll, 1024, foreign) == 0 && read(.throttle, 0, foreign) == 0 && read(.throttle, 2047, foreign) == 1
                 && read(.roll, 1684, wider) < 0.7 && read(.roll, 1900, own) == 1 && read(.roll, 1000, own) == 0
             print("Transmitter calibration (only on the scale it was made on): \(calOK ? "ok" : "PROBLEM")")
+            // Stick overlay: the stick's full travel, whatever the rates do to the surfaces.
+            inp.controls.setRate(.pitch, low: inp.lowRates, 0.8); inp.controls.setExpo(.pitch, low: inp.lowRates, 0)
+            inp.keyDown(inp.controls.key(.pitchUp), repeat: false)
+            let pulled = inp.update(1)
+            inp.keyUp(inp.controls.key(.pitchUp))
+            let overlayOK = inp.sticks.pitch == 1 && abs(pulled.pitch - 0.8) < 1e-9
+            _ = inp.update(1)
+            print("Stick overlay (full travel at 80 % rate): \(overlayOK ? "ok" : "PROBLEM")")
             inp.controls = saved
             print("Roll-to-rudder mix (NutBall, Controls ▸ Mixes): \(mixOK ? "ok" : "PROBLEM")")
             print("Launch switch: button \(buttonOK ? "ok" : "PROBLEM"), axis (inverted) \(axisOK ? "ok" : "PROBLEM"); reset switch \(resetOK ? "ok" : "PROBLEM")")

@@ -77,7 +77,7 @@ final class SimSession: NSObject, NSWindowDelegate {
 /// Flight simulator state shared by the view, the HUD and the controls sheet.
 @MainActor
 final class SimController: ObservableObject {
-    struct HUD { var phase = FlightState.Phase.held; var speed = 0.0; var height = 0.0; var throttle = 0.0; var stick = StickInput(); var message = ""; var time = 0.0; var trim = 0.0
+    struct HUD { var phase = FlightState.Phase.held; var speed = 0.0; var height = 0.0; var throttle = 0.0; var sticks = StickInput(); var message = ""; var time = 0.0; var trim = 0.0
         var climb = 0.0; var noseAngle = 0.0; var towards = false; var inset = false; var lowRates = false; var rateSwitch = false }
     @Published var hud = HUD()
     @Published var title = ""
@@ -137,7 +137,7 @@ final class SimController: ObservableObject {
             let insetShown = r?.insetVisible ?? false
             let climb = sim.state.velocity.y
             Task { @MainActor in
-                self?.hud = HUD(phase: sim.state.phase, speed: sim.airspeed, height: sim.height, throttle: stick.throttle, stick: stick,
+                self?.hud = HUD(phase: sim.state.phase, speed: sim.airspeed, height: sim.height, throttle: stick.throttle, sticks: self?.input.sticks ?? StickInput(),
                                 message: sim.state.message, time: sim.state.time, trim: self?.input.trim ?? 0,
                                 climb: climb, noseAngle: nose.angle, towards: nose.towards, inset: insetShown,
                                 lowRates: self?.input.lowRates ?? false, rateSwitch: self?.input.rateSwitchInCharge ?? false)
@@ -315,8 +315,8 @@ struct SimulatorView: View {
                     }
                 }
                 .font(.system(size: 12, weight: .medium, design: .rounded)).monospacedDigit()
-                StickBox(x: h.stick.yaw, y: 2 * h.throttle - 1, label: "Throttle · Rudder")
-                StickBox(x: h.stick.roll, y: -h.stick.pitch, label: "Elevator · Aileron")
+                StickBox(x: h.sticks.yaw, y: 2 * h.sticks.throttle - 1, label: "Throttle · Rudder")
+                StickBox(x: h.sticks.roll, y: -h.sticks.pitch, label: "Elevator · Aileron")
                 Variometer(climb: h.climb)
                 NoseArrow(angle: h.noseAngle, towards: h.towards)
             }
@@ -419,6 +419,7 @@ struct SimControlsSheet: View {
     @State private var capture: SimAction?
     @State private var device: JoystickManager.Device?
     @State private var calibrating = false
+    @State private var calResult = ""
     @State private var calMin: [Int: Double] = [:]
     @State private var calMax: [Int: Double] = [:]
     @State private var detecting: SimChannel?
@@ -444,11 +445,22 @@ struct SimControlsSheet: View {
                 mixesTab.tabItem { Text("Mixes") }
             }
             .frame(height: 540)
-            HStack {
+            // (the transmitter tab scrolls: a running calibration ends down here, always in sight, not by Done)
+            if calibrating {
+                HStack {
+                    Text("Calibrating: move both sticks to every corner, then centre them, throttle low.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.orange).fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Cancel") { calibrating = false; calResult = "Calibration cancelled – nothing changed." }
+                    Button("Finish calibration") { if let dev = device { finishCalibration(dev) } }
+                        .keyboardShortcut(.defaultAction).disabled(device == nil)
+                }
+            } else { HStack {
                 Button("Reset to defaults") { let t = controls.trimsAsBuilt; controls = SimControls(); controls.trimsAsBuilt = t; apply() }
+                Text(calResult).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button("Done") { apply(); done() }.keyboardShortcut(.defaultAction)
-            }
+            } }
         }
         .padding(20)
         .frame(width: 620)
@@ -530,11 +542,10 @@ struct SimControlsSheet: View {
                               help: "Press Detect, then flip the switch you want to its high-rate position: there it flies the high rates, in the other position the low rates (Rates & expo). While it is set up and connected it picks the rates – not the rates key.")
                     Divider()
                     if calibrating {
-                        Text("Move all sticks to every corner and the throttle from low to high. Then centre the sticks, throttle low, and press Finish.")
+                        Text("Move all sticks to every corner and the throttle from low to high. Then centre the sticks, throttle low, and press Finish calibration at the bottom.")
                             .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
-                        Button("Finish calibration") { finishCalibration(dev) }
                     } else {
-                        Button("Calibrate…") { calMin = [:]; calMax = [:]; calibrating = true }
+                        Button("Calibrate…") { calMin = [:]; calMax = [:]; calResult = ""; calibrating = true }
                     }
                 } else {
                     Text("No transmitter found. Connect your radio by USB and choose \u{201C}USB Joystick (HID)\u{201D} on it (EdgeTX / OpenTX: USB mode Joystick). Other USB joysticks and gamepads work too.")
@@ -672,10 +683,13 @@ struct SimControlsSheet: View {
     }
 
     private func finishCalibration(_ dev: JoystickManager.Device) {
+        var moved: [String] = []
         for (i, ax) in dev.axes.enumerated() {
             guard let lo = calMin[i], let hi = calMax[i], hi - lo > (ax.max - ax.min) * 0.2 else { continue }
             controls.calibration[i] = SimControls.Calibration(min: lo, center: ax.value, max: hi, low: ax.min, high: ax.max)
+            moved.append("\(i + 1)")
         }
+        calResult = moved.isEmpty ? "No stick moved – nothing calibrated." : "Saved calibration for axes \(moved.joined(separator: ", "))."
         calibrating = false; apply()
     }
 }

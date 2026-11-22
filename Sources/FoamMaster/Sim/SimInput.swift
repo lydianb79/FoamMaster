@@ -320,10 +320,13 @@ final class SimInputState {
     /// disarmed with the keyboard throttle at zero, so the prop stands still until you give it throttle; a transmitter
     /// whose throttle stick is up has to come down to zero first.
     private(set) var armed = false
+    /// Where the sticks are (calibrated; before rates, expo, trim, mixes and arming) – for the stick overlay.
+    private(set) var sticks = StickInput()
     /// A new session: keyboard throttle and keys back to zero, the motor disarmed.
     func startSession() {
         pressed.removeAll()
         keyStick = StickInput()
+        sticks = StickInput()
         armed = false
     }
     private func held(_ a: SimAction) -> Bool { pressed.contains(controls.key(a)) }
@@ -357,12 +360,14 @@ final class SimInputState {
         keyStick.yaw = ease(keyStick.yaw, .yawLeft, .yawRight)
         keyStick.throttle = min(max(keyStick.throttle + ((held(.throttleUp) ? 1 : 0) - (held(.throttleDown) ? 1 : 0)) * 0.7 * dt, 0), 1)
         var out = keyStick
+        var throttleStick: Double?
         if controls.useTransmitter, let dev = joystick.snapshot(preferring: controls.deviceName) {
             if let v = transmitter(.roll, dev), abs(keyStick.roll) < 0.01 { out.roll = v }
             if let v = transmitter(.pitch, dev), abs(keyStick.pitch) < 0.01 { out.pitch = v }
             if let v = transmitter(.yaw, dev), abs(keyStick.yaw) < 0.01 { out.yaw = v }
             if let v = transmitter(.throttle, dev) {
                 // (the motor arms once the throttle stick has been down)
+                throttleStick = v
                 if !armed && v < 0.03 { armed = true }
                 out.throttle = armed ? v : 0; keyStick.throttle = out.throttle
             } else { armed = true }       // (no throttle channel: the keyboard throttle, from zero)
@@ -377,6 +382,8 @@ final class SimInputState {
             lastSwitch = nil; lastReset = nil
             if rateSwitchInCharge { rateSwitchInCharge = false; lowRates = controls.lowRateOn ?? false }
         }
+        sticks = out
+        sticks.throttle = throttleStick ?? out.throttle
         let low = lowRates
         out.roll = controls.shaped(.roll, out.roll, low: low); out.pitch = controls.shaped(.pitch, out.pitch, low: low)
         out.yaw = controls.shaped(.yaw, out.yaw, low: low)
