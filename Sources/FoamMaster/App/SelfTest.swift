@@ -1016,7 +1016,8 @@ enum SelfTest {
                 }
             }
             print("Wing in the slipstream by motor layout (pushers none, tractors some): \(layoutBad.isEmpty ? "ok" : layoutBad.joined(separator: ", ") + "  ← PROBLEM")")
-            let washOK = e3d > 1 && abs(eWing) < e3d * 0.25 && h3dNone.roll < -0.05 && rollOK && layoutBad.isEmpty
+            // (the prop's normal force resists the disc swinging sideways as the model pitches: ≈ 0.9 rad/s, not 1.2)
+            let washOK = e3d > 0.7 && abs(eWing) < e3d * 0.25 && h3dNone.roll < -0.05 && rollOK && layoutBad.isEmpty
             print(String(format: "Hover roll (3D Plane, full right aileron, no airspeed): 2 servos %+.2f rad/s (torque alone %+.2f), 1 central servo %+.2f (torque alone %+.2f)%@",
                          r2.roll, h3dNone.roll, r1.roll, tq1.roll, rollOK ? "" : "  ← PROBLEM"))
             print(String(format: "Prop wash (hanging on the prop, no airspeed): elevator → pitch rate 3D Plane %.1f rad/s, Flying Wing (pusher, nothing in the wash) %.2f rad/s; motor torque rolls the 3D Plane %.2f rad/s (− = left)%@",

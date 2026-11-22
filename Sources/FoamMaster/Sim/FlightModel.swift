@@ -49,6 +49,8 @@ struct FlightModel {
     var aileronDCL: Double = 0
     /// Share of the elevator / rudder inside the prop's slipstream, total disc area (m²).
     var washElevator: Double = 0, washRudder: Double = 0, discArea: Double = 0.01
+    /// Prop discs: centres relative to the CG (m, body frame) and the area of one disc (m²) – for the props' normal force.
+    var propPositions: [SIMD3<Double>] = [], propDiscArea: Double = 0.01
     /// The rudder's share in the slipstream above the thrust line less the share below it: the swirl turns the other
     /// way below the axis, so a rudder reaching down through the elevator catches little net swirl.
     var washSwirl: Double = 0
@@ -175,6 +177,8 @@ struct FlightModel {
         // tailless pushers blow over nothing.
         let D = c.propInches * 0.0254
         discArea = Double(c.motorCount) * .pi * D * D / 4
+        propDiscArea = .pi * D * D / 4
+        propPositions = c.motorXs.map { (SIMD3<Double>($0, 0, c.propPlaneZ) - a.cg) / 1000 }
         let blowsTail = !(c.kind.isTailless)
         if blowsTail {
             let elevSpan = c.kind.isNutBall ? 0.6 * c.wingspan / 1000 : c.hStabSpan / 1000
@@ -394,6 +398,8 @@ final class FlightSim {
     /// Smoothed surface deflection actually applied (servos are not instantaneous).
     private(set) var surfaces = StickInput()
     static let rho = 1.225, g = 9.81
+    /// Steady wind (m/s, world frame) – the air the model flies in moves with it.
+    var wind = SIMD3<Double>.zero
 
     init(model: FlightModel) { self.model = model }
 
@@ -435,7 +441,7 @@ final class FlightSim {
         state.time += h                         // flight time (from the launch)
 
         let m = model, q = state.orientation
-        let vb = q.inverse.act(state.velocity)
+        let vb = q.inverse.act(state.velocity - wind)
         let V = simd_length(vb)
         var force = SIMD3<Double>.zero, torque = SIMD3<Double>.zero
         // Without ailerons the roll stick does nothing here (the NutBall's roll-to-rudder mix is in the input, an option).
@@ -459,6 +465,24 @@ final class FlightSim {
         // has no side thrust in its mount. A wing behind the prop straightens part of the slipstream's swirl and
         // takes that much back (the swirl carries the torque's angular momentum – the wing can't give back more).
         torque.z += m.torquePerThrust * thrust * (1 - m.swirlRecovery)
+        // Prop normal force: air crossing a prop disc sideways is turned along the shaft by the slipstream, so the
+        // disc is pushed against the crossing – momentum theory, F = −v⊥ · ρ · A · w / 2 with the slipstream's speed
+        // increment w = −v₀ + √(v₀² + 2T / (ρA)). Hanging on the prop the disc sits well above the CG: a sideways
+        // slide tips the nose back towards vertical, where the tail in the slipstream below the CG alone would swing
+        // it further into the lean. It fades out with the flow through the disc (÷ (1 + v₀² / 9)): at full strength
+        // in forward flight it would yaw tractor wings sharply at the hand launch.
+        if thrust > 0, !m.propPositions.isEmpty {
+            let A = m.propDiscArea, tEach = thrust / Double(m.propPositions.count)
+            for r in m.propPositions {
+                let vp = vb + simd_cross(state.omega, r)               // the disc's velocity through the air
+                let v0 = max(-vp.z, 0)                                  // flow through the disc (along the shaft, −z)
+                let w = -v0 + (v0 * v0 + 2 * tEach / (Self.rho * A)).squareRoot()
+                let vPerp = SIMD3<Double>(vp.x, vp.y, 0)
+                let f = -vPerp * (Self.rho * A * w / 2 / (1 + v0 * v0 / 9))
+                force += f
+                torque += simd_cross(r, f)
+            }
+        }
 
         // Wing in strips, each in its own airflow (body velocity + rotation × station): its own angle of attack, lift
         // and drag, its own stall. Roll damping, aileron power (with reversal near the stall), tip stall, wing drop and
@@ -487,7 +511,9 @@ final class FlightSim {
                     let cl = m.CL(a) + ail * (1 - 0.7 * sep)
                     let cd = m.CD0 + m.k * cl * CLwing + 1.1 * pow(sin(a), 2) * (0.3 + 0.7 * sep) + 0.6 * ail * ail
                     let vh = v / Vs
-                    let liftDir = simd_normalize(simd_cross([1, 0, 0], vh))
+                    // (air flowing exactly along the span makes no lift – and has no lift direction)
+                    let across = simd_cross(SIMD3<Double>(1, 0, 0), vh)
+                    let liftDir = simd_length(across) > 1e-6 ? simd_normalize(across) : .zero
                     let qs = 0.5 * Self.rho * Vs * Vs * area
                     let f = liftDir * (qs * cl) - vh * (qs * cd)
                     force += f
