@@ -3,8 +3,8 @@
 # into ./build/<arch>/FoamMaster.app (see make_release.sh).
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSION=1.2.1
-BUILD=4
+VERSION=1.3.0
+BUILD=5
 ARCH=${1:-}
 if [[ -n "$ARCH" ]]; then
   swift build -c release --arch "$ARCH"
