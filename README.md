@@ -14,7 +14,7 @@ The app is not notarized: on first launch right-click it and choose **Open** (or
 
 ## What it does
 
-- **Pick a type, get a buildable plane.** Eight base models – Flying Wing, Delta Jet, Twin Boom, Sport Jet, Park Trainer, 3D Plane, Micro Glider, NutBall. Every default and every setup option (controls, fins, winglets, aileron servos, single or dual motor) starts at score 100: no errors, no warnings, balanced at the recommended CG.
+- **Pick a type, get a buildable plane.** Eight base models – Flying Wing, Delta Jet, Twin Boom, Sport Jet, Park Trainer, 3D Plane, Micro Glider, NutBall. Every default and every setup option (controls, fins, winglets, aileron servos, single or dual motor) starts at score 100: no errors, no warnings, CG in range and not tail-heavy.
 - **Change anything.** Sliders for wing, fuselage and tail, foam (Depron / EPP 3–10 mm), motor, prop, battery and servos – the power system and battery position follow automatically.
 - **Checked like a real build.** Weight and CG, wing loading and stall speed, thrust / weight and flight time, tail volumes, wing and fuselage stiffness (with carbon spar, struts and an optional torsion truss), servo loads, prop clearance and every control surface swept through its full throw. If something fails, it says why and proposes the smallest fix.
 - **Plans and parts.** 1:1 A4 PDF plans with every dimension, a bill of materials and build instructions; STL files for motor mounts, horns, strut anchors and the spar joiner.
@@ -37,8 +37,9 @@ The app is not notarized: on first launch right-click it and choose **Open** (or
 ![Flight simulator, chase view](docs/images/simulator.jpg)
 
 - Opens from **Fly** in the editor, in its own window. Pilot, chase and onboard cameras; an airfield with trees, a pond and mountains, sun shadows and sound.
-- A 6-DOF model built from the design: lift and stall per wing strip, prop slipstream over the tail (hovering on the 3D Plane), motor torque and gyro effects, inertia from the real parts, and the elevator trimmed as built.
-- Keyboard or a USB transmitter (joystick mode) with calibration, low / high rates with expo, and switches for launch, reset and rates.
+- A 6-DOF model built from the design: lift and stall per wing strip, prop slipstream over the tail, the prop's side force that steadies the 3D Plane in a hover, motor torque and gyro effects, inertia from the real parts, and the elevator trimmed as built.
+- Keyboard or a USB transmitter (joystick mode), low / high rates with expo, and switches for launch, reset and rates. The stick overlay shows full stick travel whatever the rates; your own pitch trim starts at 0 every time the simulator opens.
+- **Set up a transmitter:** put the radio's own rates at 100 %, then *Controls… ▸ Transmitter ▸ Calibrate…*, move both sticks to every corner, centre them with throttle down and press *Finish calibration*. The sheet warns when an axis falls short of full travel. The motor arms once the throttle has been all the way down.
 
 ## Build & run
 
