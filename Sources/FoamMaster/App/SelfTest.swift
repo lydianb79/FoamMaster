@@ -924,6 +924,19 @@ enum SelfTest {
             }
             let mixOK = yawFromRollKey(rudderOnly: true, mix: true) > 0.1 && yawFromRollKey(rudderOnly: true, mix: false) == 0
                 && yawFromRollKey(rudderOnly: false, mix: true) == 0
+            // Calibration: one from a radio with another scale is not used, one that fits is.
+            inp.controls.mapping["roll"] = .init(axis: 0, inverted: false)
+            inp.controls.mapping["throttle"] = .init(axis: 0, inverted: false)
+            func read(_ ch: SimChannel, _ v: Double, _ cal: SimControls.Calibration) -> Double {
+                inp.controls.calibration = [0: cal]
+                return inp.transmitter(ch, ax(v)) ?? .nan
+            }
+            let foreign = SimControls.Calibration(min: -660, center: 0, max: 660)
+            let wider = SimControls.Calibration(min: 364, center: 1024, max: 1684, low: 0, high: 4095)
+            let own = SimControls.Calibration(min: 100, center: 1000, max: 1900, low: 0, high: 2047)
+            let calOK = read(.roll, 1024, foreign) == 0 && read(.throttle, 0, foreign) == 0 && read(.throttle, 2047, foreign) == 1
+                && read(.roll, 1684, wider) < 0.7 && read(.roll, 1900, own) == 1 && read(.roll, 1000, own) == 0
+            print("Transmitter calibration (only on the scale it was made on): \(calOK ? "ok" : "PROBLEM")")
             inp.controls = saved
             print("Roll-to-rudder mix (NutBall, Controls ▸ Mixes): \(mixOK ? "ok" : "PROBLEM")")
             print("Launch switch: button \(buttonOK ? "ok" : "PROBLEM"), axis (inverted) \(axisOK ? "ok" : "PROBLEM"); reset switch \(resetOK ? "ok" : "PROBLEM")")

@@ -33,7 +33,17 @@ enum SimChannel: String, CaseIterable, Codable, Identifiable {
 /// Everything the pilot sets up – saved in the user defaults.
 struct SimControls: Codable, Equatable {
     struct Mapping: Codable, Equatable { var axis: Int; var inverted: Bool }
-    struct Calibration: Codable, Equatable { var min: Double; var center: Double; var max: Double }
+    struct Calibration: Codable, Equatable {
+        var min: Double; var center: Double; var max: Double
+        /// The axis's logical range when it was calibrated (optional: older settings load).
+        var low: Double?, high: Double?
+        /// Whether it was made on an axis like this one – another radio reports on another scale (−660…660, 0…2047),
+        /// where it would turn a centred stick into full deflection. Without a saved range it has to lie inside the axis's.
+        func fits(_ ax: JoystickManager.Axis) -> Bool {
+            if let low, let high { return low == ax.min && high == ax.max }
+            return min >= ax.min && max <= ax.max
+        }
+    }
     var keys: [String: UInt16] = Dictionary(uniqueKeysWithValues: SimAction.allCases.map { ($0.rawValue, $0.defaultKey) })
     /// Transmitter (USB joystick): axis per channel, calibration per axis (by index), the device it was set up for.
     var mapping: [String: Mapping] = ["throttle": Mapping(axis: 2, inverted: false), "roll": Mapping(axis: 0, inverted: false),
@@ -179,8 +189,11 @@ final class JoystickManager {
             .filter { seen.insert(IOHIDElementGetUsage($0)).inserted }
         lock.lock()
         devices.append(dev); elements[dev] = axes
-        buttonElements[dev] = buttons; buttonValues[dev] = buttons.map { _ in false }
-        values[dev] = axes.map { e in Double(IOHIDElementGetLogicalMin(e) + IOHIDElementGetLogicalMax(e)) / 2 }
+        buttonElements[dev] = buttons; buttonValues[dev] = buttons.map { (Self.currentValue(dev, $0) ?? 0) != 0 }
+        // Where sticks and switches are now – macOS reports only changes, so an untouched throttle would read half.
+        values[dev] = axes.map { e in
+            Self.currentValue(dev, e).map(Double.init) ?? Double(IOHIDElementGetLogicalMin(e) + IOHIDElementGetLogicalMax(e)) / 2
+        }
         lock.unlock()
         DispatchQueue.main.async { self.onChange?() }
     }
@@ -196,6 +209,15 @@ final class JoystickManager {
         if let bs = buttonElements[dev], let i = bs.firstIndex(where: { IOHIDElementGetUsage($0) == IOHIDElementGetUsage(e) && IOHIDElementGetUsagePage(e) == UInt32(kHIDPage_Button) }) {
             buttonValues[dev]?[i] = IOHIDValueGetIntegerValue(value) != 0
         }
+    }
+
+    /// The last value the device reported for an element; nil before its first report.
+    private static func currentValue(_ dev: IOHIDDevice, _ e: IOHIDElement) -> Int? {
+        let p = UnsafeMutablePointer<Unmanaged<IOHIDValue>>.allocate(capacity: 1)
+        defer { p.deallocate() }
+        guard IOHIDDeviceGetValue(dev, e, p) == kIOReturnSuccess else { return nil }
+        let v = p.pointee.takeUnretainedValue()
+        return IOHIDValueGetTimeStamp(v) > 0 ? IOHIDValueGetIntegerValue(v) : nil
     }
 
     static func name(_ dev: IOHIDDevice) -> String {
@@ -310,7 +332,7 @@ final class SimInputState {
     func transmitter(_ ch: SimChannel, _ dev: JoystickManager.Device) -> Double? {
         guard let m = controls.mapping[ch.rawValue], m.axis >= 0, m.axis < dev.axes.count else { return nil }
         let ax = dev.axes[m.axis]
-        let cal = controls.calibration[m.axis] ?? SimControls.Calibration(min: ax.min, center: (ax.min + ax.max) / 2, max: ax.max)
+        let cal = controls.calibration[m.axis].flatMap { $0.fits(ax) ? $0 : nil } ?? SimControls.Calibration(min: ax.min, center: (ax.min + ax.max) / 2, max: ax.max)
         var v: Double
         if ch == .throttle {
             v = (ax.value - cal.min) / max(cal.max - cal.min, 1)

@@ -495,7 +495,9 @@ struct SimControlsSheet: View {
                             Text("\(i + 1) · \(JoystickManager.usageName(ax.usage))").frame(width: 80, alignment: .leading).font(.system(size: 11))
                             ProgressView(value: (ax.value - ax.min) / max(ax.max - ax.min, 1)).frame(width: 220)
                             if let cal = controls.calibration[i] {
-                                Text(String(format: "cal %.0f / %.0f / %.0f", cal.min, cal.center, cal.max)).font(.system(size: 10)).foregroundStyle(.secondary)
+                                let fits = cal.fits(ax)
+                                Text(fits ? String(format: "cal %.0f / %.0f / %.0f", cal.min, cal.center, cal.max) : "other radio's calibration – not used")
+                                    .font(.system(size: 10)).foregroundStyle(fits ? Color.secondary : Theme.orange)
                             }
                         }
                     }
@@ -672,7 +674,7 @@ struct SimControlsSheet: View {
     private func finishCalibration(_ dev: JoystickManager.Device) {
         for (i, ax) in dev.axes.enumerated() {
             guard let lo = calMin[i], let hi = calMax[i], hi - lo > (ax.max - ax.min) * 0.2 else { continue }
-            controls.calibration[i] = SimControls.Calibration(min: lo, center: ax.value, max: hi)
+            controls.calibration[i] = SimControls.Calibration(min: lo, center: ax.value, max: hi, low: ax.min, high: ax.max)
         }
         calibrating = false; apply()
     }
