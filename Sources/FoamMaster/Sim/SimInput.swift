@@ -69,10 +69,6 @@ struct SimControls: Codable, Equatable {
         if low { var e = lowExpo ?? expo; e[ch.rawValue] = v; lowExpo = e } else { expo[ch.rawValue] = v }
     }
     var autoZoom = true
-    /// Pitch trim per design on top of the trim the model is built with (−0.6…0.6 of the elevator throw, + = nose
-    /// up). Optional so older settings still load; the trims saved before the models had their built-in trim (key
-    /// "trims") made up for its lack, so they are left behind.
-    var trimsAsBuilt: [String: Double]?
     /// A transmitter switch that launches the model when flipped to its active position.
     struct SwitchMapping: Codable, Equatable {
         enum Kind: String, Codable { case axis, button }
@@ -246,6 +242,9 @@ final class SimInputState {
     /// Pitch trim of the loaded design (+ = nose up), added to the elevator from keyboard or transmitter.
     private(set) var trim = 0.0
     private var trimKey = ""
+    /// The pilot's trims per design (−0.6…0.6 of the elevator throw, on top of the built-in trim). Never saved: every
+    /// start of the simulator begins at 0; within a session they outlast a reset or a reload of the design.
+    private var trims: [String: Double] = [:]
     static let trimStep = 0.01, trimLimit = 0.6
     private var lastSwitch: Bool?
     private var lastReset: Bool?
@@ -261,18 +260,15 @@ final class SimInputState {
         controls.save()
     }
 
-    /// The trim saved for this design.
+    /// This session's trim for this design.
     func useTrim(for design: String) {
         trimKey = design
-        trim = controls.trimsAsBuilt?[design] ?? 0
+        trim = trims[design] ?? 0
     }
     func adjustTrim(_ delta: Double) { setTrim(trim + delta) }
     func setTrim(_ v: Double) {
         trim = (min(max(v, -Self.trimLimit), Self.trimLimit) / Self.trimStep).rounded() * Self.trimStep
-        var t = controls.trimsAsBuilt ?? [:]
-        t[trimKey] = trim == 0 ? nil : trim
-        controls.trimsAsBuilt = t
-        controls.save()
+        trims[trimKey] = trim
     }
 
     /// Whether a switch is in its active position (nil: not set up or not on this transmitter).
@@ -320,6 +316,19 @@ final class SimInputState {
     /// disarmed with the keyboard throttle at zero, so the prop stands still until you give it throttle; a transmitter
     /// whose throttle stick is up has to come down to zero first.
     private(set) var armed = false
+    /// A calibration is running: every axis flies 100 % rates, without expo or trim.
+    var calibrating = false
+    /// The share of its axis's range each mapped channel covered between `lo` and `hi` (raw values, by axis).
+    func travel(_ dev: JoystickManager.Device, lo: [Int: Double], hi: [Int: Double]) -> [(channel: SimChannel, share: Double)] {
+        SimChannel.allCases.compactMap { ch in
+            guard let i = controls.mapping[ch.rawValue]?.axis, i >= 0, i < dev.axes.count else { return nil }
+            let ax = dev.axes[i]
+            return (ch, ((hi[i] ?? 0) - (lo[i] ?? 0)) / max(ax.max - ax.min, 1))
+        }
+    }
+    /// Too little travel for 100 % rates – the radio applies its own rates before USB, and calibrated on those the
+    /// sticks would clip after switching it to high. (The throttle has some room for an idle trim.)
+    static func isShort(_ ch: SimChannel, _ share: Double) -> Bool { share < (ch == .throttle ? 0.9 : 0.95) }
     /// Where the sticks are (calibrated; before rates, expo, trim, mixes and arming) – for the stick overlay.
     private(set) var sticks = StickInput()
     /// A new session: keyboard throttle and keys back to zero, the motor disarmed.
@@ -384,10 +393,12 @@ final class SimInputState {
         }
         sticks = out
         sticks.throttle = throttleStick ?? out.throttle
-        let low = lowRates
-        out.roll = controls.shaped(.roll, out.roll, low: low); out.pitch = controls.shaped(.pitch, out.pitch, low: low)
-        out.yaw = controls.shaped(.yaw, out.yaw, low: low)
-        out.pitch = min(max(out.pitch + trim, -1), 1)
+        if !calibrating {
+            let low = lowRates
+            out.roll = controls.shaped(.roll, out.roll, low: low); out.pitch = controls.shaped(.pitch, out.pitch, low: low)
+            out.yaw = controls.shaped(.yaw, out.yaw, low: low)
+            out.pitch = min(max(out.pitch + trim, -1), 1)
+        }
         // Mix (Controls ▸ Mixes): on the NutBall the aileron stick also works the rudder.
         if rudderOnly, controls.mixesRollToRudder { out.yaw = min(max(out.yaw + out.roll, -1), 1) }
         return out

@@ -945,6 +945,29 @@ enum SelfTest {
             let overlayOK = inp.sticks.pitch == 1 && abs(pulled.pitch - 0.8) < 1e-9
             _ = inp.update(1)
             print("Stick overlay (full travel at 80 % rate): \(overlayOK ? "ok" : "PROBLEM")")
+            // Calibrating: 100 % on every axis whatever the rates and trim; short travel (the radio's low rates) is noticed.
+            for ch in [SimChannel.roll, .pitch, .yaw] { for low in [false, true] { inp.controls.setRate(ch, low: low, 0.6); inp.controls.setExpo(ch, low: low, 0.4) } }
+            inp.setTrim(-0.2)
+            inp.calibrating = true
+            let held: [SimAction] = [.rollRight, .pitchUp, .yawRight]
+            for a in held { inp.keyDown(inp.controls.key(a), repeat: false) }
+            let full = inp.update(1)
+            for a in held { inp.keyUp(inp.controls.key(a)) }
+            _ = inp.update(1)
+            inp.calibrating = false
+            inp.controls.mapping = SimControls().mapping
+            let four = JoystickManager.Device(name: "t", axes: (0..<4).map { _ in ax(1024).axes[0] })
+            func shortCount(_ lo: Double, _ hi: Double) -> Int {
+                inp.travel(four, lo: [0: lo, 1: lo, 2: lo, 3: lo], hi: [0: hi, 1: hi, 2: hi, 3: hi]).filter { SimInputState.isShort($0.channel, $0.share) }.count
+            }
+            let rates100OK = full.roll == 1 && full.pitch == 1 && full.yaw == 1
+                && shortCount(205, 1842) == 4 && shortCount(0, 2047) == 0 && shortCount(110, 2047) == 3     // (the throttle may idle at 5 %)
+            print("Calibration at 100 % rates: \(rates100OK ? "ok" : "PROBLEM")")
+            let next = SimInputState()
+            next.useTrim(for: "")
+            let trimOK = inp.trim == -0.2 && next.trim == 0
+            inp.setTrim(0)
+            print("Manual trim at 0 on every simulator start: \(trimOK ? "ok" : "PROBLEM")")
             inp.controls = saved
             print("Roll-to-rudder mix (NutBall, Controls ▸ Mixes): \(mixOK ? "ok" : "PROBLEM")")
             print("Launch switch: button \(buttonOK ? "ok" : "PROBLEM"), axis (inverted) \(axisOK ? "ok" : "PROBLEM"); reset switch \(resetOK ? "ok" : "PROBLEM")")

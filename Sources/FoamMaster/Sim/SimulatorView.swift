@@ -447,16 +447,28 @@ struct SimControlsSheet: View {
             .frame(height: 540)
             // (the transmitter tab scrolls: a running calibration ends down here, always in sight, not by Done)
             if calibrating {
+                let travel = device.map { input.travel($0, lo: calMin, hi: calMax) } ?? []
+                let short = travel.filter { SimInputState.isShort($0.channel, $0.share) }
                 HStack {
-                    Text("Calibrating: move both sticks to every corner, then centre them, throttle low.")
-                        .font(.system(size: 11)).foregroundStyle(Theme.orange).fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Calibrating at 100 % rates: move both sticks to every corner, then centre them, throttle low.")
+                            .foregroundStyle(Theme.orange)
+                        if short.isEmpty {
+                            Text("Full travel on every axis.").foregroundStyle(.secondary)
+                        } else {
+                            Text("Short of full travel: " + short.map { String(format: "%@ %.0f %%", $0.channel.title, $0.share * 100) }.joined(separator: ", ")
+                                 + ". If it stays short, set the radio's own rates to 100 % and move the sticks again.")
+                        }
+                    }
+                    .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
                     Spacer()
-                    Button("Cancel") { calibrating = false; calResult = "Calibration cancelled – nothing changed." }
-                    Button("Finish calibration") { if let dev = device { finishCalibration(dev) } }
-                        .keyboardShortcut(.defaultAction).disabled(device == nil)
+                    Button("Cancel") { setCalibrating(false); calResult = "Calibration cancelled – nothing changed." }
+                    // (short travel is never saved by just pressing Return)
+                    Button(short.isEmpty ? "Finish calibration" : "Save anyway") { if let dev = device { finishCalibration(dev) } }
+                        .keyboardShortcut(short.isEmpty ? .defaultAction : nil).disabled(device == nil)
                 }
             } else { HStack {
-                Button("Reset to defaults") { let t = controls.trimsAsBuilt; controls = SimControls(); controls.trimsAsBuilt = t; apply() }
+                Button("Reset to defaults") { controls = SimControls(); apply() }
                 Text(calResult).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button("Done") { apply(); done() }.keyboardShortcut(.defaultAction)
@@ -474,9 +486,13 @@ struct SimControlsSheet: View {
                 return nil
             }
         }
-        .onDisappear { if let m = monitor { NSEvent.removeMonitor(m) } }
+        .onDisappear {
+            if let m = monitor { NSEvent.removeMonitor(m) }
+            input.calibrating = false
+        }
     }
 
+    private func setCalibrating(_ on: Bool) { calibrating = on; input.calibrating = on }
     private func apply() { input.controls = controls; controls.save() }
 
     private var keyboardTab: some View {
@@ -542,10 +558,10 @@ struct SimControlsSheet: View {
                               help: "Press Detect, then flip the switch you want to its high-rate position: there it flies the high rates, in the other position the low rates (Rates & expo). While it is set up and connected it picks the rates – not the rates key.")
                     Divider()
                     if calibrating {
-                        Text("Move all sticks to every corner and the throttle from low to high. Then centre the sticks, throttle low, and press Finish calibration at the bottom.")
+                        Text("Set the radio's own rates to 100 % – the simulator's are while this runs. Move all sticks to every corner and the throttle from low to high. Then centre the sticks, throttle low, and press Finish calibration at the bottom.")
                             .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Button("Calibrate…") { calMin = [:]; calMax = [:]; calResult = ""; calibrating = true }
+                        Button("Calibrate…") { calMin = [:]; calMax = [:]; calResult = ""; setCalibrating(true) }
                     }
                 } else {
                     Text("No transmitter found. Connect your radio by USB and choose \u{201C}USB Joystick (HID)\u{201D} on it (EdgeTX / OpenTX: USB mode Joystick). Other USB joysticks and gamepads work too.")
@@ -690,6 +706,6 @@ struct SimControlsSheet: View {
             moved.append("\(i + 1)")
         }
         calResult = moved.isEmpty ? "No stick moved – nothing calibrated." : "Saved calibration for axes \(moved.joined(separator: ", "))."
-        calibrating = false; apply()
+        setCalibrating(false); apply()
     }
 }
